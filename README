@@ -1,0 +1,20 @@
+This package contains the source code for the drivers 
+that are included in the VMware ESX server product.
+
+To build the drivers, execute the 'build-vmkdrivers.sh' 
+script. 
+
+The following program versions should be used to compile
+the drivers:
+
+  gcc version 4.1.2
+  ld from binutils-2.17.50.0.15-1
+  GNU grep 2.5.1
+  GNU sed 4.5.1
+  GNU xargs 4.2.27
+  mkdir from GNU coreutils 5.97
+
+Unless explicitly stated otherwise, all of the files in 
+this package are distributed under the GNU General 
+Public License - see the accompanying COPYING file for 
+more details.
