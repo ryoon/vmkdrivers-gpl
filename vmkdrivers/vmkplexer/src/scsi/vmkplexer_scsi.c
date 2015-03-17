@@ -138,6 +138,8 @@ vmkplxr_ScsiCmdSlabCreate(vmkplxr_ScsiCmdSlabPool *slabpool)
    VMK_ReturnStatus status;
    vmk_SlabID slab = VMK_INVALID_SLAB_ID;
 
+   VMK_ASSERT(vmk_PreemptionIsEnabled() == VMK_FALSE);
+
    if (slabpool->moduleID == VMK_INVALID_MODULE_ID) {
       VMKPLXR_WIRPID("Invalid module ID");
       goto error;

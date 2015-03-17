@@ -1,6 +1,7 @@
-/* bnx2i.h: Broadcom NetXtreme II iSCSI driver.
+/*
+ * QLogic NetXtreme II iSCSI offload driver.
+ * Copyright (c)   2003-2014 QLogic Corporation
  *
- * Copyright (c) 2006 - 2010 Broadcom Corporation
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -59,6 +60,10 @@
 #include <asm/compat.h>
 #endif
 
+#if defined(__VMKLNX__) && (VMWARE_ESX_DDK_VERSION >= 60000)
+#include <vmklinux_9/vmklinux_scsi.h>
+#endif
+
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,27)
 #include "../../net/cnic_if.h"
 #else
@@ -67,6 +72,7 @@
 #include "57xx_iscsi_hsi.h"
 #include "57xx_iscsi_constants.h"
 #include "bnx2i_ioctl.h"
+#include "bnx2x_mfw_req.h"
 
 #ifndef __FREE_IRQ_FIX__
 #define __FREE_IRQ_FIX__	1
@@ -104,7 +110,7 @@ extern u32 bnx2i_debug_level;
 #define DBG_SESS_RECO			0x00000080
 
 #define BNX2I_DBG(level, hba, fmt, ...)		do {		\
-		if (level & bnx2i_debug_level)			\
+		if (unlikely(level & bnx2i_debug_level))	\
 			printk(KERN_INFO "bnx2i::%p: " fmt,	\
 				hba, ##__VA_ARGS__);		\
 	} while(0)
@@ -117,32 +123,13 @@ extern u32 bnx2i_debug_level;
 #define PCI_DEVICE_ID_NX2_5709S			0x163a
 #endif
 
-#ifndef PCI_DEVICE_ID_NX2_57710
-#define PCI_DEVICE_ID_NX2_57710			0x164e
-#endif
-
-#ifndef PCI_DEVICE_ID_NX2_57711
-#define PCI_DEVICE_ID_NX2_57711			0x164f
-#endif
-
-#ifndef PCI_DEVICE_ID_NX2_57711E
-#define PCI_DEVICE_ID_NX2_57711E		0x1650
-#endif
-
-#ifndef PCI_DEVICE_ID_NX2_57712
-#define PCI_DEVICE_ID_NX2_57712			0x1662
-#endif
-
-#ifndef PCI_DEVICE_ID_NX2_57712E
-#define PCI_DEVICE_ID_NX2_57712E		0x1663
-#endif
-
-#ifndef PCI_DEVICE_ID_NX2_57713
-#define PCI_DEVICE_ID_NX2_57713			0x1651
-#endif
-
-#ifndef PCI_DEVICE_ID_NX2_57713E
-#define PCI_DEVICE_ID_NX2_57713E		0x1652
+/*
+ *  On ESX the wmb() instruction is defined to only a compiler barrier
+ *  The macro wmb() need to be overrode to properly synchronize memory
+ */
+#if defined(__VMKLNX__)
+#undef wmb
+#define wmb()   asm volatile("sfence" ::: "memory")
 #endif
 
 #define BNX2I_REGISTER_HBA_SUPPORTED		0
@@ -202,6 +189,10 @@ extern u32 bnx2i_debug_level;
 #define BNX2I_RQ_WQE_SIZE			256
 #define BNX2I_CQE_SIZE				64
 
+#define BNX2I_TCP_WINDOW_MIN			(16 * 1024)
+#define BNX2I_TCP_WINDOW_MAX			(1 * 1024 * 1024)
+#define BNX2I_TCP_WINDOW_DEFAULT		(64 * 1024)
+
 #define MB_KERNEL_CTX_SHIFT			8
 #define MB_KERNEL_CTX_SIZE			(1 << MB_KERNEL_CTX_SHIFT)
 
@@ -227,6 +218,7 @@ extern u32 bnx2i_debug_level;
 #define BNX2_MQ_CONFIG2_FIRST_L4L5		(0x1fL<<8)
 
 /* 57710's BAR2 is mapped to doorbell registers */
+#define BNX2X_DB_SHIFT				3
 #define BNX2X_DOORBELL_PCI_BAR			2
 #define BNX2X_MAX_CQS				8
 
@@ -250,6 +242,23 @@ extern u32 bnx2i_debug_level;
 #define REG_WR(__hba, offset, val)			\
 		writel(val, __hba->regview + offset)
 
+#define GET_STATS_64(__hba, dst, field)				\
+	do {							\
+		dst->field##_lo = __hba->stats.field##_lo;	\
+		dst->field##_hi = __hba->stats.field##_hi;	\
+	} while (0)
+
+#define ADD_STATS_64(__hba, field, len)				\
+	do {							\
+		if (spin_trylock(&(__hba)->stat_lock)) {	\
+			if ((__hba)->stats.field##_lo + len <	\
+			    (__hba)->stats.field##_lo)		\
+				(__hba)->stats.field##_hi++;	\
+			(__hba)->stats.field##_lo += len;	\
+			spin_unlock(&(__hba)->stat_lock);	\
+		}						\
+	} while (0)
+
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,23)
 
 #define scsi_sg_count(cmd) ((cmd)->use_sg)
@@ -264,7 +273,7 @@ extern u32 bnx2i_debug_level;
 
 #define BNX2I_INITIAL_POOLSIZE		((1 * VMK_MEGABYTE) >> PAGE_SHIFT)
 #define BNX2I_MAX_POOLSIZE_570X		((12 * VMK_MEGABYTE) >> PAGE_SHIFT)
-#define BNX2I_MAX_POOLSIZE_5771X	((24 * VMK_MEGABYTE) >> PAGE_SHIFT)
+#define BNX2I_MAX_POOLSIZE_5771X	((32 * VMK_MEGABYTE) >> PAGE_SHIFT)
 #endif
 
 struct bnx2i_hba;
@@ -822,6 +831,8 @@ struct bnx2i_sess {
 	int noopin_indicated_count;
 	int noopin_processed_count;
 	int tgt_noopin_count;
+
+	u32 max_iscsi_tasks;
 };
 
 
@@ -849,6 +860,16 @@ struct iscsi_cid_queue {
 	struct bnx2i_conn **conn_cid_tbl;
 };
 
+struct iscsi_login_stats_info {
+	u32 successful_logins;			/* Total login successes */
+	u32 login_failures;			/* Total login failures */
+	u32 login_negotiation_failures;		/* Text negotiation failed */
+	u32 login_authentication_failures;	/* login Authentication failed */
+	u32 login_redirect_responses;		/* Target redirects to another portal */
+	u32 connection_timeouts;		/* TCP connection timeouts */
+	u32 session_failures;			/* Errors resulting in sess recovery */
+	u32 digest_errors;			/* Errors resulting in digest errors */
+};
 
 /**
  * struct bnx2i_hba - bnx2i adapter structure
@@ -911,6 +932,9 @@ struct iscsi_cid_queue {
  *                         at least one connection is offloaded
  * @num_sess_opened:       statistic counter, total num sessions opened
  * @num_conn_opened:       statistic counter, total num conns opened on this hba
+ * @stat_lock:             statistic lock to maintain coherency
+ * @stats:                 iSCSI statistic structure memory
+ * @login_stats:           iSCSI login statistic structure memory
  *
  * Adapter Data Structure
  */
@@ -920,6 +944,7 @@ struct bnx2i_hba {
 	struct pci_dev *pcidev;
 	struct net_device *netdev;
  	void __iomem *regview;
+	resource_size_t reg_base;
 	struct class_device class_dev;
 	u32 age;
 	unsigned long cnic_dev_type;
@@ -940,20 +965,16 @@ struct bnx2i_hba {
 		#define ADAPTER_STATE_LINK_DOWN		2
 		#define ADAPTER_STATE_INIT_FAILED	31
 	unsigned int mtu_supported;
-#ifdef __VMKLNX__
-		#define BNX2I_MAX_MTU_SUPPORTED		1500
-#else
+#if (VMWARE_ESX_DDK_VERSION >= 50000)
 		#define BNX2I_MAX_MTU_SUPPORTED		9000
+#else
+		#define BNX2I_MAX_MTU_SUPPORTED		1500
 #endif
 
 	struct scsi_host_template *scsi_template;
 	struct iscsi_transport *iscsi_transport;
 #ifdef __VMKLNX__
-#if (VMWARE_ESX_DDK_VERSION == 41000)
 	vmk_MemPool bnx2i_pool;
-#else /* ! (VMWARE_ESX_DDK_VERSION == 41000) */
-	vmk_MemPool bnx2i_pool;
-#endif /* (VMWARE_ESX_DDK_VERSION == 41000) */
 		#define BRCM_ISCSI_XPORT_NAME_PREFIX		"bnx2i"
 #else
 		#define BRCM_ISCSI_XPORT_NAME_PREFIX		"bcm570x"
@@ -988,6 +1009,7 @@ struct bnx2i_hba {
 
 	int max_active_conns;
 	struct iscsi_cid_queue cid_que;
+	spinlock_t cid_que_lock;
 
 #ifndef __VMKLNX__
 	rwlock_t ep_rdwr_lock;
@@ -1044,6 +1066,24 @@ struct bnx2i_hba {
 	u32 stop_event_ifc_abort_login;
 	u32 stop_event_ep_conn_failed;
 	u32 stop_event_repeat;
+	u32 task_cleanup_failed;
+	u32 tcp_error_kcqes;
+	u32 iscsi_error_kcqes;
+
+	spinlock_t stat_lock;
+	struct iscsi_stats_info stats;
+	struct iscsi_login_stats_info login_stats;
+
+	struct list_head ep_stale_list;
+        
+	/* conn disconnect timeout handling */
+	wait_queue_head_t ep_tmo_wait;
+	struct list_head ep_tmo_list;
+	struct work_struct ep_poll_task;
+	atomic_t ep_tmo_poll_enabled;
+	u32    ep_tmo_active_cnt;
+	u32    ep_tmo_cmpl_cnt;
+	u32    max_scsi_task_queued;
 };
 
 
@@ -1106,7 +1146,7 @@ struct bnx2i_5771x_cq_db {
 
 struct bnx2i_5771x_sq_rq_db {
 	u16 prod_idx;
-	u8 reserved0[14]; /* Pad structure size to 16 bytes */
+	u8 reserved0[62]; /* Pad structure size to 64 bytes */
 };
 
 
@@ -1300,6 +1340,7 @@ struct bnx2i_endpoint {
 		#define ep_pg_cid	ids.pg_cid
 	struct timer_list ofld_timer;
 	wait_queue_head_t ofld_wait;
+	u32 in_progress;
 };
 
 
@@ -1340,7 +1381,7 @@ static inline char *pci_alloc_consistent_esx(struct pci_dev *pdev, size_t size,
 	char *virt_mem;
 	VMK_ReturnStatus status;
 #if (VMWARE_ESX_DDK_VERSION == 41000)
-	vmk_MPN pfn;
+	vmk_MachPage pfn;
 	vmk_MemPoolAllocProps pool_alloc_props;
 #else
 	vmk_MPN pfn;
@@ -1363,17 +1404,17 @@ static inline char *pci_alloc_consistent_esx(struct pci_dev *pdev, size_t size,
 	status = vmk_MemPoolAlloc(hba->bnx2i_pool, &pool_alloc_props,
 				  1 << get_order(size), VMK_FALSE, &pfn);
 #else
-	pool_alloc_props.physContiguity = VMK_MEM_PHYS_CONTIGUOUS;
-	pool_alloc_props.physRange = VMK_PHYS_ADDR_ANY;
-	pool_alloc_props.creationTimeoutMS = VMK_TIMEOUT_NONBLOCKING;
-	if (dma_get_required_mask(&pdev->dev) >= pdev->dma_mask)
-		pool_alloc_props.physRange = VMK_PHYS_ADDR_BELOW_4GB;
+        pool_alloc_props.physContiguity = VMK_MEM_PHYS_CONTIGUOUS;
+        pool_alloc_props.physRange = VMK_PHYS_ADDR_ANY;
+        pool_alloc_props.creationTimeoutMS = VMK_TIMEOUT_NONBLOCKING;
+        if (dma_get_required_mask(&pdev->dev) >= pdev->dma_mask)
+                pool_alloc_props.physRange = VMK_PHYS_ADDR_BELOW_4GB;
 
-	alloc_request.numPages = 1 << get_order(size);
-	alloc_request.numElements = 1;
-	alloc_request.mpnRanges = &range;
+        alloc_request.numPages = 1 << get_order(size);
+        alloc_request.numElements = 1;
+        alloc_request.mpnRanges = &range;
 
-	status = vmk_MemPoolAlloc(hba->bnx2i_pool, &pool_alloc_props, &alloc_request);
+        status = vmk_MemPoolAlloc(hba->bnx2i_pool, &pool_alloc_props, &alloc_request);
 #endif /* (VMWARE_ESX_DDK_VERSION == 41000) */
 	if (unlikely(status != VMK_OK)) {
 		printk("allocation failed size=%lu\n", size);
@@ -1385,7 +1426,7 @@ static inline char *pci_alloc_consistent_esx(struct pci_dev *pdev, size_t size,
 	virt_mem = page_to_virt(pfn_to_page(pfn));
 
 	memset(virt_mem, 0, size);
-	*mapping = virt_to_phys(virt_mem);
+	*mapping = pci_map_single(pdev, virt_mem, size, PCI_DMA_BIDIRECTIONAL);
 
 	return virt_mem;
 }
@@ -1394,11 +1435,12 @@ static inline void pci_free_consistent_esx(struct pci_dev *pdev, size_t size,
 					   void *virt, dma_addr_t mapping)
 {
 #if (VMWARE_ESX_DDK_VERSION == 41000)
-	vmk_MPN pfn;
+	vmk_MachPage pfn;
 #else
 	vmk_MpnRange range;
 	vmk_MemPoolAllocRequest alloc_request;
 #endif
+
 	struct bnx2i_hba *hba = bnx2i_map_pcidev_to_hba(pdev);
 
 	if (!hba) {
@@ -1406,10 +1448,12 @@ static inline void pci_free_consistent_esx(struct pci_dev *pdev, size_t size,
 		return;
 	}
 
+	 pci_unmap_single(pdev, mapping, size, PCI_DMA_BIDIRECTIONAL);
+
 #if (VMWARE_ESX_DDK_VERSION == 41000)
 	pfn = virt_to_page(virt);
 	vmk_MemPoolFree(&pfn);
-#else	
+#else
 	range.startMPN = virt_to_page(virt);
 	range.numPages = 1 << get_order(size);
 	alloc_request.mpnRanges = &range;
@@ -1418,17 +1462,43 @@ static inline void pci_free_consistent_esx(struct pci_dev *pdev, size_t size,
 	vmk_MemPoolFree(&alloc_request);
 #endif /* (VMWARE_ESX_DDK_VERSION == 41000) */
 }
-#endif
+
+#if (VMWARE_ESX_DDK_VERSION >= 60000)
+static inline void bnx2i_int_to_scsilun_with_sec_lun_id(uint16_t lun,
+							struct scsi_lun *scsi_lun,
+							uint64_t sllid)
+{
+	if (sllid != VMKLNX_SCSI_INVALID_SECONDLEVEL_ID) {
+		VMK_ASSERT(lun <= 255); /* Max LUN supported is 255. */
+		memset(scsi_lun, 0, 8);
+		scsi_lun->scsi_lun[0] = (lun >> 8) & 0xFF;
+		scsi_lun->scsi_lun[1] = lun & 0xFF;
+		scsi_lun->scsi_lun[2] = (uint8_t)((sllid >> 56) & 0xFF); /* sllid msb */
+		scsi_lun->scsi_lun[3] = (uint8_t)((sllid >> 48) & 0xFF);
+		scsi_lun->scsi_lun[4] = (uint8_t)((sllid >> 40) & 0xFF);
+		scsi_lun->scsi_lun[5] = (uint8_t)((sllid >> 32) & 0xFF);
+		scsi_lun->scsi_lun[6] = (uint8_t)((sllid >> 24) & 0xFF);
+		scsi_lun->scsi_lun[7] = (uint8_t)((sllid >> 16) & 0xFF); /* sllid lsb */
+	} else {
+		int_to_scsilun(lun, scsi_lun);
+	}
+}
+#endif /* (VMWARE_ESX_DDK_VERSION >= 60000) */
+
+#endif /* __VMKLNX__ */
 
 extern unsigned int cmd_cmpl_per_work;
 extern unsigned int max_bnx2x_sessions;
 extern unsigned int max_bnx2_sessions;
+#ifdef __VMKLNX__
+extern int bnx2i_max_sectors;
+#endif
 
 /*
  * Function Prototypes
  */
 extern int bnx2i_reg_device;
-void bnx2i_identify_device(struct bnx2i_hba *hba);
+void bnx2i_identify_device(struct bnx2i_hba *hba, struct cnic_dev *dev);
 void bnx2i_register_device(struct bnx2i_hba *hba, int force);
 void bnx2i_check_nx2_dev_busy(void);
 #ifdef __VMKLNX__
@@ -1488,6 +1558,7 @@ int bnx2i_indicate_async_mesg(struct bnx2i_conn *conn);
 
 void bnx2i_iscsi_unmap_sg_list(struct bnx2i_hba *hba, struct bnx2i_cmd *cmd);
 
+void bnx2i_iscsi_hba_cleanup(struct bnx2i_hba *hba);
 void bnx2i_start_iscsi_hba_shutdown(struct bnx2i_hba *hba);
 void bnx2i_iscsi_handle_ip_event(struct bnx2i_hba *hba);
 int bnx2i_do_iscsi_sess_recovery(struct bnx2i_sess *sess, int err_code, int signal);
@@ -1555,6 +1626,8 @@ extern void bnx2i_print_xmit_pdu_queue(struct bnx2i_conn *conn);
 extern void bnx2i_print_recv_state(struct bnx2i_conn *conn);
 extern void bnx2i_print_cqe(struct bnx2i_conn *conn);
 extern void bnx2i_print_sqe(struct bnx2i_conn *conn);
+
+extern int bnx2i_get_stats(void *handle);
 
 #ifdef __VMKLNX__
 #define bnx2i_setup_ictx_dump(__hba, __conn)	do { } while (0)

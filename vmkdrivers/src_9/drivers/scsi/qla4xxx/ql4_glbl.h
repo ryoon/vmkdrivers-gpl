@@ -87,8 +87,13 @@ int qla4xxx_process_ddb_changed(struct scsi_qla_host * ha, uint32_t fw_ddb_index
 
 int qla4xxx_mailbox_command(struct scsi_qla_host *ha, uint8_t inCount,
                             uint8_t outCount, uint32_t *mbx_cmd, uint32_t *mbx_sts);
+#if defined(__VMKLNX__)
+int qla4xxx_send_marker_iocb(struct scsi_qla_host *ha,
+                             struct ddb_entry *ddb_entry, int lun, uint64_t sllid);
+#else
 int qla4xxx_send_marker_iocb(struct scsi_qla_host *ha,
 	struct ddb_entry *ddb_entry, int lun);
+#endif
 int qla4_is_relogin_allowed(struct scsi_qla_host *ha, uint32_t conn_err);
 void sp_put(struct scsi_qla_host *ha, struct srb *sp);
 

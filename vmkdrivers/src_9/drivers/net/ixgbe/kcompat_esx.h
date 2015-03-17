@@ -1,7 +1,7 @@
 /*******************************************************************************
 
   Intel 10 Gigabit PCI Express Linux driver
-  Copyright(c) 1999 - 2010 Intel Corporation.
+  Copyright(c) 1999 - 2011 Intel Corporation.
 
   This program is free software; you can redistribute it and/or modify it
   under the terms and conditions of the GNU General Public License,
@@ -45,7 +45,7 @@
 
 #define cpu_to_be16(x) __constant_htons(x)
 
-
+#define IXGBE_FCOE_DEFTC 		0x3
 /*
  * CNA device private region points to the net device private
  * region. Thereby, the actual implementation of netdev_priv()
@@ -60,9 +60,8 @@
 #define vmalloc_node(a,b)  vmalloc(a)
 
 #define skb_record_rx_queue(a, b)  \
-	if (adapter->flags & IXGBE_FLAG_VMDQ_ENABLED) \
-		vmknetddi_queueops_set_skb_queueid((a),  \
-					VMKNETDDI_QUEUEOPS_MK_RX_QUEUEID((b)));
+	vmknetddi_queueops_set_skb_queueid((a),  \
+				VMKNETDDI_QUEUEOPS_MK_RX_QUEUEID((b)));
 
 
 #define skb_trim _kc_skb_trim
@@ -77,8 +76,6 @@ static inline void _kc_skb_trim(struct sk_buff *skb, unsigned int len)
 		skb->tail = skb->data + len;
 	}
 }
-/* disable pskb_trim usage for now - should break lots of stuff */
-#define pskb_trim(a,b)
 
 /* multiqueue netdev magic */
 #define egress_subqueue_count real_num_tx_queues
@@ -105,3 +102,10 @@ static inline void _kc_skb_trim(struct sk_buff *skb, unsigned int len)
 #define device_set_wakeup_enable(d, w) device_init_wakeup(d, w);
 
 
+#define nr_cpu_ids     smp_num_cpus 
+#define ESX_ALLOC_PERCPU( type )      \
+	kmalloc(sizeof(type) * nr_cpu_ids, GFP_KERNEL)
+#define ESX_FREE_PERCPU( ptr )        kfree(ptr)
+#define ESX_PER_CPU_PTR( ptr, cpu, type )     (((cpu) < nr_cpu_ids)? \
+	((typeof(ptr))((char*)(ptr) + (cpu) * sizeof(type))):NULL)
+#define __percpu

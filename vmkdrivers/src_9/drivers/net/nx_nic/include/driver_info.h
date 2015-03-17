@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2003 - 2009 NetXen, Inc.
+ * Copyright (C) 2009 - QLogic Corporation.
  * All rights reserved.
  * 
  * This program is free software; you can redistribute it and/or
@@ -20,17 +21,11 @@
  * The full GNU General Public License is included in this distribution
  * in the file called LICENSE.
  * 
- * Contact Information:
- * licensing@netxen.com
- * NetXen, Inc.
- * 18922 Forge Drive
- * Cupertino, CA 95014
  */
 #ifndef _driver_info_h_
 #define _driver_info_h_
 #define DRIVER_NAME            "nx_nic"
 #define OLD_DRIVER_NAME        "unm_nic"
-#define TOE_DRIVER_NAME        "nx_lsa"
 #define DRIVER_VERSION_STRING  "NetXen Driver version "
 
 #include "unm_brdcfg.h"
@@ -76,7 +71,5 @@ static const unm_brdinfo_t unm_boards[] = {
 
 #define DRIVER_AUTHOR		"Copyright (C) 2003 - 2008 NetXen, Inc."
 #define DRIVER_DESCRIPTION	"NetXen Multi port (1/10) Gigabit Network Driver"
-#define LSA_DRIVER_DESCRIPTION	"NetXen LSA Driver"
-#define LSA_DRIVER_LICENSE	"NetXen Proprietary"
 
 #endif

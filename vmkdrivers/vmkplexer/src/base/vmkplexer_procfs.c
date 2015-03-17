@@ -75,6 +75,8 @@ vmkplxr_ProcfsInitEntry(vmkplxr_ProcfsEntry *entry,
    VMKPLXR_DEBUG(DBG_LOG_CALL, "entry=%p, name=%s, isDir=%s, read=%p, write=%p",
                  entry, name, isDir ? "true" : "false", read, write);
 
+   VMK_ASSERT(vmk_PreemptionIsEnabled() == VMK_FALSE);
+
    vmk_Memset(entry->name, 0, sizeof(entry->name));
    vmk_Strncpy(entry->name, name, sizeof(entry->name)-1);
    vmk_ListInit(&entry->peerList);
@@ -641,6 +643,8 @@ vmkplxr_ProcfsAllocEntry(vmk_ModuleID moduleID)
    vmk_HeapID heapID;
    vmkplxr_ProcfsEntry *entry = NULL;
 
+   VMK_ASSERT(vmk_PreemptionIsEnabled() == VMK_FALSE);
+
    allocSize = sizeof(vmkplxr_ProcfsEntry);
    heapID = vmk_ModuleGetHeapID(moduleID);
    if (heapID == VMK_INVALID_HEAP_ID) {
@@ -683,6 +687,8 @@ VMK_MODULE_EXPORT_SYMBOL(vmkplxr_ProcfsAllocEntry);
 void
 vmkplxr_ProcfsFreeEntry(vmkplxr_ProcfsEntry *entry)
 {
+   VMK_ASSERT(vmk_PreemptionIsEnabled() == VMK_FALSE);
+
    if (!entry) {
       VMKPLXR_WARN("entry == NULL");
       return;
@@ -714,6 +720,7 @@ VMK_MODULE_EXPORT_SYMBOL(vmkplxr_ProcfsFreeEntry);
 void *
 vmkplxr_ProcfsGetPrivateData(vmkplxr_ProcfsEntry *entry)
 {
+   VMK_ASSERT(vmk_PreemptionIsEnabled() == VMK_FALSE);
    return entry->privateData;
 }
 VMK_MODULE_EXPORT_SYMBOL(vmkplxr_ProcfsGetPrivateData);
@@ -738,6 +745,7 @@ VMK_MODULE_EXPORT_SYMBOL(vmkplxr_ProcfsGetPrivateData);
 void
 vmkplxr_ProcfsSetPrivateData(vmkplxr_ProcfsEntry *entry, void *privateData)
 {
+   VMK_ASSERT(vmk_PreemptionIsEnabled() == VMK_FALSE);
    entry->privateData = privateData;
 }
 VMK_MODULE_EXPORT_SYMBOL(vmkplxr_ProcfsSetPrivateData);
@@ -765,6 +773,8 @@ vmkplxr_ProcfsFindEntry(vmkplxr_ProcfsEntry *rootDirEntry, const char *entryPath
    char path[VMKPLXR_PROCFS_MAX_NAME];
    vmkplxr_ProcfsEntry *entryFound = NULL;
    vmk_ByteCount entryPathLength;
+
+   VMK_ASSERT(vmk_PreemptionIsEnabled() == VMK_FALSE);
 
    VMKPLXR_DEBUG(DBG_LOG_CALL, "rootDirEntry=%p (%s), entryPath=%p (%s)",
                  rootDirEntry, rootDirEntry->name, entryPath, entryPath);
@@ -839,6 +849,8 @@ vmkplxr_ProcfsDetachEntry(vmk_ModuleID ownerID,
 {
    vmkplxr_ProcfsEntry *entry;
    VMK_ReturnStatus status = VMK_FAILURE;
+
+   VMK_ASSERT(vmk_PreemptionIsEnabled() == VMK_FALSE);
 
    VMKPLXR_DEBUG(DBG_LOG_CALL, "rootDirEntry=%p (%s), path=%p (%s)",
                  rootDirEntry, rootDirEntry->name, path, path);
@@ -918,6 +930,8 @@ vmkplxr_ProcfsAttachEntry(vmkplxr_ProcfsEntry *rootDirEntry,
    vmk_Bool canBlock = VMK_FALSE;
    vmk_ByteCount pathLength;
  
+   VMK_ASSERT(vmk_PreemptionIsEnabled() == VMK_FALSE);
+
    VMKPLXR_DEBUG(DBG_LOG_CALL, "rootDirEntry=%p (%s), path=%p (%s) newEntry=%p (%s)",
                  rootDirEntry, rootDirEntry->name, path, path, newEntry, newEntry->name);
 

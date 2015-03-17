@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2003 - 2009 NetXen, Inc.
+ * Copyright (C) 2009 - QLogic Corporation.
  * All rights reserved.
  * 
  * This program is free software; you can redistribute it and/or
@@ -20,11 +21,6 @@
  * The full GNU General Public License is included in this distribution
  * in the file called LICENSE.
  * 
- * Contact Information:
- * licensing@netxen.com
- * NetXen, Inc.
- * 18922 Forge Drive
- * Cupertino, CA 95014
  */
 /*
 Data structures private to hwlib
@@ -130,9 +126,6 @@ struct nx_host_tx_ctx_s {
 	U16 pci_func;
 	U16 interrupt_ctl;
 	U16 msi_index;
-        nx_hostrq_pexq_t pexq_req; 
-        nx_cardrsp_pexq_t pexq_rsp;
-        U8  use_pexq;
 	void *os_data;
 };
 
@@ -324,8 +317,6 @@ I32 tap_crb_mbist_clear(nx_host_nic_t * nx_dev);
  */
 nx_rcode_t nx_fw_cmd_submit_capabilities(nx_host_nic_t * nx_dev,
 					 U32 pci_func, U32 * in, U32 * out);
-nx_rcode_t nx_fw_cmd_get_toe_license(nx_host_nic_t* nx_dev, 
-					 U32 pci_func, U32 *out);
 nx_rcode_t nx_fw_cmd_query_max_rds_per_ctx(nx_host_nic_t * nx_dev,
 					   U32 pci_func, U32 * max);
 nx_rcode_t nx_fw_cmd_query_max_sds_per_ctx(nx_host_nic_t * nx_dev,
@@ -368,6 +359,13 @@ nx_fw_cmd_set_phy(nx_dev_handle_t drv_handle,
 		    U32 reg,
 		    U32 val);
 
+#if 0
+
+	struct unm_adapter_s *adapter;	
+	adapter = (struct unm_adapter_s *)drv_handle;	
+	NX_NIC_TRC_FN(adapter, cur_fn, pci_func);
+
+#endif
 
 nx_rcode_t 
 nx_fw_cmd_set_flow_ctl(nx_dev_handle_t drv_handle,
@@ -376,19 +374,8 @@ nx_fw_cmd_set_flow_ctl(nx_dev_handle_t drv_handle,
 		   U32 val);
 
 nx_rcode_t
-nx_fw_cmd_configure_toe(nx_host_rx_ctx_t *prx_ctx,
-		        U32 pci_func, 
-                        U32 op_code);
-
-nx_rcode_t
 nx_fw_cmd_func_attrib(nx_host_nic_t *nx_dev, U32 pci_func,
     struct nx_cardrsp_func_attrib *attribs);
-
-nx_rcode_t 
-nx_fw_cmd_query_pexq(nx_host_nic_t* nx_dev, 
-		        U32 pci_func, 
-                        U32 *pexq_length,
-                        U32 *pexq_fc_array_size);
 
 /*
  * RX
@@ -423,6 +410,11 @@ nx_fw_cmd_create_rx_ctx(nx_host_rx_ctx_t * rx_ctx,
 nx_rcode_t 
 nx_fw_cmd_destroy_rx_ctx(nx_host_rx_ctx_t * rx_ctx, U32 destroy_cmd);
 
+nx_rcode_t 
+unm_nic_get_minidump_template_size(struct unm_adapter_s *adapter);
+
+nx_rcode_t 
+unm_nic_get_minidump_template(struct unm_adapter_s *adapter);
 
 nx_rcode_t 
 nx_fw_cmd_set_mtu(nx_host_rx_ctx_t *prx_ctx,
@@ -466,10 +458,6 @@ nx_rcode_t
 nx_os_event_wait(nx_dev_handle_t drv_handle,
 		 nx_os_wait_event_t * wait, I32 utimelimit);
 
-nx_rcode_t
-nx_os_event_wakeup_on_response(nx_dev_handle_t drv_handle,
-			       nic_response_t * rsp);
-
 extern U32
 nx_os_send_cmd_descs(nx_host_tx_ctx_t * ptx_ctx,
 		     nic_request_t * req, U32 nr_elements);
@@ -479,10 +467,6 @@ nx_os_send_nic_request(nx_host_tx_ctx_t * ptx_ctx,
 		       nx_host_rx_ctx_t * prx_ctx,
 		       U32 opcode,
 		       U64 * rqbody, U32 size, U32 is_sync, U64 * rspword);
-
-extern void
-nx_os_handle_nic_response(nx_dev_handle_t drv_handle, nic_response_t * rsp);
-
 
 nx_rcode_t
 nx_os_pf_add_l2_mac(nx_host_nic_t *nx_dev, nx_host_rx_ctx_t *rx_ctx,

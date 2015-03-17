@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2003 - 2009 NetXen, Inc.
+ * Copyright (C) 2009 - QLogic Corporation.
  * All rights reserved.
  * 
  * This program is free software; you can redistribute it and/or
@@ -20,11 +21,6 @@
  * The full GNU General Public License is included in this distribution
  * in the file called LICENSE.
  * 
- * Contact Information:
- * licensing@netxen.com
- * NetXen, Inc.
- * 18922 Forge Drive
- * Cupertino, CA 95014
  */
 #ifndef __UNM_INC_H
 #define __UNM_INC_H
@@ -449,7 +445,6 @@ void DELAY(int A);
  * eliminated by the pcie bar and bar select before presentation
  * over pcie. */
 /* host memory via IMBUS */
-#define NX_P2_ADDR_PCIE		(0x0000000800000000ULL)
 #define NX_P3_ADDR_PCIE		(0x0000008000000000ULL)
 
 #define UNM_ADDR_PCIE_MAX    (0x0000000FFFFFFFFFULL)
@@ -459,17 +454,12 @@ void DELAY(int A);
 #define UNM_ADDR_OCM1_MAX    (0x00000002004fffffULL)
 #define UNM_ADDR_QDR_NET     (0x0000000300000000ULL)
 
-#define NX_P2_ADDR_QDR_NET_MAX	(0x00000003001fffffULL)
 #define NX_P3_ADDR_QDR_NET_MAX	(0x0000000303ffffffULL)
  /*
   * The ifdef at the bottom should go. All drivers should start using the above
   * 2 defines.
   */
-#ifdef P3
 #define UNM_ADDR_QDR_NET_MAX	NX_P3_ADDR_QDR_NET_MAX
-#else
-#define UNM_ADDR_QDR_NET_MAX	NX_P2_ADDR_QDR_NET_MAX
-#endif
 
 #define D3_CRB_REG_FUN0			(UNM_PCIX_PS_REG(0x0084))
 #define D3_CRB_REG_FUN1			(UNM_PCIX_PS_REG(0x1084))
@@ -741,11 +731,6 @@ typedef __uint8_t unm_ethernet_macaddr_t[6];
 #define MIN_CORE_CLK_SPEED 200
 #define MAX_CORE_CLK_SPEED 400
 #define ACCEPTABLE_CORE_CLK_RANGE(speed) ((speed >= MIN_CORE_CLK_SPEED) && (speed <= MAX_CORE_CLK_SPEED))
-
-#define P2_TICKS_PER_SEC    2048
-#define P2_MIN_TICKS_PER_SEC    (P2_TICKS_PER_SEC-10)
-#define P2_MAX_TICKS_PER_SEC    (P2_TICKS_PER_SEC+10)
-#define CHECK_TICKS_PER_SEC(ticks) ((ticks >= P2_MIN_TICKS_PER_SEC) && (ticks <= P2_MAX_TICKS_PER_SEC))
 
 /* =============================    1GbE    =============================== */
 /* Nibble or Byte mode for phy interface (GbE mode only) */
@@ -1155,6 +1140,21 @@ typedef union {
 #define UNM_WOL_CONFIG (UNM_CAM_RAM(0x188))
 #define UNM_PRE_WOL_RX_ENABLE (UNM_CAM_RAM(0x18c))
 #define UNM_FW_RESET (UNM_CAM_RAM(0x138))
+
+#define PCONS_HEAD_BASE 	(UNM_CAM_RAM(0x30))
+#define PCONS_LEN_BASE		(UNM_CAM_RAM(0x34))
+#define PCONS_TAIL_BASE 	(UNM_CAM_RAM(0x38))
+#define PCONS_ENABLE_BASE 	(UNM_CAM_RAM(0x3C))
+
+#define NX_PCONS_HEAD(PEG) 	(PCONS_HEAD_BASE + 16 * (PEG))
+#define NX_PCONS_LEN(PEG) 	(PCONS_LEN_BASE + 16 * (PEG))
+#define NX_PCONS_TAIL(PEG) 	(PCONS_TAIL_BASE + 16 * (PEG))
+#define NX_PCONS_ENABLE(PEG)	(PCONS_ENABLE_BASE + 16 * (PEG))
+
+#define NX_PCIE_UNCE_STATUS	(UNM_PCI_CRBSPACE + 0x00100104)
+#define NX_PCIE_UNCE_MASK	(UNM_PCI_CRBSPACE + 0x00100108)
+#define NX_PCIE_UNCE_SEV	(UNM_PCI_CRBSPACE + 0x0010010C)
+
 /*
  *  Following define address space withing PCIX CRB space to talk with
  *  devices on the storage side PCI bus.
@@ -1269,12 +1269,114 @@ typedef struct {
 int unm_pcix_int_control(unm_pcix_int_source_t src,
                          unm_pcix_int_state_t state);
 
+#define UNM_SRE_MISC              (UNM_CRB_SRE + 0x0002C)
 #define UNM_SRE_INT_STATUS        (UNM_CRB_SRE + 0x00034)
 #define UNM_SRE_BUF_CTL           (UNM_CRB_SRE + 0x01000)
 #define UNM_SRE_PBI_ACTIVE_STATUS (UNM_CRB_SRE + 0x01014)
 #define UNM_SRE_SCRATCHPAD        (UNM_CRB_SRE + 0x01018)
 #define UNM_SRE_L1RE_CTL          (UNM_CRB_SRE + 0x03000)
 #define UNM_SRE_L2RE_CTL          (UNM_CRB_SRE + 0x05000)
+#define NX_SRE_FBQ_MSGHDR_LOW     (UNM_CRB_SRE + 0x01020)
+#define NX_SRE_L1RE_IPQ_LOW    	(UNM_CRB_SRE + 0x03010)
+#define NX_SRE_IN_GOOD    	(UNM_CRB_SRE + 0x00100)
+#define NX_SRE_IN_BAD    	(UNM_CRB_SRE + 0x00104)
+#define NX_SRE_IN_CSUM    	(UNM_CRB_SRE + 0x00158)
+#define NX_SRE_RE1_IPQ    	(UNM_CRB_SRE + 0x00110)
+#define NX_SRE_RE1_ERR    	(UNM_CRB_SRE + 0x00114)
+#define NX_SRE_RE1_ARP    	(UNM_CRB_SRE + 0x00118)
+#define NX_SRE_RE1_ICMP    	(UNM_CRB_SRE + 0x0011C)
+#define NX_SRE_RE1_FRAG    	(UNM_CRB_SRE + 0x00120)
+#define NX_SRE_RE1_ALIEN  	(UNM_CRB_SRE + 0x00124)
+#define NX_SRE_RE1_L2_MAP  	(UNM_CRB_SRE + 0x00128)
+#define NX_SRE_RE1_RDMA_GOOD   	(UNM_CRB_SRE + 0x0012C)
+#define NX_SRE_RE1_RDMA_BAD    	(UNM_CRB_SRE + 0x00130)
+#define NX_SRE_RE1_IPSEC    	(UNM_CRB_SRE + 0x00134)
+#define NX_SRE_RE1_SYN		  	(UNM_CRB_SRE + 0x00138)
+#define NX_SRE_RE1_IPQ_FD	  	(UNM_CRB_SRE + 0x0013C)
+#define NX_SRE_RE2_IFQ_MAP    	(UNM_CRB_SRE + 0x00140)
+#define NX_SRE_RE2_FBQ 		   	(UNM_CRB_SRE + 0x00144)
+#define NX_SRE_RE2_IFDQ	    	(UNM_CRB_SRE + 0x00148)
+#define NX_SRE_IPV6    			(UNM_CRB_SRE + 0x00150)
+#define NX_SRE_IPV6_EXECP    	(UNM_CRB_SRE + 0x00154)
+
+//Testmux registers for various blocks
+#define NX_EPG_TM                   (UNM_CRB_EPG + 0x040)
+#define NX_MN_TM                    (UNM_CRB_DDR_NET + 0x01C)
+#define NX_MS_TM                    (UNM_CRB_DDR_MD + 0x01C)
+#define NX_NIU_TM                   (UNM_CRB_QDR_NET + 0x094)
+#define NX_SN_TM                    (UNM_CRB_EPG + 0x090)
+#define NX_SRE_TM                   (UNM_CRB_SRE + 0x040)
+#define NX_SQN0F_TM                 (UNM_CRB_SQM_NET_0 + 0x200)
+#define NX_SQN0_TM                  (UNM_CRB_SQM_NET_0 + 0xF0200)
+#define NX_SQN2F_TM                 (UNM_CRB_SQM_NET_2 + 0x200)
+#define NX_SQN2_TM                  (UNM_CRB_SQM_NET_2 + 0xF0200)
+#define NX_SQN3F_TM                 (UNM_CRB_SQM_NET_3 + 0x200)
+#define NX_SQN3_TM                  (UNM_CRB_SQM_NET_3 + 0xF0200)
+#define NX_SQN1F_TM                 (UNM_CRB_SQM_NET_1 + 0x200)
+#define NX_SQN1_TM                  (UNM_CRB_SQM_NET_1 + 0xF0200)
+#define NX_XDMA_TM                  (UNM_CRB_XDMA + 0x700)
+#define NX_CAM_TM                   (UNM_CRB_CAM + 0x000)
+#define NX_OCM0_TM                  (UNM_CRB_OCM0 + 0x010)
+#define NX_PEX_TM                   (UNM_CRB_PCIX_MD + 0x12004)
+#define NX_CAS_TM                   (UNM_CRB_CASPER_0 + 0x060)
+#define NX_TMR_TM                   (UNM_CRB_TIMER + 0x20C)
+#define NX_PEG0_TM                  (UNM_CRB_PEG_NET_0 + 0x8)
+
+//EPG related registers. 
+#define NX_EPG_Q0_RCV_MSG_HDR       (UNM_CRB_EPG + 0x00300)
+#define NX_EPG_Q1_RCV_MSG_HDR       (UNM_CRB_EPG + 0x00308)
+#define NX_EPG_Q2_RCV_MSG_HDR       (UNM_CRB_EPG + 0x00400)
+#define NX_EPG_Q3_RCV_MSG_HDR       (UNM_CRB_EPG + 0x00408)
+#define NX_EPG_MSG_ERR_CNT          (UNM_CRB_EPG + 0x01700)
+#define NX_EPG_SZ_PARAM_MSG_CNT     (UNM_CRB_EPG + 0x01704)
+#define NX_EPG_TOTAL_FRAME_COUNT 	(UNM_CRB_EPG + 0x00200)
+#define NX_EPG_IF0_FRAME_COUNT	 	(UNM_CRB_EPG + 0x01100)
+#define NX_EPG_IF1_FRAME_COUNT	 	(UNM_CRB_EPG + 0x01104)
+#define NX_EPG_IF2_FRAME_COUNT	 	(UNM_CRB_EPG + 0x01108)
+#define NX_EPG_IF3_FRAME_COUNT	 	(UNM_CRB_EPG + 0x0110C)
+
+//Peg regs
+#define NX_PEG0_STATUS				(UNM_CRB_PEG_NET_0 + 0x0003C)
+#define NX_PEG1_STATUS				(UNM_CRB_PEG_NET_1 + 0x0003C)
+#define NX_PEG2_STATUS				(UNM_CRB_PEG_NET_2 + 0x0003C)
+#define NX_PEG3_STATUS				(UNM_CRB_PEG_NET_3 + 0x0003C)
+#define NX_PEG4_STATUS				(UNM_CRB_PEG_NET_4 + 0x0003C)
+
+//NIC regs
+#define NX_NIC_BASE_REG				(UNM_NIC_REG(0x288))
+
+//NIU regs
+#define NX_NIC_QG_RCV_PACKETS		(UNM_CRB_NIU + 0x000E0)
+#define NX_NIC_QG_DRP_PACKETS_W		(UNM_CRB_NIU + 0x000B4)
+#define NX_NIC_QG_DRP_PACKETS_R		(UNM_CRB_NIU + 0x000B8)
+
+#define NX_NIU_XG_TX_BYTES(PORT)	((UNM_CRB_NIU) + 0x70024 + (0x10000 * (PORT)))
+#define NX_NIU_XG_TX_FRAMES(PORT)	((UNM_CRB_NIU) + 0x70028 + (0x10000 * (PORT)))
+#define NX_NIU_XG_RX_BYTES(PORT)	((UNM_CRB_NIU) + 0x7002C + (0x10000 * (PORT)))
+#define NX_NIU_XG_RX_FRAMES(PORT)	((UNM_CRB_NIU) + 0x70030 + (0x10000 * (PORT)))
+#define NX_NIU_XG_TOT_ERR(PORT)		((UNM_CRB_NIU) + 0x70034 + (0x10000 * (PORT)))
+#define NX_NIU_XG_MCAST(PORT)		((UNM_CRB_NIU) + 0x70038 + (0x10000 * (PORT)))
+#define NX_NIU_XG_UNICAST(PORT)		((UNM_CRB_NIU) + 0x7003C + (0x10000 * (PORT)))
+#define NX_NIU_XG_CRC_ERR(PORT)		((UNM_CRB_NIU) + 0x70040 + (0x10000 * (PORT)))
+#define NX_NIU_XG_RX_OSZ_FRM(PORT)	((UNM_CRB_NIU) + 0x70044 + (0x10000 * (PORT)))
+#define NX_NIU_XG_RX_USZ_FRM(PORT)	((UNM_CRB_NIU) + 0x70048 + (0x10000 * (PORT)))
+#define NX_NIU_XG_LOCAL_ERR(PORT)	((UNM_CRB_NIU) + 0x7004C + (0x10000 * (PORT)))
+#define NX_NIU_XG_REMOTE_ERR(PORT)	((UNM_CRB_NIU) + 0x70050 + (0x10000 * (PORT)))
+#define NX_NIU_XG_RX_CTL_CHAR(PORT)	((UNM_CRB_NIU) + 0x70054 + (0x10000 * (PORT)))
+#define NX_NIU_XG_RX_PAUSE(PORT)	((UNM_CRB_NIU) + 0x70058 + (0x10000 * (PORT)))
+#define NX_NIU_XG_STATUS(PORT)		((UNM_CRB_NIU) + 0x70018 + (0x10000 * (PORT)))
+#define NX_NIC_XG_DRP_PACKETS_W		(UNM_CRB_NIU + 0x000B4)
+#define NX_NIC_XG_DRP_PACKETS_R		(UNM_CRB_NIU + 0x000B8)
+#define NX_NIU_XG_OVERFLOW(PORT)	((UNM_CRB_NIU) + 0x0019C + (0x4 * (PORT)))
+
+
+//PQM related registers.
+#define NX_PQM_Q_STATUS_MUX (UNM_CRB_PQM_NET + 0x00060)
+#define NX_PQM_Q_STATUS_VAL (UNM_CRB_PQM_NET + 0x00064)
+
+//SQM related registers.
+#define NX_SQM_BASE_Q(G,Q)      (UNM_SQM_BASE(G) + (Q)*0x00020)
+#define NX_SQM_CURR_LEN(G,Q)    (NX_SQM_BASE_Q(G,Q) + 0x00418)
 
 // These are offset to a particular Peg's CRB base address
 #define CRB_REG_EX_PC                   0x3c
@@ -1697,13 +1799,6 @@ void unm_xport_unlock(unsigned long);
  * The PCI VendorID and DeviceID for our board.
  */
 #define PCI_VENDOR_ID_NX           0x4040
-#define PCI_DEVICE_ID_NX_XG        0x0001
-#define PCI_DEVICE_ID_NX_CX4       0x0002
-#define PCI_DEVICE_ID_NX_QG        0x0003
-#define PCI_DEVICE_ID_NX_IMEZ      0x0004
-#define PCI_DEVICE_ID_NX_HMEZ      0x0005
-#define PCI_DEVICE_ID_NX_IMEZ_DUP  0x0024
-#define PCI_DEVICE_ID_NX_HMEZ_DUP  0x0025
 #define	PCI_DEVICE_ID_NX_P3_XG	   0x0100
 
 /*

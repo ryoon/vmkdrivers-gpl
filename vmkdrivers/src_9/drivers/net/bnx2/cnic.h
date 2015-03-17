@@ -1,8 +1,8 @@
-/* cnic.h: Broadcom CNIC core network driver.
+/* cnic.h: QLogic CNIC core network driver.
  *
- * Copyright (c) 2006-2010 Broadcom Corporation
+ * Copyright (c) 2009-2014 QLogic Corporation
  *
- * Portions Copyright (c) VMware, Inc. 2009-2010, All Rights Reserved.
+ * Portions Copyright (c) VMware, Inc. 2009-2013, All Rights Reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -15,9 +15,28 @@
 #ifndef CNIC_H
 #define CNIC_H
 
+#define CNIC_MODULE_VERSION	"1.78.76.v60.13"
+#define CNIC_MODULE_RELDATE	"May 21, 2014"
 #if !defined(__LITTLE_ENDIAN) && !defined(__BIG_ENDIAN)
 	#error "Missing either LITTLE_ENDIAN or BIG_ENDIAN definition."
 #endif
+
+/* for errors (never masked) */
+#define CNIC_INFO(__fmt, __args...)				\
+do {								\
+	printk(KERN_INFO "[%s:%d(%s)]" __fmt,			\
+	       __func__, __LINE__,				\
+	       dev->netdev ? (dev->netdev->name) : "?",		\
+	       ##__args);					\
+	} while (0)
+
+#define CNIC_ERR(__fmt, __args...)				\
+do {								\
+	printk(KERN_ERR "[%s:%d(%s)]" __fmt,			\
+	       __func__, __LINE__,				\
+	       dev->netdev ? (dev->netdev->name) : "?",		\
+	       ##__args);					\
+	} while (0)
 
 #ifndef DIV_ROUND_UP
 #define DIV_ROUND_UP(n,d) (((n) + (d) - 1) / (d))
@@ -35,10 +54,62 @@
 #define ISCSI_DEF_MAX_BURST_LEN			262144
 #endif
 
+#ifndef rcu_dereference_protected
+
+#define rcu_dereference_protected(p, c) \
+	rcu_dereference((p))
+
+#endif
+
+#ifndef __rcu
+#define __rcu
+#endif
+
+#ifndef RCU_INIT_POINTER
+#define RCU_INIT_POINTER(p, v) \
+		(p = (typeof(*v) __force __rcu *)(v))
+#endif
+
+#ifndef pr_warning
+#define pr_warning(fmt, ...) \
+	printk(KERN_WARNING pr_fmt(fmt), ##__VA_ARGS__)
+#endif
+
+#ifndef pr_warn
+#define pr_warn pr_warning
+#endif
+
+#if !defined(netdev_printk) && (LINUX_VERSION_CODE < 0x020624)
+
+#if (LINUX_VERSION_CODE < 0x020615)
+#define NET_PARENT_DEV(netdev)  ((netdev)->class_dev.dev)
+#else
+#define NET_PARENT_DEV(netdev)  ((netdev)->dev.parent)
+#endif
+
+#define netdev_printk(level, netdev, format, args...)           \
+	dev_printk(level, NET_PARENT_DEV(netdev),       \
+		   "%s: " format,                               \
+		   netdev_name(netdev), ##args)
+#endif
+
+#ifndef netdev_warn
+#define netdev_warn(dev, format, args...)                       \
+	netdev_printk(KERN_WARNING, dev, format, ##args)
+#endif
+
 #define ISCSI_DEFAULT_MAX_OUTSTANDING_R2T 	(1)
 
 /* Formerly Cstorm iSCSI EQ index (HC_INDEX_C_ISCSI_EQ_CONS) */
-#define HC_INDEX_ISCSI_EQ_CONS          6
+#define HC_INDEX_ISCSI_EQ_CONS			6
+
+/* Formerly Ustorm iSCSI EQ index (HC_INDEX_U_FCOE_EQ_CONS) */
+#define HC_INDEX_FCOE_EQ_CONS			3
+
+#define C_SB_ETH_TX_CQ_INDEX			5
+
+#define HC_SP_INDEX_ETH_ISCSI_CQ_CONS		5
+#define HC_SP_INDEX_ETH_ISCSI_RX_CQ_CONS	1
 
 #define KWQ_PAGE_CNT	4
 #define KCQ_PAGE_CNT	16
@@ -115,18 +186,18 @@ struct cnic_work_node {
 
 #define MAX_ISCSI_TBL_SZ	256
 
-#define KWQE_CNT (BCM_PAGE_SIZE / sizeof(struct kwqe))
-#define KCQE_CNT (BCM_PAGE_SIZE / sizeof(struct kcqe))
+#define KWQE_CNT (BNX2_PAGE_SIZE / sizeof(struct kwqe))
+#define KCQE_CNT (BNX2_PAGE_SIZE / sizeof(struct kcqe))
 #define MAX_KWQE_CNT (KWQE_CNT - 1)
 #define MAX_KCQE_CNT (KCQE_CNT - 1)
 
 #define MAX_KWQ_IDX	((KWQ_PAGE_CNT * KWQE_CNT) - 1)
 #define MAX_KCQ_IDX	((KCQ_PAGE_CNT * KCQE_CNT) - 1)
 
-#define KWQ_PG(x) (((x) & ~MAX_KWQE_CNT) >> (BCM_PAGE_BITS - 5))
+#define KWQ_PG(x) (((x) & ~MAX_KWQE_CNT) >> (BNX2_PAGE_BITS - 5))
 #define KWQ_IDX(x) ((x) & MAX_KWQE_CNT)
 
-#define KCQ_PG(x) (((x) & ~MAX_KCQE_CNT) >> (BCM_PAGE_BITS - 5))
+#define KCQ_PG(x) (((x) & ~MAX_KCQE_CNT) >> (BNX2_PAGE_BITS - 5))
 #define KCQ_IDX(x) ((x) & MAX_KCQE_CNT)
 
 #define BNX2X_NEXT_KCQE(x) (((x) & (MAX_KCQE_CNT - 1)) ==		\
@@ -138,7 +209,7 @@ struct cnic_work_node {
 #define BNX2X_KWQ_DATA(cp, x)						\
 	&(cp)->kwq_16_data[BNX2X_KWQ_DATA_PG(cp, x)][BNX2X_KWQ_DATA_IDX(cp, x)]
 
-#define DEF_IPID_COUNT		0xc001
+#define DEF_IPID_START		0x8000
 
 #define DEF_KA_TIMEOUT		10000
 #define DEF_KA_INTERVAL		300000
@@ -153,6 +224,159 @@ struct cnic_work_node {
 #define DEF_MAX_DA_COUNT	2
 #define DEF_SWS_TIMER		1000
 #define DEF_MAX_CWND		0xffff
+
+#define MAX_IOOO_BLOCK_SUPPORTED	(256)
+#define MAX_OOO_RX_DESC_CNT		(BNX2_RX_DESC_CNT * 4)
+#define MAX_OOO_TX_DESC_CNT		(BNX2_RX_DESC_CNT * 4)
+#define MAX_BNX2_OOO_RX_DESC_CNT	(BNX2_RX_DESC_CNT * 2)
+#define MAX_BNX2_OOO_TX_DESC_CNT	(BNX2_RX_DESC_CNT * 2)
+
+#define MAX_RX_OOO_RING			(10)
+#define MAX_TX_OOO_RING			(10)
+
+#define BNX2_RXP_SCRATCH_OOO_RX_CID	(BNX2_RXP_SCRATCH + 0x31e0)
+#define BNX2_RXP_SCRATCH_OOO_FLAGS	(BNX2_RXP_SCRATCH + 0x31e4)
+
+#define RX_CATCHUP_CID			(RX_CID + 1)
+#define TX_CATCHUP_CID			(TX_CID + 2)
+#define BNX2_IOOO_FLAGS_ENABLE		(1<<0)
+#define BNX2_IOOO_FLAGS_OVERRIDE	(1<<31)
+
+#define TX_OOO_EST_NBD			8
+
+#if (CNIC_ISCSI_OOO_SUPPORT)
+/* packet descriptor for 1g, 10g uses skb  */
+struct iooo_pkt_desc {
+	struct list_head	list;
+	u32			pkt_len;
+	void			*buf;
+	dma_addr_t		mapping;
+	struct sk_buff		*skb;	/* 10g */
+};
+
+struct iooo_block {
+	struct list_head	list;
+	u32			id;
+	u32			pkt_cnt;
+	struct iooo_pkt_desc	pd_head;
+};
+
+struct bnx2_ooo_fhdr {
+	u8			drop_blk_idx;
+	u8			drop_size;
+	u8			opcode;
+	u8			blk_idx;
+	u32			icid;
+	u16			vlan_tag;
+	u16			pkt_len;
+	u16			tcp_udp_xsum;
+	u16			ip_xsum;
+};
+
+struct bnx2x_ooo_fhdr {
+	u8			qidx;
+	u8			pl_offset;
+	u8			status;
+	u8			error;
+	u32			rss_hash;
+	u16			pkt_len;
+	u16			vlan;
+	u16			flags;
+	u16			bd_len;
+	u32			cid;
+	u8			blk_idx;
+	u8			opcode;
+	u8			drop_size;
+	u8			drop_blk_idx;
+};
+
+struct iooo_tx_ring_info {
+	u32			tx_prod_bseq;
+	u16			tx_prod;
+	u32			tx_desc_cnt;
+	u32			tx_desc_cnt_max;
+
+	u16			*tx_cons_idx_ptr;
+	u32			tx_cid_addr;
+	u32			tx_bidx_addr;
+	u32			tx_bseq_addr;
+	u32			tx_buf_size;
+	u32			tx_max_ring;
+	struct iooo_pkt_desc	tx_pend_pd_head;
+	u32			tx_pend_pd_cnt;
+	u32			tx_total_pkt_sent;
+
+	struct bnx2_tx_bd	*tx_desc_ring[MAX_TX_OOO_RING];
+	struct iooo_pkt_desc	*tx_pkt_desc[MAX_OOO_TX_DESC_CNT];
+
+	u16			tx_cons;
+	u16			hw_tx_cons;
+
+	dma_addr_t		tx_desc_mapping[MAX_TX_OOO_RING];
+};
+
+struct iooo_rx_ring_info {
+	u32			rx_prod_bseq;
+	u16			rx_prod;
+	u16			rx_cons;
+
+	u16			*rx_cons_idx_ptr;
+	u32			rx_cid_addr;
+	u32			rx_bidx_addr;
+	u32			rx_bseq_addr;
+
+	u32			rx_max_ring;
+
+	u32			rx_desc_cnt;
+	u32			rx_desc_cnt_max;
+	u32			rx_buf_size;
+
+	struct iooo_pkt_desc	*rx_pkt_desc[MAX_OOO_RX_DESC_CNT];
+	struct bnx2_rx_bd	*rx_desc_ring[MAX_RX_OOO_RING];
+
+	dma_addr_t		rx_desc_mapping[MAX_RX_OOO_RING];
+};
+
+struct iooo_hsi {
+	u32			iscsi_cid;
+	u8			blk_idx;
+	u8			opcode;
+	u8			drop_size;
+	u8			drop_blk_idx;
+};
+
+struct iooo_hsi_bnx2x {
+	u32			iscsi_cid;
+	u8			drop_blk_idx;
+	u8			drop_size;
+	u8			opcode;
+	u8			blk_idx;
+};
+
+struct iooo_mgmt {
+	unsigned long		flags;
+	/* Control flags */
+#define IOOO_RESC_AVAIL         (0)
+#define IOOO_START              (1)
+	/* Runtime flags */
+#define IOOO_BLK_FULL           (10)
+#define IOOO_BLK_EMPTY          (11)
+	/* - 1G specifics */
+#define IOOO_START_HANDLER      (12)
+#define IOOO_START_TX_FREE      (13)
+	u16			blk_cons;
+	u16			blk_prod;
+	u16			blk_alloc[MAX_IOOO_BLOCK_SUPPORTED];
+	struct iooo_block	blk[MAX_IOOO_BLOCK_SUPPORTED];
+
+	struct iooo_hsi		hsi;
+	struct iooo_rx_ring_info rxr;
+	struct iooo_tx_ring_info txr;
+	u32			pkt_buf_size;
+	spinlock_t              lock;
+};
+
+#endif
 
 struct cnic_ctx {
 	u32		cid;
@@ -189,6 +413,10 @@ struct cnic_iscsi {
 	struct cnic_dma		task_array_info;
 	struct cnic_dma		r2tq_info;
 	struct cnic_dma		hq_info;
+#if (CNIC_ISCSI_OOO_SUPPORT)
+	struct iooo_block	pen;
+	u32			blk_cnt;
+#endif
 };
 
 struct cnic_context {
@@ -201,21 +429,28 @@ struct cnic_context {
 	unsigned long		ctx_flags;
 #define	CTX_FL_OFFLD_START	0
 #define	CTX_FL_DELETE_WAIT	1
+#define	CTX_FL_CID_ERROR	2
 	u8			ulp_proto_id;
 	union {
 		struct cnic_iscsi	*iscsi;
 	} proto;
 };
 
-struct l5cm_spe;
+struct kcq_info {
+	struct cnic_dma dma;
+	struct kcqe	**kcq;
 
-struct iro {
-	u32 base;
-	u16 m1;
-	u16 m2;
-	u16 m3;
-	u16 size;
+	u16		*hw_prod_idx_ptr;
+	u16		sw_prod_idx;
+	u16		*status_idx_ptr;
+	u32		io_addr;
+
+	u16		(*next_idx)(u16);
+	u16		(*hw_idx)(u16);
 };
+
+
+struct l5cm_spe;
 
 struct cnic_local {
 
@@ -231,12 +466,12 @@ struct cnic_local {
 	u32 cnic_local_flags;
 #define	CNIC_LCL_FL_KWQ_INIT	0x00000001
 #define CNIC_LCL_FL_IRQ_REQD    0x00000002
+#define CNIC_LCL_FL_HW_START	0x00000003
 
 	struct cnic_dev *dev;
 
 	struct cnic_eth_dev *ethdev;
-	struct iro		*iro_arr;
-#define IRO (((struct cnic_local *) dev->cnic_priv)->iro_arr)
+	struct iro const	*iro_arr;
 
 	u32 kwq_cid_addr;
 	u32 kcq_cid_addr;
@@ -254,20 +489,16 @@ struct cnic_local {
 	volatile u16	*kwq_con_idx_ptr;
 	u16		kwq_con_idx;
 
-	struct cnic_dma	kcq_info;
-	struct kcqe	**kcq;
-
-	u16		*kcq_hw_prod_idx_ptr;
-	u16		*kcq_status_idx_ptr;
-
-	u16		kcq_prod_idx;
-	u32		kcq_io_addr;
+	struct kcq_info		kcq1;
+	struct kcq_info		kcq2;
 
 	union {
 		void				*gen;
 		struct status_block_msix	*bnx2;
-#if (NEW_BNX2X_HSI == 60)
-		struct host_hc_status_block_e1x	*bnx2x;
+#if (NEW_BNX2X_HSI >= 60)
+		struct host_hc_status_block_e1x *bnx2x_e1x;
+		struct host_hc_status_block_e2  *bnx2x_e2;
+
 		/* index values - which counter to update */
 		#define SM_RX_ID		0
 		#define SM_TX_ID		1
@@ -282,19 +513,26 @@ struct cnic_local {
 	u32				last_status_idx;
 	struct tasklet_struct		cnic_irq_task;
 
-	struct kcqe	*completed_kcq[MAX_COMPLETED_KCQE];
+	struct kcqe		*completed_kcq[MAX_COMPLETED_KCQE];
 
-	struct cnic_sock *csk_tbl;
+	struct cnic_sock 	*csk_tbl;
 	struct cnic_id_tbl	csk_port_tbl;
-	u32		next_tcp_port;
+	u32			next_tcp_port;
 
-	struct cnic_dma	conn_buf_info;
-	struct cnic_dma	gbl_buf_info;
+	struct cnic_dma		conn_buf_info;
+	struct cnic_dma		gbl_buf_info;
 
 	struct cnic_iscsi	*iscsi_tbl;
 	struct cnic_context	*ctx_tbl;
 	struct cnic_id_tbl	cid_tbl;
 	atomic_t		iscsi_conn;
+	u32			iscsi_start_cid;
+
+        u32			fcoe_init_cid;
+        u32			fcoe_start_cid;
+        struct cnic_id_tbl	fcoe_cid_tbl;
+
+	u32			max_cid_space;
 
 	/* per connection parameters */
 	int			num_iscsi_tasks;
@@ -313,7 +551,11 @@ struct cnic_local {
 
 	struct tasklet_struct	cnic_task;
 
+#ifdef INIT_DELAYED_WORK
 	struct delayed_work	delete_task;
+#else
+	struct work_struct	delete_task;
+#endif
 
 #ifndef HAVE_NETEVENT
 	struct timer_list	cnic_timer;
@@ -327,17 +569,21 @@ struct cnic_local {
 
 	u32			chip_id;
 	int			func;
-	u32			pfid;
+
 #if defined (__VMKLNX__)
 	vmk_EthAddress		srcMACAddr; 
 	vmk_EthAddress		nextHopMACAddr; 
 	vmk_uint32		pmtu;
  	vmk_uint32		vlan_id;
 	vmk_uint32		srcFamily;
-	vmk_uint8		srcIPAddr[4];  // XXX NOT IPv6 compatible
+	vmk_uint8		srcIPAddr[16];  // IPv6 compatible
 	vmk_uint32 		cnic_local_port_min;
 	vmk_uint32 		cnic_local_port_nr;
 #endif /* defined (__VMKLNX__) */
+
+#if (CNIC_ISCSI_OOO_SUPPORT)
+	struct iooo_mgmt	iooo_mgmr;
+#endif
 
 	struct cnic_ops		*cnic_ops;
 	int			(*start_hw)(struct cnic_dev *);
@@ -352,8 +598,9 @@ struct cnic_local {
 	void			(*disable_int_sync)(struct cnic_dev *);
 	void			(*ack_int)(struct cnic_dev *);
 	void			(*close_conn)(struct cnic_sock *, u32 opcode);
-	u16			(*next_idx)(u16);
-	u16			(*hw_idx)(u16);
+#if (CNIC_ISCSI_OOO_SUPPORT)
+	void			(*stop_ooo_hw)(struct cnic_dev *);
+#endif
 };
 
 struct bnx2x_bd_chain_next {
@@ -416,6 +663,7 @@ static u8 calc_crc8( u32 data, u8 crc)
 #define CDU_RSRVD_VALUE_TYPE_A(_cid, _region, _type)	\
 	(0x80 | ((CDU_CRC8(_cid, _region, _type)) & 0x7f))
 
+#define BNX2X_ISCSI_START_CID		18
 #define BNX2X_ISCSI_NUM_CONNECTIONS	128
 #define BNX2X_ISCSI_TASK_CONTEXT_SIZE	128
 #define BNX2X_ISCSI_CONTEXT_MEM_SIZE	1024
@@ -427,34 +675,13 @@ static u8 calc_crc8( u32 data, u8 crc)
 #define BNX2X_ISCSI_PBL_NOT_CACHED	0xff
 #define BNX2X_ISCSI_PDU_HEADER_NOT_CACHED	0xff
 
-#define BNX2X_CHIP_NUM_57710		0x164e
-#define BNX2X_CHIP_NUM_57711		0x164f
-#define BNX2X_CHIP_NUM_57711E		0x1650
-#define BNX2X_CHIP_NUM_57712		0x1662
-#define BNX2X_CHIP_NUM_57712E		0x1663
-#define BNX2X_CHIP_NUM_57713		0x1651
-#define BNX2X_CHIP_NUM_57713E		0x1652
+#define BNX2X_FCOE_NUM_CONNECTIONS	1024
 
-#define BNX2X_CHIP_NUM(x)		(x >> 16)
-#define BNX2X_CHIP_IS_57711(x)		\
-	(BNX2X_CHIP_NUM(x) == BNX2X_CHIP_NUM_57711)
-#define BNX2X_CHIP_IS_57711E(x)		\
-	(BNX2X_CHIP_NUM(x) == BNX2X_CHIP_NUM_57711E)
-#define BNX2X_CHIP_IS_E1H(x)		\
-	(BNX2X_CHIP_IS_57711(x) || BNX2X_CHIP_IS_57711E(x))
-#define BNX2X_CHIP_IS_57712(x)		\
-	(BNX2X_CHIP_NUM(x) == BNX2X_CHIP_NUM_57712)
-#define BNX2X_CHIP_IS_57712E(x)		\
-	(BNX2X_CHIP_NUM(x) == BNX2X_CHIP_NUM_57712E)
-#define BNX2X_CHIP_IS_57713(x)		\
-	(BNX2X_CHIP_NUM(x) == BNX2X_CHIP_NUM_57713)
-#define BNX2X_CHIP_IS_57713E(x)		\
-	(BNX2X_CHIP_NUM(x) == BNX2X_CHIP_NUM_57713E)
-#define BNX2X_CHIP_IS_E2(x)			\
-	(BNX2X_CHIP_IS_57712(x) || BNX2X_CHIP_IS_57712E(x) || \
-	 BNX2X_CHIP_IS_57713(x) || BNX2X_CHIP_IS_57713E(x))
+#define BNX2X_FCOE_L5_CID_BASE		MAX_ISCSI_TBL_SZ
 
-#define IS_E1H_OFFSET       		BNX2X_CHIP_IS_E1H(cp->chip_id)
+#define BNX2X_CONTEXT_MEM_SIZE		1024
+
+#define BNX2X_CHIP_IS_E2_PLUS(bp) (CHIP_IS_E2(bp) || CHIP_IS_E3(bp))
 
 #define BNX2X_SHMEM_MF_BLK_OFFSET	0x7e4
 
@@ -469,25 +696,20 @@ static u8 calc_crc8( u32 data, u8 crc)
 		 (CNIC_RD(dev, BNX2X_SHMEM2_ADDR(base, size)) >	\
 		  offsetof(struct shmem2_region, field)))
 
-#if (NEW_BNX2X_HSI == 60)
-#define CNIC_PORT(cp)			((cp)->pfid & 1)
-#else
-#define CNIC_PORT(cp)			((cp)->func % PORT_MAX)
-#endif
-
 #define CNIC_FUNC(cp)			((cp)->func)
-#define CNIC_PATH(cp)			(!BNX2X_CHIP_IS_E2(cp->chip_id) ? 0 :\
-					 (CNIC_FUNC(cp) & 1))
-#define CNIC_E1HVN(cp)			((cp)->pfid >> 1)
 
-#define BNX2X_HW_CID(cp, x)		((CNIC_PORT(cp) << 23) | \
-					 (CNIC_E1HVN(cp) << 17) | (x))
+#define BNX2X_HW_CID(bp, x)		((BP_PORT(bp) << 23) | \
+					 (BP_VN(bp) << 17) | (x))
 
 #define BNX2X_SW_CID(x)			((x) & 0x1ffff)
 
-#define TCP_TSTORM_OOO_DROP_AND_PROC_ACK	(0)
-#define TCP_TSTORM_OOO_SEND_PURE_ACK		(1)
-#define TCP_TSTORM_OOO_SUPPORTED		(2)
+#define TCP_TSTORM_OOO_MASK			(3<<4)
+#if (NEW_BNX2X_HSI == 60)
+#define TCP_TSTORM_OOO_DROP_AND_PROC_ACK	(0<<4)
+#define TCP_TSTORM_OOO_SEND_PURE_ACK		(1<<4)
+#define TCP_TSTORM_OOO_SUPPORTED		(2<<4)
+#endif
 
+#define BNX2X_RAMROD_TO				(HZ / 4)
 #endif
 

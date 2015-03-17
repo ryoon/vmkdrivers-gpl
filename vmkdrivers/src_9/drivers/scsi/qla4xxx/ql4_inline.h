@@ -5,6 +5,10 @@
  * See LICENSE.qla4xxx for copyright and licensing details.
  */
 
+#if defined(__VMKLNX__)
+#include <vmklinux_9/vmklinux_scsi.h>
+#endif
+
 static inline struct ddb_entry *
 qla4xxx_lookup_ddb_by_os_index(struct scsi_qla_host *ha, int os_idx)
 {
@@ -136,3 +140,23 @@ qla4xxx_disable_intrs(struct scsi_qla_host *ha)
 	__qla4xxx_disable_intrs(ha);
 	spin_unlock_irqrestore(&ha->hardware_lock, flags);
 }
+
+#if defined(__VMKLNX__)
+static inline void
+qla4xxx_int_to_scsilun_with_sec_lun_id(uint16_t lun, struct scsi_lun *scsi_lun, uint64_t sllid)
+{
+	if (sllid != VMKLNX_SCSI_INVALID_SECONDLEVEL_ID) {
+		memset(scsi_lun, 0, 8);
+		scsi_lun->scsi_lun[0] = (lun >> 8) & 0xFF;
+		scsi_lun->scsi_lun[1] = lun & 0xFF;
+		scsi_lun->scsi_lun[2] = (vmk_uint8)((sllid >> 56) & 0xFF); /* sllid msb */
+		scsi_lun->scsi_lun[3] = (vmk_uint8)((sllid >> 48) & 0xFF);
+		scsi_lun->scsi_lun[4] = (vmk_uint8)((sllid >> 40) & 0xFF);
+		scsi_lun->scsi_lun[5] = (vmk_uint8)((sllid >> 32) & 0xFF);
+		scsi_lun->scsi_lun[6] = (vmk_uint8)((sllid >> 24) & 0xFF);
+		scsi_lun->scsi_lun[7] = (vmk_uint8)((sllid >> 16) & 0xFF); /* sllid lsb */
+	} else {
+		int_to_scsilun(lun, scsi_lun);
+	}
+}
+#endif

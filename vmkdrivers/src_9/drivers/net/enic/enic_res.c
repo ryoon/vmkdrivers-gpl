@@ -16,7 +16,6 @@
  * SOFTWARE.
  *
  */
-#ident "$Id: enic_res.c 64224 2010-11-09 19:43:13Z vkolluri $"
 
 #include <linux/kernel.h>
 #include <linux/errno.h>
@@ -46,7 +45,7 @@ int enic_get_vnic_config(struct enic *enic)
 	struct vnic_enet_config *c = &enic->config;
 	int err;
 
-	err = vnic_dev_mac_addr(enic->vdev, enic->mac_addr);
+	err = vnic_dev_get_mac_addr(enic->vdev, enic->mac_addr);
 	if (err) {
 		dev_err(enic_get_dev(enic),
 			"Error getting MAC addr, %d\n", err);
@@ -92,9 +91,8 @@ int enic_get_vnic_config(struct enic *enic)
 		max_t(u16, ENIC_MIN_MTU,
 		c->mtu));
 
-	c->intr_timer_usec = min_t(u32,
-		INTR_COALESCE_HW_TO_USEC(VNIC_INTR_TIMER_MAX),
-		c->intr_timer_usec);
+	c->intr_timer_usec = min_t(u32, c->intr_timer_usec,
+		vnic_dev_get_intr_coal_timer_max(enic->vdev));
 
 	dev_info(enic_get_dev(enic),
 		"vNIC MAC addr %02x:%02x:%02x:%02x:%02x:%02x "
@@ -102,11 +100,29 @@ int enic_get_vnic_config(struct enic *enic)
 		enic->mac_addr[0], enic->mac_addr[1], enic->mac_addr[2],
 		enic->mac_addr[3], enic->mac_addr[4], enic->mac_addr[5],
 		c->wq_desc_count, c->rq_desc_count, c->mtu);
-	dev_info(enic_get_dev(enic), "vNIC csum tx/rx %d/%d "
-		"tso/lro %d/%d intr timer %d usec rss %d\n",
-		ENIC_SETTING(enic, TXCSUM), ENIC_SETTING(enic, RXCSUM),
-		ENIC_SETTING(enic, TSO), ENIC_SETTING(enic, LRO),
-		c->intr_timer_usec, ENIC_SETTING(enic, RSS));
+	dev_info(enic_get_dev(enic), "vNIC csum tx/rx %s/%s "
+#if (LINUX_VERSION_CODE <= KERNEL_VERSION(3, 1, 00))
+		"tso/lro %s/%s rss %s intr mode %s type %s timer %d usec "
+#else
+		"tso %s rss %s intr mode %s type %s timer %d usec "
+#endif
+		"loopback tag 0x%04x\n",
+		ENIC_SETTING(enic, TXCSUM) ? "yes" : "no",
+		ENIC_SETTING(enic, RXCSUM) ? "yes" : "no",
+		ENIC_SETTING(enic, TSO) ? "yes" : "no",
+#if (LINUX_VERSION_CODE <= KERNEL_VERSION(3, 1, 00))
+		ENIC_SETTING(enic, LRO) ? "yes" : "no",
+#endif
+		ENIC_SETTING(enic, RSS) ? "yes" : "no",
+		c->intr_mode == VENET_INTR_MODE_INTX ? "INTx" :
+		c->intr_mode == VENET_INTR_MODE_MSI ? "MSI" :
+		c->intr_mode == VENET_INTR_MODE_ANY ? "any" :
+		"unknown",
+		c->intr_timer_type == VENET_INTR_TYPE_MIN ? "min" :
+		c->intr_timer_type == VENET_INTR_TYPE_IDLE ? "idle" :
+		"unknown",
+		c->intr_timer_usec,
+		c->loop_tag);
 
 	return 0;
 }
@@ -295,7 +311,7 @@ void enic_init_vnic_resources(struct enic *enic)
 
 	for (i = 0; i < enic->intr_count; i++) {
 		vnic_intr_init(&enic->intr[i],
-			INTR_COALESCE_USEC_TO_HW(enic->config.intr_timer_usec),
+			enic->config.intr_timer_usec,
 			enic->config.intr_timer_type,
 			mask_on_assertion);
 	}

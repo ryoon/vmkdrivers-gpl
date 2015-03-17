@@ -1,6 +1,6 @@
 /*
  *    Disk Array driver for HP Smart Array SAS controllers
- *    Copyright 2000, 2010 Hewlett-Packard Development Company, L.P.
+ *    Copyright 2000-2012 Hewlett-Packard Development Company, L.P.
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
@@ -19,7 +19,7 @@
  *
  */
 /*
- * Portions Copyright 2008, 2010 VMware, Inc.
+ * Portions Copyright 2008-2012 VMware, Inc.
  */
 /*
  * This file contains VMware-specific changes to the standard Linux hpsa driver.
@@ -29,7 +29,7 @@
 /* hpsa_limit_maxsgentries
  *	Set h->maxsgentries to reduce total memory consumed by sg chaining
  *	on VMware, since total memory consumed by driver for all controllers
- *	needs to be < 40MB.
+ *	needs to be < 30MB.
  */
 static inline void hpsa_limit_maxsgentries(struct ctlr_info *h)
 {
@@ -322,11 +322,11 @@ hpsa_set_sas_ids(struct ctlr_info *h,
 		if (physdev->LUN[i][16] == CONTROLLER_DEVICE)
 		{
 
-			if (sas_target > MAX_PATHS)
+			if (sas_target > MAX_EXT_TARGETS)
 			{
 				printk(KERN_ERR "hpsa%d: set_sas_ids: "
-					"sas target exceeds max paths=%d\n", 
-					sas_target, MAX_PATHS);
+					"sas target exceeds max targets=%d\n", 
+					sas_target, MAX_EXT_TARGETS);
 				return -1;
 			}
 			else 
@@ -478,13 +478,15 @@ hpsa_get_target_sas_identifier(struct scsi_target *starget, u64 *sas_id)
 static int hpsa_proc_get_info(char *buffer, char **start, off_t offset,
 			       int length, int *eof, void *data)
 {
-	off_t pos = 0;
 	off_t len = 0;
 	int size, i, ctlr;
 	int logicals = 0;
 	struct ctlr_info *h = (struct ctlr_info *) data;
 	struct hpsa_scsi_dev_t *drv;
 	unsigned long flags;
+#define HPSA_MAXPROCINFO_LINE 256
+	char line[HPSA_MAXPROCINFO_LINE];
+	static int loop_resume = 0;
 
 	ctlr = h->ctlr;
 
@@ -499,53 +501,58 @@ static int hpsa_proc_get_info(char *buffer, char **start, off_t offset,
 	h->busy_initializing = 1;
 	spin_unlock_irqrestore(&h->lock, flags);
 
-	/* count the logical disk devices */
-	for (i = 0; i < h->ndevices; i++) {
+	if(!offset)
+	{
+		/* count the logical disk devices */
+		for (i = 0; i < h->ndevices; i++) {
+			drv = h->dev[i];
+			if (drv == NULL )
+				continue;
+			if (drv->devtype == TYPE_DISK)
+				logicals++;
+		}
+
+		size = sprintf(buffer, "%s: HP %s Controller\n"
+			"Board ID: 0x%08lx\n"
+			"Firmware Version: %c%c%c%c\n"
+			"Driver Version: %s\n"
+			"Driver Build: %s\n"
+			"IRQ: %d\n"
+			"Logical drives: %d\n"
+			"Current Q depth: %d\n"
+			"Current # commands on controller: %d\n"
+			"Max Q depth since init: %d\n"
+			"Max # commands on controller since init: %d\n"
+			"Max SG entries since init: %d\n"
+			"Max Commands supported: %d\n"
+			"SCSI host number: %d\n"
+			"Offline volume monitoring: %s\n\n",
+			h->devname, h->product_name,
+			(unsigned long)h->board_id,
+			h->firm_ver[0], h->firm_ver[1],
+			h->firm_ver[2], h->firm_ver[3],
+			DRIVER_NAME, DRIVER_BUILD,
+			(unsigned int)h->intr[SIMPLE_MODE_INT],
+			logicals, h->Qdepth, h->commands_outstanding,
+			h->maxQsinceinit, h->max_outstanding, h->maxSG,
+			h->nr_cmds, h->scsi_host->host_no,
+			(h->offline_device_thread_state == OFFLINE_DEVICE_THREAD_STOPPED) ? "Not running": "Running");
+		len += size;
+	}
+
+	for (i = loop_resume; i < h->ndevices; i++) {
 		drv = h->dev[i];
 		if (drv == NULL )
-			continue; 
-		if (drv->devtype == TYPE_DISK)
-			logicals++;
-	}
-	
-	size = sprintf(buffer, "%s: HP %s Controller\n"
-		"Board ID: 0x%08lx\n"
-		"Firmware Version: %c%c%c%c\n"
-		"Driver Version: %s\n"
-		"Driver Build: %s\n"
-		"IRQ: %d\n"
-		"Logical drives: %d\n"
-		"Current Q depth: %d\n"
-		"Current # commands on controller: %d\n"
-		"Max Q depth since init: %d\n"
-		"Max # commands on controller since init: %d\n"
-		"Max SG entries since init: %d\n"
-		"Max Commands supported: %d\n"
-		"SCSI host number: %d\n\n",
-		h->devname, h->product_name,
-		(unsigned long)h->board_id,
-		h->firm_ver[0], h->firm_ver[1], 
-		h->firm_ver[2], h->firm_ver[3], 
-		DRIVER_NAME, DRIVER_BUILD,
-		(unsigned int)h->intr[SIMPLE_MODE_INT],
-		logicals, h->Qdepth, h->commands_outstanding,
-		h->maxQsinceinit, h->max_outstanding, h->maxSG, 
-		h->nr_cmds, h->scsi_host->host_no);
-	pos += size;
-	len += size;
-	for (i = 0; i < h->ndevices; i++) {
-		drv = h->dev[i];
-		if (drv == NULL ) 
 			continue;
 		/* Only show disk and enclosure information */
-		if (drv->devtype != TYPE_DISK && 
+		if (drv->devtype != TYPE_DISK &&
 			drv->devtype != TYPE_ENCLOSURE)
 			continue;
 
-		if (drv->raid_level > 5)
+                if (drv->raid_level > RAID_UNKNOWN)
 			drv->raid_level = RAID_UNKNOWN;
 
-		size = sprintf(buffer + len, "hpsa%d/"
+		size = snprintf(line, HPSA_MAXPROCINFO_LINE, "hpsa%d/"
 			"C%d:B%d:T%d:L%d"
                 	"\t%s\t%.16s\t%.4s\tRAID %s\n",
                         ctlr, h->scsi_host->host_no,
@@ -553,15 +560,26 @@ static int hpsa_proc_get_info(char *buffer, char **start, off_t offset,
 			scsi_device_type(drv->devtype),
 			drv->model, drv->revision,
 			raid_label[drv->raid_level]);
-		pos += size;
+		/* avoid buffer overflow */
+		if ((len + size) > length) {
+			loop_resume = i;
+			break;
+		}
+		sprintf(buffer + len, "%s", line);
+
 		len += size;
 	}
 
-	*eof = 1;
-	*start = buffer + offset;
-	len -= offset;
-	if (len > length)
-		len = length;
+	if (len == 0 ||
+		i == h->ndevices) {
+		*eof = 1;
+		loop_resume = 0;
+	}
+	else {
+		*eof = 0;
+	}
+
+	*start = buffer;
 	h->busy_initializing = 0;
 	return len;
 }
@@ -679,31 +697,31 @@ static void hpsa_set_tmf_support(struct ctlr_info *h)
 
 		/* Physical abilities */
                 if ( h->TMFSupportFlags & HPSATMF_PHYS_LUN_RESET)
-			hpsa_dbmsg(h, 0, "TMF Suport for: "
+			hpsa_dbmsg(h, 0, "TMF Support for: "
 				"Physical LUN Reset\n");
                 if ( h->TMFSupportFlags & HPSATMF_PHYS_NEX_RESET)
-			hpsa_dbmsg(h, 0, "TMF Suport for: "
+			hpsa_dbmsg(h, 0, "TMF Support for: "
 				"Physical Nexus Reset\n");
                 if ( h->TMFSupportFlags & HPSATMF_PHYS_TASK_ABORT)
-			hpsa_dbmsg(h, 0, "TMF Suport for: "
+			hpsa_dbmsg(h, 0, "TMF Support for: "
 				"Physical Task Aborts\n");
                 if ( h->TMFSupportFlags & HPSATMF_PHYS_TSET_ABORT)
-			hpsa_dbmsg(h, 0, "TMF Suport for: "
+			hpsa_dbmsg(h, 0, "TMF Support for: "
 				"Physical Task Set Abort\n");
                 if ( h->TMFSupportFlags & HPSATMF_PHYS_CLEAR_ACA)
-			hpsa_dbmsg(h, 0, "TMF Suport for: "
+			hpsa_dbmsg(h, 0, "TMF Support for: "
 				"Physical Clear ACA\n");
                 if ( h->TMFSupportFlags & HPSATMF_PHYS_CLEAR_TSET)
-			hpsa_dbmsg(h, 0, "TMF Suport for: "
+			hpsa_dbmsg(h, 0, "TMF Support for: "
 				"Physical Clear Task Set\n");
                 if ( h->TMFSupportFlags & HPSATMF_PHYS_QRY_TASK)
-			hpsa_dbmsg(h, 0, "TMF Suport for: "
+			hpsa_dbmsg(h, 0, "TMF Support for: "
 				"Physical Query Task\n");
                 if ( h->TMFSupportFlags & HPSATMF_PHYS_QRY_TSET)
-			hpsa_dbmsg(h, 0, "TMF Suport for: "
+			hpsa_dbmsg(h, 0, "TMF Support for: "
 				"Physical Query Task Set\n");
                 if ( h->TMFSupportFlags & HPSATMF_PHYS_QRY_ASYNC)
-			hpsa_dbmsg(h, 0, "TMF Suport for: "
+			hpsa_dbmsg(h, 0, "TMF Support for: "
 				"Physical Query Async\n");
 
 
@@ -841,6 +859,8 @@ static int decode_CC(
 	
         ei = cp->err_info;
         cmd = (struct scsi_cmnd *) cp->scsi_cmd;
+	if ( cmd == NULL )
+		return 0;
 	orig = cmd->result;	/* remember the original result */
 		
 	if ( ei->ScsiStatus  ) {
@@ -980,7 +1000,13 @@ static int decode_CC(
 		else if ( ( asc == 0x25)  && (ascq == 0x0) ) {
 			*ml+=sprintf(msg+*ml, "LUN not supported. ");
 			*dl+=sprintf(dmsg+*dl, "LUN not supported. No Connection. ");
-			cmd->result = DID_NO_CONNECT << 16;
+
+			/*
+			 * Stop converting 0x05/0x25/0x00 to DID_NO_CONNECT to
+			 * support PDL,PR 583042.
+			 */
+			cmd->resid = 0;
+			cmd->result = DID_OK << 16;
 		}
 		else if ( ( asc == 0x26)  && (ascq == 0x04) )
 			*ml+=sprintf(msg+*ml, "Invalid release of "

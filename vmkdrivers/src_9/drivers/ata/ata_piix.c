@@ -102,7 +102,7 @@
 #endif /* defined(__VMKLNX__) */
 
 #define DRV_NAME	"ata_piix"
-#define DRV_VERSION	"2.12-4vmw"
+#define DRV_VERSION	"2.12-10vmw"
 
 enum {
 	PIIX_IOCFG		= 0x54, /* IDE I/O configuration register */
@@ -155,6 +155,7 @@ enum piix_controller_ids {
 	ich8m_apple_sata_ahci,	/* locks up on second port enable */
 	tolapai_sata_ahci,
 	piix_pata_vmw,			/* PIIX4 for VMware, spurious DMA_ERR */
+        ich8_sata_snb,
 };
 
 struct piix_map_db {
@@ -319,6 +320,34 @@ static const struct pci_device_id piix_pci_tbl[] = {
 	{ 0x8086, 0x1e08, PCI_ANY_ID, PCI_ANY_ID, 0, 0, ich8_2port_sata },
 	/* SATA Controller IDE (Panther Point) */
 	{ 0x8086, 0x1e09, PCI_ANY_ID, PCI_ANY_ID, 0, 0, ich8_2port_sata },
+        /* SATA Controller IDE (Lynx Point) */
+        { 0x8086, 0x8c00, PCI_ANY_ID, PCI_ANY_ID, 0, 0, ich8_sata_snb },
+        /* SATA Controller IDE (Lynx Point) */
+        { 0x8086, 0x8c01, PCI_ANY_ID, PCI_ANY_ID, 0, 0, ich8_sata_snb },
+        /* SATA Controller IDE (Lynx Point) */
+        { 0x8086, 0x8c08, PCI_ANY_ID, PCI_ANY_ID, 0, 0, ich8_2port_sata },
+        /* SATA Controller IDE (Lynx Point) */
+        { 0x8086, 0x8c09, PCI_ANY_ID, PCI_ANY_ID, 0, 0, ich8_2port_sata },
+        /* SATA Controller IDE (Avoton) */
+        { 0x8086, 0x1f20, PCI_ANY_ID, PCI_ANY_ID, 0, 0, ich8_sata_snb },
+        /* SATA Controller IDE (Avoton) */
+        { 0x8086, 0x1f21, PCI_ANY_ID, PCI_ANY_ID, 0, 0, ich8_sata_snb },
+        /* SATA Controller IDE (Avoton) */
+        { 0x8086, 0x1f30, PCI_ANY_ID, PCI_ANY_ID, 0, 0, ich8_2port_sata },
+        /* SATA Controller IDE (Avoton) */
+        { 0x8086, 0x1f31, PCI_ANY_ID, PCI_ANY_ID, 0, 0, ich8_2port_sata },
+        /* SATA Controller IDE (Wellsburg) */
+        { 0x8086, 0x8d00, PCI_ANY_ID, PCI_ANY_ID, 0, 0, ich8_sata_snb },
+        /* SATA Controller IDE (Wellsburg) */
+        { 0x8086, 0x8d08, PCI_ANY_ID, PCI_ANY_ID, 0, 0, ich8_2port_sata },
+        /* SATA Controller IDE (Wellsburg) */
+        { 0x8086, 0x8d60, PCI_ANY_ID, PCI_ANY_ID, 0, 0, ich8_sata_snb },
+        /* SATA Controller IDE (Wellsburg) */
+        { 0x8086, 0x8d68, PCI_ANY_ID, PCI_ANY_ID, 0, 0, ich8_2port_sata },
+	/* SATA Controller IDE (Coleto Creek) */
+	{ 0x8086, 0x23a1, PCI_ANY_ID, PCI_ANY_ID, 0, 0, ich8_2port_sata },
+	/* SATA Controller IDE (Coleto Creek) */
+	{ 0x8086, 0x23a6, PCI_ANY_ID, PCI_ANY_ID, 0, 0, ich8_2port_sata },
 #endif /* defined(__VMKLNX__) */
 
 	{ }	/* terminate list */
@@ -610,6 +639,7 @@ static const struct piix_map_db *piix_map_db_table[] = {
 	[ich8_2port_sata]	= &ich8_2port_map_db,
 	[ich8m_apple_sata_ahci]	= &ich8m_apple_map_db,
 	[tolapai_sata_ahci]	= &tolapai_map_db,
+        [ich8_sata_snb]         = &ich8_map_db,
 };
 
 static struct ata_port_info piix_port_info[] = {
@@ -741,6 +771,15 @@ static struct ata_port_info piix_port_info[] = {
 		.udma_mask	= ATA_UDMA_MASK_40C,
 		.port_ops	= &piix_vmw_ops,
 	},
+
+        [ich8_sata_snb] =
+        {
+                .flags          = PIIX_SATA_FLAGS | PIIX_FLAG_SIDPR,
+                .pio_mask       = 0x1f, /* pio0-4 */
+                .mwdma_mask     = 0x07, /* mwdma0-2 */
+                .udma_mask      = ATA_UDMA6,
+                .port_ops       = &piix_sata_ops,
+        },
 
 };
 
@@ -1793,7 +1832,13 @@ static int __init piix_init(void)
 	if (rc)
 		return rc;
 
+#if !defined(__VMKLNX__)
+	/*
+	 * Avoid probe failure for devices that are discovered after
+	 * driver is loaded successfully.
+	 */
 	in_module_init = 0;
+#endif /* defined(__VMKLNX__) */
 
 	DPRINTK("done\n");
 	return 0;

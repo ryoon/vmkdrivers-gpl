@@ -1,6 +1,6 @@
-/* bnx2.h: Broadcom NX2 network driver.
+/* bnx2.h: QLogic NX2 network driver.
  *
- * Copyright (c) 2004-2010 Broadcom Corporation
+ * Copyright (c) 2009-2014 QLogic Corporation
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -13,494 +13,23 @@
 #ifndef BNX2_H
 #define BNX2_H
 
-#if (LINUX_VERSION_CODE >= 0x020610)
-#define BCM_CNIC 1
-#endif
-
-#if defined(__VMKLNX__) && (VMWARE_ESX_DDK_VERSION >= 41000)
-#define VMWARE_ISCSI
-#endif
-
-#if defined(__VMKLNX__) && \
-    (VMWARE_ESX_DDK_VERSION >= 40000)
-#define BNX2_VMWARE_BMAPILNX
-#endif
-
-#if defined(__VMKLNX__)
-#define HAVE_LE32	1
-#define HAVE_IP_HDR	1
-#define NEW_SKB		1
-#define BNX2_NEW_NAPI	1
-#endif
-
-#ifndef ADVERTISE_1000XFULL
-#define ADVERTISE_1000XFULL	0x0020
-#define ADVERTISE_1000XHALF	0x0040
-#define ADVERTISE_1000XPAUSE	0x0080
-#define ADVERTISE_1000XPSE_ASYM	0x0100
-#endif
-
-#ifndef ADVERTISE_PAUSE_CAP
-#define ADVERTISE_PAUSE_CAP	0x0400
-#define ADVERTISE_PAUSE_ASYM	0x0800
-#endif
-
-#ifndef MII_CTRL1000
-#define MII_CTRL1000		0x9
-#define MII_STAT1000		0xa
-#endif
-
-#ifndef BMCR_SPEED1000
-#define BMCR_SPEED1000		0x0040
-#endif
-
-#ifndef ADVERTISE_1000FULL
-#define ADVERTISE_1000FULL	0x0200
-#define ADVERTISE_1000HALF	0x0100
-#endif
-
-#ifndef SPEED_2500
-#define SPEED_2500		2500
-#endif
-
-#ifndef SUPPORTED_2500baseX_Full
-#define SUPPORTED_2500baseX_Full	(1 << 15)
-#define ADVERTISED_2500baseX_Full	(1 << 15)
-#endif
-
-#ifndef ETH_FCS_LEN
-#define ETH_FCS_LEN	4
-#endif
-
-#ifndef PCI_DEVICE_ID_NX2_5706
-#define PCI_DEVICE_ID_NX2_5706	0x164a
-#define PCI_DEVICE_ID_NX2_5706S	0x16aa
-#endif
-
-#ifndef PCI_DEVICE_ID_NX2_5708
-#define PCI_DEVICE_ID_NX2_5708	0x164c
-#define PCI_DEVICE_ID_NX2_5708S	0x16ac
-#endif
-
-#ifndef PCI_DEVICE_ID_NX2_5709
-#define PCI_DEVICE_ID_NX2_5709	0x1639
-#endif
-
-#ifndef PCI_DEVICE_ID_NX2_5709S
-#define PCI_DEVICE_ID_NX2_5709S	0x163a
-#endif
-
-#ifndef PCI_DEVICE_ID_AMD_8132_BRIDGE
-#define PCI_DEVICE_ID_AMD_8132_BRIDGE	0x7458
-#endif
-
-#ifndef IRQ_RETVAL
-typedef void irqreturn_t;
-#define IRQ_RETVAL(x)
-#define IRQ_HANDLED
-#define IRQ_NONE
-#endif
-
-#ifndef IRQF_SHARED
-#define IRQF_SHARED SA_SHIRQ
-#endif
-
-#ifndef NETDEV_TX_OK
-#define NETDEV_TX_OK 0
-#endif
-
-#ifndef NETDEV_TX_BUSY
-#define NETDEV_TX_BUSY 1
-#endif
-
-#if (LINUX_VERSION_CODE < 0x020620)
-typedef int netdev_tx_t;
-#endif
-
-#if (LINUX_VERSION_CODE < 0x020547)
-#define pci_set_consistent_dma_mask(pdev, mask) (0)
-#endif
-
-#ifndef PCI_CAP_ID_EXP
-#define PCI_CAP_ID_EXP 0x10
-#endif
-
-#ifndef PCI_MSIX_FLAGS
-#define PCI_MSIX_FLAGS		2
-#endif
-
-#ifndef PCI_MSIX_FLAGS_ENABLE
-#define PCI_MSIX_FLAGS_ENABLE	(1 << 15)
-#endif
-
-#ifndef DEFINE_PCI_DEVICE_TABLE
-#define DEFINE_PCI_DEVICE_TABLE(_table) \
-	struct pci_device_id _table[]
-#endif
-
-#if (LINUX_VERSION_CODE < 0x020604)
-#define MODULE_VERSION(version)
-#endif
-
-#ifndef SET_MODULE_OWNER
-#define SET_MODULE_OWNER(dev) do { } while (0)
-#endif
-
-#ifndef CHECKSUM_PARTIAL
-#define CHECKSUM_PARTIAL CHECKSUM_HW
-#endif
-
-#ifndef DMA_BIT_MASK
-#define DMA_BIT_MASK(n)	(((n) == 64) ? ~0ULL : ((1ULL<<(n))-1))
-#endif
-
-#ifndef mmiowb
-#define mmiowb()
-#endif
-
-#if !defined(__iomem)
-#define __iomem
-#endif
-
-#if !defined(__rcquires)
-#define __acquires(x)
-#define __releases(x)
-#endif
-
-#ifndef HAVE_LE32
-typedef u32 __le32;
-typedef u32 __be32;
-#endif
-
-#ifndef USEC_PER_SEC
-#define USEC_PER_SEC	1000000L
-#endif
-
-#ifndef __maybe_unused
-#define __maybe_unused
-#endif
-
-#ifndef uninitialized_var
-#define uninitialized_var(x) x
-#endif
-
-#if (LINUX_VERSION_CODE < 0x2060b)
-typedef u32 pm_message_t;
-typedef u32 pci_power_t;
-#define PCI_D0		0
-#define PCI_D3hot	3
-#endif
-
-#if (LINUX_VERSION_CODE < 0x020605)
-#define pci_dma_sync_single_for_cpu(pdev, map, len, dir)	\
-	pci_dma_sync_single(pdev, map, len, dir)
-
-#define pci_dma_sync_single_for_device(pdev, map, len, dir)
-#endif
-
-#if (LINUX_VERSION_CODE < 0x020612)
-static inline struct sk_buff *netdev_alloc_skb(struct net_device *dev,
-		unsigned int length)
-{
-	struct sk_buff *skb = dev_alloc_skb(length);
-	if (skb)
-		skb->dev = dev;
-	return skb;
-}
-#endif
-
-static inline void bnx2_skb_fill_page_desc(struct sk_buff *skb, int i,
-					   struct page *page, int off, int size)
-{
-#if (LINUX_VERSION_CODE < 0x020600)
-	skb_frag_t *frag = &skb_shinfo(skb)->frags[i];
-
-	frag->page		  = page;
-	frag->page_offset	  = off;
-	frag->size		  = size;
-	skb_shinfo(skb)->nr_frags = i + 1;
-#else
-	skb_fill_page_desc(skb, i, page, off, size);
-#endif
-}
-
-#ifndef NETIF_F_GSO
-static inline void netif_tx_lock(struct net_device *dev)
-{
-	spin_lock(&dev->xmit_lock);
-	dev->xmit_lock_owner = smp_processor_id();
-}
-
-static inline void netif_tx_unlock(struct net_device *dev)
-{
-	dev->xmit_lock_owner = -1;
-	spin_unlock(&dev->xmit_lock);
-}
-#endif
-
-#if !defined(HAVE_NETDEV_PRIV) && (LINUX_VERSION_CODE != 0x020603) && (LINUX_VERSION_CODE != 0x020604) && (LINUX_VERSION_CODE != 0x20605)
-static inline void *netdev_priv(struct net_device *dev)
-{
-	return dev->priv;
-}
-#endif
-
-#ifdef OLD_NETIF
-static inline void netif_poll_disable(struct net_device *dev)
-{
-	while (test_and_set_bit(__LINK_STATE_RX_SCHED, &dev->state)) {
-		/* No hurry. */
-		current->state = TASK_INTERRUPTIBLE;
-		schedule_timeout(1);
-	}
-}
-
-static inline void netif_poll_enable(struct net_device *dev)
-{
-	clear_bit(__LINK_STATE_RX_SCHED, &dev->state);
-}
-
-static inline void netif_tx_disable(struct net_device *dev)
-{
-	spin_lock_bh(&dev->xmit_lock);
-	netif_stop_queue(dev);
-	spin_unlock_bh(&dev->xmit_lock);
-}
-
-#endif
-
-#if (LINUX_VERSION_CODE >= 0x20418) && (LINUX_VERSION_CODE < 0x2060c)
-static inline int bnx2_set_tx_hw_csum(struct net_device *dev, u32 data)
-{
-	if (data)
-		dev->features |= NETIF_F_HW_CSUM;
-	else
-		dev->features &= ~NETIF_F_HW_CSUM;
-
-	return 0;
-}
-#endif
-
-#ifndef VLAN_GROUP_ARRAY_SPLIT_PARTS
-static inline void vlan_group_set_device(struct vlan_group *vg, int vlan_id,
-					 struct net_device *dev)
-{
-	if (vg)
-		vg->vlan_devices[vlan_id] = dev;
-}
-#endif
-
-#ifdef NETIF_F_TSO
-#ifndef NETIF_F_GSO
-static inline int skb_is_gso(const struct sk_buff *skb)
-{
-	return skb_shinfo(skb)->tso_size;
-}
-#define gso_size tso_size
-#define gso_segs tso_segs
-#endif
-#ifndef NETIF_F_TSO6
-#define NETIF_F_TSO6	0
-#define BCM_NO_TSO6	1
-#endif
-#ifndef NETIF_F_TSO_ECN
-#define NETIF_F_TSO_ECN	0
-#endif
-
-#ifndef HAVE_IP_HDR
-static inline struct iphdr *ip_hdr(const struct sk_buff *skb)
-{
-	return skb->nh.iph;
-}
-#endif
-
-#ifndef NEW_SKB
-static inline int skb_transport_offset(const struct sk_buff *skb)
-{
-	return (int) (skb->h.raw - skb->data);
-}
-
-static inline unsigned int ip_hdrlen(const struct sk_buff *skb)
-{
-	return ip_hdr(skb)->ihl * 4;
-}
-
-static inline struct tcphdr *tcp_hdr(const struct sk_buff *skb)
-{
-	return skb->h.th;
-}
-
-static inline unsigned int tcp_optlen(const struct sk_buff *skb)
-{
-	return (tcp_hdr(skb)->doff - 5) * 4;
-}
-
-#endif
-#endif /* #ifdef NETIF_F_TSO */
-
-#ifndef VMWARE_ESX_40_DDK
-#if ((LINUX_VERSION_CODE >= 0x20617) && !defined(NETIF_F_MULTI_QUEUE)) || defined(__VMKLNX__)
-
-#define BCM_HAVE_MULTI_QUEUE
-
-#else
-
-static inline void netif_tx_wake_all_queues(struct net_device *dev)
-{
-	netif_wake_queue(dev);
-}
-
-static inline void netif_tx_start_all_queues(struct net_device *dev)
-{
-	netif_start_queue(dev);
-}
-
-#endif
-#else
-#define BCM_HAVE_MULTI_QUEUE
-#endif
-
- 
-#ifndef NET_SKB_PAD
-#define NET_SKB_PAD	16
-#endif
-
-#if (LINUX_VERSION_CODE < 0x02061e)
-static inline void skb_record_rx_queue(struct sk_buff *skb, u16 rx_queue)
-{
-}
-#endif
-
-#if defined(HAVE_SET_RX_MODE) || (LINUX_VERSION_CODE > 0x20621)
-#define BCM_HAVE_SET_RX_MODE	1
-#endif
-
-#ifdef NETDEV_HW_ADDR_T_MULTICAST
-#define BCM_NEW_NETDEV_HW_ADDR
-#endif
-
-#ifndef netdev_uc_count
-#if (LINUX_VERSION_CODE < 0x2061f)
-#define netdev_uc_count(dev)	((dev)->uc_count)
-#else
-#define netdev_uc_count(dev)	((dev)->uc.count)
-#endif
-#endif
-
-#ifndef netdev_for_each_uc_addr
-#define netdev_for_each_uc_addr(ha, dev) \
-	list_for_each_entry(ha, &dev->uc.list, list)
-#endif
-
-#ifndef netdev_for_each_mc_addr
-#define netdev_for_each_mc_addr(mclist, dev) \
-	for (mclist = dev->mc_list; mclist; mclist = mclist->next)
-#endif
-
-#if (LINUX_VERSION_CODE < 0x020600)
-#define dev_err(unused, format, arg...)		\
-	printk(KERN_ERR "bnx2: " format , ## arg)
-#else
-#ifndef dev_err
-#ifndef dev_printk
-#define dev_printk(level, dev, format, arg...)	\
-	printk(level "bnx2 %s: " format , (dev)->bus_id , ## arg)
-#endif
-#define dev_err(dev, format, arg...)		\
-	dev_printk(KERN_ERR , dev , format , ## arg)
-#endif
-#endif
-
-#if !defined(DECLARE_MAC_BUF) || (LINUX_VERSION_CODE >= 0x020621)
-#ifndef MAC_FMT
-#define MAC_FMT "%02x:%02x:%02x:%02x:%02x:%02x"
-#endif
-
-static inline char *print_mac(char *buf, const u8 *addr)
-{
-	sprintf(buf, MAC_FMT,
-		addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]);
-	return buf;
-}
-#endif
-
-#ifndef DECLARE_MAC_BUF
-#define DECLARE_MAC_BUF(var) char var[18]
-#endif
-
-
-#ifndef ARRAY_SIZE
-#define ARRAY_SIZE(arr) (sizeof(arr) / sizeof((arr)[0]))
-#endif
-
-#if (LINUX_VERSION_CODE >= 0x020618)
-#define BNX2_NEW_NAPI	1
-
-#if (LINUX_VERSION_CODE < 0x02061b)
-
-static inline void netif_napi_del(struct napi_struct *napi)
-{
-#ifdef CONFIG_NETPOLL
-	list_del(&napi->dev_list);
-#endif
-}
-
-#endif
-#endif
-
-static inline void bnx2_msleep(unsigned int msecs)
-{
-#if (LINUX_VERSION_CODE < 0x20607)
-	current->state = TASK_UNINTERRUPTIBLE;
-	schedule_timeout((msecs * HZ / 1000) + 1);
-#else
-	msleep(msecs);
-#endif
-}
-
-static inline unsigned long bnx2_msleep_interruptible(unsigned int msecs)
-{
-#if (LINUX_VERSION_CODE < 0x20609)
-	current->state = TASK_INTERRUPTIBLE;
-	return schedule_timeout((msecs * HZ / 1000) + 1);
-#else
-	return msleep_interruptible(msecs);
-#endif
-}
-
-#ifndef HAVE_BOOL
-typedef int bool;
-#define false 0
-#define true  1
-#endif
-
-#if defined (__VMKLNX__)
-/**
- * THIS FUNCTION SHOULD BE REMOVED ONCE PR 379263 IS RESOLVED
- */
-static inline void *bcm_memmove(void *dest, const void *src, size_t count)
-{
-	char *tmp;
-	const char *s;
-
-	if (dest <= src) {
-		tmp = dest;
-		s = src;
-		while (count--)
-			*tmp++ = *s++;
-	} else {
-		tmp = dest;
-		tmp += count;
-		s = src;
-		s += count;
-		while (count--)
-			*--tmp = *--s;
-	}
-	return dest;
-}
-#else /* !defined (__VMKLNX__) */
-#define bcm_memmove	memmove
-#endif /* defined (__VMKLNX__) */
+#ifndef DEFINE_DMA_UNMAP_ADDR
+#define DEFINE_DMA_UNMAP_ADDR(mapping) DECLARE_PCI_UNMAP_ADDR(mapping)
+#endif
+
+#ifndef __rcu
+#define __rcu
+#endif
+
+#define BNX2_MSG_ESX_IOCTL				0x0800000
+/* regular debug print for VMware specific code */
+#define BNX2_DP(__mask, fmt, ...)				\
+do {								\
+        if (unlikely(bp->msg_enable & (__mask)))		\
+                netdev_info(bp->dev, "[%s:%d]" fmt,		\
+                          __func__, __LINE__,			\
+                          ##__VA_ARGS__);			\
+} while (0)
 
 #if defined(__VMKLNX__) && defined(__VMKNETDDI_QUEUEOPS__)
 
@@ -592,25 +121,27 @@ struct l2_kcqe {
  */
 #if defined(BIG_ENDIAN)
 struct l2_kcqe_vm_alloc_tx_queue {
-	u8			qid;
-	u8			status;
 	u16			reserved;
-	u32			reserved1[5];
+	u8			reserved1;
+	u8			qid;
+	u32			status;
+	u32			reserved2[5];
 
-	l2_kcqe_flags_t	flags;
-	l2_kcqe_opcode_t	opcode;
 	u16			qe_self_seq;
+	l2_kcqe_opcode_t	opcode;
+	l2_kcqe_flags_t		flags;
 };
 #elif defined(LITTLE_ENDIAN)
 struct l2_kcqe_vm_alloc_tx_queue {
-	u16			reserved;
-	u8			status;
 	u8			qid;
-	u32			reserved1[5];
+	u8			reserved1;
+	u16			reserved;
+	u32			status;
+	u32			reserved2[5];
 
-	u16			qe_self_seq;
+	l2_kcqe_flags_t		flags;
 	l2_kcqe_opcode_t	opcode;
-	l2_kcqe_flags_t	flags;
+	u16			qe_self_seq;
 };
 #endif
 
@@ -620,8 +151,9 @@ struct l2_kcqe_vm_alloc_tx_queue {
 #if defined(BIG_ENDIAN)
 struct l2_kcqe_vm_free_tx_queue {
 	u8			qid;
-	u8			status;
+	u8			reserved;
 	u16			nx_bidx;
+	u32			status;
 	u32			reserved1[5];
 
 	l2_kcqe_flags_t		flags;
@@ -631,8 +163,9 @@ struct l2_kcqe_vm_free_tx_queue {
 #elif defined(LITTLE_ENDIAN)
 struct l2_kcqe_vm_free_tx_queue {
 	u16			nx_bidx;
-	u8			status;
+	u8			reserved;
 	u8			qid;
+	u32			status;
 	u32			reserved1[5];
 
 	u16			qe_self_seq;
@@ -646,25 +179,26 @@ struct l2_kcqe_vm_free_tx_queue {
  */
 #if defined(BIG_ENDIAN)
 struct l2_kcqe_vm_alloc_rx_queue_b {
+	u16			reserved;
+	u8			reserved1;
 	u8			qid;
 	u8			status;
-	u16			reserved;
-	u32			reserved1[5];
+	u32			reserved2[5];
 
-	l2_kcqe_flags_t	flags;
-	l2_kcqe_opcode_t	opcode;
 	u16			qe_self_seq;
+	l2_kcqe_opcode_t	opcode;
+	l2_kcqe_flags_t		flags;
 };
 #elif defined(LITTLE_ENDIAN)
 struct l2_kcqe_vm_alloc_rx_queue_l {
-	u16			reserved;
-	u8			status;
 	u8			qid;
-	u32			reserved1[5];
+	u8			reserved1;
+	u16			reserved;
+	u32			reserved2[5];
 
-	u16			qe_self_seq;
+	l2_kcqe_flags_t		flags;
 	l2_kcqe_opcode_t	opcode;
-	l2_kcqe_flags_t	flags;
+	u16			qe_self_seq;
 };
 #endif
 
@@ -674,19 +208,21 @@ struct l2_kcqe_vm_alloc_rx_queue_l {
 #if defined(BIG_ENDIAN)
 struct l2_kcqe_vm_free_rx_queue {
 	u8			qid;
-	u8			status;
+	u8			reserved;
 	u16			nx_bidx;
+	u32			status;
 	u32			reserved1[5];
 
-	l2_kcqe_flags_t	flags;
+	l2_kcqe_flags_t		flags;
 	l2_kcqe_opcode_t	opcode;
 	u16			qe_self_seq;
 };
 #elif defined(LITTLE_ENDIAN)
 struct l2_kcqe_vm_free_rx_queue {
 	u16			nx_bidx;
-	u8			status;
+	u8			reserved;
 	u8			qid;
+	u32			status;
 	u32			reserved1[5];
 
 	u16			qe_self_seq;
@@ -701,8 +237,9 @@ struct l2_kcqe_vm_free_rx_queue {
 #if defined(BIG_ENDIAN)
 struct l2_kcqe_vm_set_rx_filter {
     u8			qid;
-    u8			status;
+    u8			reserved;
     u16			reserved1;
+    u32			status;
     u32			reserved2[5];
 
     l2_kcqe_flags_t	flags;
@@ -712,8 +249,9 @@ struct l2_kcqe_vm_set_rx_filter {
 #elif defined(LITTLE_ENDIAN)
 struct l2_kcqe_vm_set_rx_filter {
     u16			reserved1;
-    u8			status;
+    u8			reserved;;
     u8			qid;
+    u32			status;
     u32			reserved2[5];
 
     u16			qe_self_seq;
@@ -728,24 +266,26 @@ struct l2_kcqe_vm_set_rx_filter {
 #if defined(BIG_ENDIAN)
 struct l2_kcqe_vm_remove_rx_filter {
 	u8			qid;
-	u8			status;
+	u8			reserved;
 	u16			reserved1;
+	u32			status;
 	u32			reserved2[5];
 
-	l2_kcqe_flags_t	flags;
+	l2_kcqe_flags_t		flags;
 	l2_kcqe_opcode_t	opcode;
 	u16			qe_self_seq;
 };
 #elif defined(LITTLE_ENDIAN)
 struct l2_kcqe_vm_remove_rx_filter {
 	u16			reserved1;
-	u8			status;
+	u8			reserved;
 	u8			qid;
+	u32			status
 	u32			reserved2[5];
 
 	u16			qe_self_seq;
 	l2_kcqe_opcode_t	opcode;
-	l2_kcqe_flags_t	flags;
+	l2_kcqe_flags_t		flags;
 };
 #endif
 
@@ -755,13 +295,6 @@ struct l2_kcqe_vm_remove_rx_filter {
 #if defined(__BIG_ENDIAN)
 struct l2_kwqe {
 	u8 kwqe_flags;
-		#define KWQE_FLAGS_LAYER_MASK                       (0x7<<4)
-		#define KWQE_FLAGS_LAYER_MASK_MISC                  (0<<4)
-		#define KWQE_FLAGS_LAYER_MASK_L2                    (2<<4)
-		#define KWQE_FLAGS_LAYER_MASK_L3                    (3<<4)
-		#define KWQE_FLAGS_LAYER_MASK_L4                    (4<<4)
-		#define KWQE_FLAGS_LAYER_MASK_L5                    (5<<4)
-		#define KWQE_FLAGS_NEXT                             (1<<7)
 	u8 kwqe_opcode;
 	u16 kwqe_info;
 	u32 kwqe_info0;
@@ -777,14 +310,6 @@ struct l2_kwqe {
 	u16 kwqe_info;
 	u8 kwqe_opcode;
 	u8 kwqe_flags;
-		#define KWQE_FLAGS_LAYER_MASK                       (0x7<<4)
-		#define KWQE_FLAGS_LAYER_MASK_MISC                  (0<<4)
-		#define KWQE_FLAGS_LAYER_MASK_L2                    (2<<4)
-		#define KWQE_FLAGS_LAYER_MASK_L3                    (3<<4)
-		#define KWQE_FLAGS_LAYER_MASK_L4                    (4<<4)
-		#define KWQE_FLAGS_LAYER_MASK_L5                    (5<<4)
-		#define KWQE_FLAGS_GET_DEBUG_TRACE                  (7<<4)
-		#define KWQE_FLAGS_NEXT                             (1<<7)
 	u32 kwqe_info0;
 	u32 kwqe_info1;
 	u32 kwqe_info2;
@@ -802,6 +327,7 @@ typedef u8 l2_kwqe_flags_t;
 	#define L2_KWQE_FLAGS_LAYER_MASK_L3                 (3<<4)
 	#define L2_KWQE_FLAGS_LAYER_MASK_L4                 (4<<4)
 	#define L2_KWQE_FLAGS_LAYER_MASK_L5                 (5<<4)
+	#define KWQE_FLAGS_GET_DEBUG_TRACE                  (7<<4)
 	#define L2_KWQE_FLAGS_NEXT                          (1<<7)
 
 typedef u8 l2_kwqe_opcode_t;
@@ -829,6 +355,8 @@ typedef u8 l2_kwqe_queue_t;
 	#define L2_NET_QUEUE				1
 	#define L2_VM_QUEUE				2
 	#define L2_VM_DROP_QUEUE			3
+
+#define BNX2_START_FILTER_ID	0x04
 
 /*
  *  l2_kwqe_vm_alloc_tx_queue definition
@@ -901,16 +429,16 @@ struct l2_kwqe_vm_free_rx_queue {
 	l2_kwqe_flags_t		flags;
 	l2_kwqe_opcode_t	opcode;
 	u8			qid;
-	u8			reserved;
-	u32			reserved1[6];
+	u8			queue_type;
+	u32			reserved1[7];
 };
 #elif defined(__LITTLE_ENDIAN)
 struct l2_kwqe_vm_free_rx_queue {
-	u8			reserved;
+	u8			queue_type;
 	u8			qid;
 	l2_kwqe_opcode_t	opcode;
 	l2_kwqe_flags_t		flags;
-	u32			reserved1[6];
+	u32			reserved1[7];
 };
 #endif
 
@@ -925,7 +453,10 @@ struct l2_kwqe_vm_set_rx_filter {
 	l2_kwqe_vm_filter_t	filter_type;
 	u16			vlan;
 	u8			mac_addr[6];
-	u32			reserved1[4];
+	u8			filter_id; /* hw filter idx */
+	u8			reserved;
+	u16			reserved1;
+	u32			reserved2[4];
 } l2_kwqe_vm_set_rx_filter_b_t;
 #elif defined(__LITTLE_ENDIAN)
 struct l2_kwqe_vm_set_rx_filter {
@@ -937,7 +468,10 @@ struct l2_kwqe_vm_set_rx_filter {
 	u16			mac_addr_hi;
 	u16			vlan;
 	u32			mac_addr_lo;
-	u32			reserved1[4];
+	u16			reserved1;
+	u8			reserved;
+	u8			filter_id; /* hw filter idx */
+	u32			reserved2[4];
 };
 #endif
 
@@ -950,7 +484,10 @@ struct l2_kwqe_vm_remove_rx_filter {
 	l2_kwqe_opcode_t	opcode;
 	u8			qid;
 	l2_kwqe_vm_filter_t	filter_type;
-	u32			reserved1[6];
+	u8			filter_id; /* hw filter idx */
+	u8			reserved;
+	u16			reserved1;
+	u32			reserved2[6];
 };
 #elif defined(__LITTLE_ENDIAN)
 struct l2_kwqe_vm_remove_rx_filter {
@@ -958,7 +495,10 @@ struct l2_kwqe_vm_remove_rx_filter {
 	u8			qid;
 	l2_kwqe_opcode_t	opcode;
 	l2_kwqe_flags_t		flags;
-	u32			reserved1[6];
+	u16			reserved1;
+	u8			reserved;
+	u8			filter_id; /* hw filter idx */
+	u32			reserved2[6];
 };
 #endif
 #endif
@@ -970,7 +510,7 @@ struct l2_kwqe_vm_remove_rx_filter {
 /*
  *  tx_bd definition
  */
-struct tx_bd {
+struct bnx2_tx_bd {
 	u32 tx_bd_haddr_hi;
 	u32 tx_bd_haddr_lo;
 	u32 tx_bd_mss_nbytes;
@@ -998,7 +538,7 @@ struct tx_bd {
 /*
  *  rx_bd definition
  */
-struct rx_bd {
+struct bnx2_rx_bd {
 	u32 rx_bd_haddr_hi;
 	u32 rx_bd_haddr_lo;
 	u32 rx_bd_len;
@@ -1246,6 +786,9 @@ struct l2_fhdr {
 		#define L2_FHDR_ERRORS_TCP_XSUM		(1<<28)
 		#define L2_FHDR_ERRORS_UDP_XSUM		(1<<31)
 
+		#define L2_FHDR_STATUS_USE_RXHASH	\
+			(L2_FHDR_STATUS_TCP_SEGMENT | L2_FHDR_STATUS_RSS_HASH)
+
 	u32 l2_fhdr_hash;
 #if defined(__BIG_ENDIAN)
 	u16 l2_fhdr_pkt_len;
@@ -1300,12 +843,7 @@ struct l2_fhdr {
 #define BNX2_L2CTX_BD_PRE_READ				0x00000000
 #define BNX2_L2CTX_CTX_SIZE				0x00000000
 #define BNX2_L2CTX_CTX_TYPE				0x00000000
-#define BNX2_L2CTX_LO_WATER_MARK_DEFAULT		 4
-#define BNX2_L2CTX_LO_WATER_MARK_SCALE			 4
-#define BNX2_L2CTX_LO_WATER_MARK_DIS			 0
-#define BNX2_L2CTX_HI_WATER_MARK_SHIFT			 4
-#define BNX2_L2CTX_HI_WATER_MARK_SCALE			 16
-#define BNX2_L2CTX_WATER_MARKS_MSK			 0x000000ff
+#define BNX2_L2CTX_FLOW_CTRL_ENABLE			 0x000000ff
 #define BNX2_L2CTX_CTX_TYPE_SIZE_L2			 ((0x20/20)<<16)
 #define BNX2_L2CTX_CTX_TYPE_CTX_BD_CHN_TYPE		 (0xf<<28)
 #define BNX2_L2CTX_CTX_TYPE_CTX_BD_CHN_TYPE_UNDEFINED	 (0<<28)
@@ -1335,6 +873,7 @@ struct l2_fhdr {
  *  pci_config_l definition
  *  offset: 0000
  */
+#define BNX2_PCICFG_START                               0x0
 #define BNX2_PCICFG_MSI_CONTROL				0x00000058
 #define BNX2_PCICFG_MSI_CONTROL_ENABLE			 (1L<<16)
 
@@ -1414,9 +953,8 @@ struct l2_fhdr {
 #define BNX2_PCICFG_MAILBOX_QUEUE_ADDR			0x00000090
 #define BNX2_PCICFG_MAILBOX_QUEUE_DATA			0x00000094
 
-
 #define BNX2_PCICFG_DEVICE_CONTROL			0x000000b4
-#define BNX2_PCICFG_DEVICE_STATUS_NO_PEND		((1L<<5)<<16)
+#define BNX2_PCICFG_DEVICE_STATUS_NO_PEND		 ((1L<<5)<<16)
 
 /*
  *  pci_reg definition
@@ -2734,6 +2272,46 @@ struct l2_fhdr {
 #define BNX2_MISC_OSCFUNDS_CTRL_IAMP_ADJ_2		 (2L<<10)
 #define BNX2_MISC_OSCFUNDS_CTRL_IAMP_ADJ_3		 (3L<<10)
 
+/*
+ *  tbdc definition
+ *  offset: 0x5400
+ */
+#define BNX2_TBDC_COMMAND                               0x5400
+#define BNX2_TBDC_COMMAND_CMD_ENABLED                    (1UL<<0)
+#define BNX2_TBDC_COMMAND_CMD_FLUSH                      (1UL<<1)
+#define BNX2_TBDC_COMMAND_CMD_SOFT_RST                   (1UL<<2)
+#define BNX2_TBDC_COMMAND_CMD_REG_ARB                    (1UL<<3)
+#define BNX2_TBDC_COMMAND_WRCHK_RANGE_ERROR              (1UL<<4)
+#define BNX2_TBDC_COMMAND_WRCHK_ALL_ONES_ERROR           (1UL<<5)
+#define BNX2_TBDC_COMMAND_WRCHK_ALL_ZEROS_ERROR          (1UL<<6)
+#define BNX2_TBDC_COMMAND_WRCHK_ANY_ONES_ERROR           (1UL<<7)
+#define BNX2_TBDC_COMMAND_WRCHK_ANY_ZEROS_ERROR          (1UL<<8)
+
+#define BNX2_TBDC_STATUS				0x5404
+#define BNX2_TBDC_STATUS_FREE_CNT                        (0x3fUL<<0)
+
+#define BNX2_TBDC_BD_ADDR                               0x5424
+
+#define BNX2_TBDC_BIDX                                  0x542c
+#define BNX2_TBDC_BDIDX_BDIDX                            (0xffffUL<<0)
+#define BNX2_TBDC_BDIDX_CMD                              (0xffUL<<24)
+
+#define BNX2_TBDC_CID                                   0x5430
+
+#define BNX2_TBDC_CAM_OPCODE                            0x5434
+#define BNX2_TBDC_CAM_OPCODE_OPCODE                      (0x7UL<<0)
+#define BNX2_TBDC_CAM_OPCODE_OPCODE_SEARCH               (0UL<<0)
+#define BNX2_TBDC_CAM_OPCODE_OPCODE_CACHE_WRITE          (1UL<<0)
+#define BNX2_TBDC_CAM_OPCODE_OPCODE_INVALIDATE           (2UL<<0)
+#define BNX2_TBDC_CAM_OPCODE_OPCODE_CAM_WRITE            (4UL<<0)
+#define BNX2_TBDC_CAM_OPCODE_OPCODE_CAM_READ             (5UL<<0)
+#define BNX2_TBDC_CAM_OPCODE_OPCODE_RAM_WRITE            (6UL<<0)
+#define BNX2_TBDC_CAM_OPCODE_OPCODE_RAM_READ             (7UL<<0)
+#define BNX2_TBDC_CAM_OPCODE_SMASK_BDIDX                 (1UL<<4)
+#define BNX2_TBDC_CAM_OPCODE_SMASK_CID                   (1UL<<5)
+#define BNX2_TBDC_CAM_OPCODE_SMASK_CMD                   (1UL<<6)
+#define BNX2_TBDC_CAM_OPCODE_WMT_FAILED                  (1UL<<7)
+#define BNX2_TBDC_CAM_OPCODE_CAM_VALIDS                  (0xffUL<<8)
 
 /*
  *  nvm_reg definition
@@ -2910,8 +2488,6 @@ struct l2_fhdr {
 #define BNX2_NVM_RECONFIG_RECONFIG_STRAP_VALUE		 (0xfL<<4)
 #define BNX2_NVM_RECONFIG_RESERVED			 (0x7fffffL<<8)
 #define BNX2_NVM_RECONFIG_RECONFIG_DONE			 (1L<<31)
-
-
 
 /*
  *  dma_reg definition
@@ -3353,7 +2929,6 @@ struct l2_fhdr {
 
 #define BNX2_DMA_FUSE_CTRL2_DATA			0x00000f14
 
-
 /*
  *  context_reg definition
  *  offset: 0x1000
@@ -3537,7 +3112,6 @@ struct l2_fhdr {
 #define BNX2_CTX_CAM_CTRL_SEARCH			 (1L<<29)
 #define BNX2_CTX_CAM_CTRL_WRITE_REQ			 (1L<<30)
 #define BNX2_CTX_CAM_CTRL_READ_REQ			 (1L<<31)
-
 
 /*
  *  emac_reg definition
@@ -4069,7 +3643,6 @@ struct l2_fhdr {
 #define BNX2_EMAC_TX_RATE_LIMIT_CTRL_TX_THROTTLE_INC	 (0x7fL<<0)
 #define BNX2_EMAC_TX_RATE_LIMIT_CTRL_TX_THROTTLE_NUM	 (0x7fL<<16)
 #define BNX2_EMAC_TX_RATE_LIMIT_CTRL_RATE_LIMITER_EN	 (1L<<31)
-
 
 /*
  *  rpm_reg definition
@@ -5120,10 +4693,12 @@ struct l2_fhdr {
 #define BNX2_RPM_ACPI_PATTERN_CRC7_PATTERN_CRC7		 (0xffffffffL<<0)
 
 
+#define BNX2_RCP_START                                  0x1c00
 /*
  *  rlup_reg definition
  *  offset: 0x2000
  */
+#define BNX2_RLUP_COMMAND                               0x00002000
 #define BNX2_RLUP_RSS_CONFIG				0x0000201c
 #define BNX2_RLUP_RSS_CONFIG_IPV4_RSS_TYPE_XI		 (0x3L<<0)
 #define BNX2_RLUP_RSS_CONFIG_IPV4_RSS_TYPE_OFF_XI	 (0L<<0)
@@ -5136,6 +4711,73 @@ struct l2_fhdr {
 #define BNX2_RLUP_RSS_CONFIG_IPV6_RSS_TYPE_IP_ONLY_XI	 (2L<<2)
 #define BNX2_RLUP_RSS_CONFIG_IPV6_RSS_TYPE_RES_XI	 (3L<<2)
 
+#define BNX2_RLUP_RSS_COMMAND				0x00002048
+#define BNX2_RLUP_RSS_COMMAND_RSS_IND_TABLE_ADDR	 (0xfUL<<0)
+#define BNX2_RLUP_RSS_COMMAND_RSS_WRITE_MASK		 (0xffUL<<4)
+#define BNX2_RLUP_RSS_COMMAND_WRITE			 (1UL<<12)
+#define BNX2_RLUP_RSS_COMMAND_READ			 (1UL<<13)
+#define BNX2_RLUP_RSS_COMMAND_HASH_MASK			 (0x7UL<<14)
+
+#define BNX2_RLUP_RSS_DATA				0x0000204c
+
+#define BNX2_RLUP_RLUPQ                                 0x00002380
+#define BNX2_RLUP_FTQ_COMMAND                           0x000023f8
+	#define BNX2_RLUP_FTQ_CMD_OFFSET                    (0x3ffUL<<0)
+	#define BNX2_RLUP_FTQ_CMD_WR_TOP                    (1UL<<10)
+	#define BNX2_RLUP_FTQ_CMD_WR_TOP_0                  (0UL<<10)
+	#define BNX2_RLUP_FTQ_CMD_WR_TOP_1                  (1UL<<10)
+	#define BNX2_RLUP_FTQ_CMD_SFT_RESET                 (1UL<<25)
+	#define BNX2_RLUP_FTQ_CMD_RD_DATA                   (1UL<<26)
+	#define BNX2_RLUP_FTQ_CMD_ADD_INTERVEN              (1UL<<27)
+	#define BNX2_RLUP_FTQ_CMD_ADD_DATA                  (1UL<<28)
+	#define BNX2_RLUP_FTQ_CMD_INTERVENE_CLR             (1UL<<29)
+	#define BNX2_RLUP_FTQ_CMD_POP                       (1UL<<30)
+	#define BNX2_RLUP_FTQ_CMD_BUSY                      (1UL<<31)
+#define BNX2_RLUP_FTQ_CTL                               0x000023fc
+
+#define BNX2_CH_COMMAND                                 0x00002400
+
+#define BNX2_RDMA_COMMAND                               0x00002c00
+#define BNX2_RDMA_RDMAQ                                 0x00002fc0
+#define BNX2_RDMA_FTQ_COMMAND                           0x00002ff8
+	#define BNX2_RDMA_FTQ_CMD_OFFSET                    (0x3ffUL<<0)
+	#define BNX2_RDMA_FTQ_CMD_WR_TOP                    (1UL<<10)
+	#define BNX2_RDMA_FTQ_CMD_WR_TOP_0                  (0UL<<10)
+	#define BNX2_RDMA_FTQ_CMD_WR_TOP_1                  (1UL<<10)
+	#define BNX2_RDMA_FTQ_CMD_SFT_RESET                 (1UL<<25)
+	#define BNX2_RDMA_FTQ_CMD_RD_DATA                   (1UL<<26)
+	#define BNX2_RDMA_FTQ_CMD_ADD_INTERVEN              (1UL<<27)
+	#define BNX2_RDMA_FTQ_CMD_ADD_DATA                  (1UL<<28)
+	#define BNX2_RDMA_FTQ_CMD_INTERVENE_CLR             (1UL<<29)
+	#define BNX2_RDMA_FTQ_CMD_POP                       (1UL<<30)
+	#define BNX2_RDMA_FTQ_CMD_BUSY                      (1UL<<31)
+#define BNX2_RDMA_FTQ_CTL                               0x00002ffc
+
+#define BNX2_RBDC_COMMAND                               0x00003000
+
+#define BNX2_CSCH_COMMAND                               0x00004000
+#define BNX2_CSCH_CSQ                                   0x000043c0
+#define BNX2_CSCH_CH_FTQ_COMMAND                        0x000043f8
+	#define BNX2_CSCH_CH_FTQ_CMD_OFFSET                 (0x3ffUL<<0)
+	#define BNX2_CSCH_CH_FTQ_CMD_WR_TOP                 (1UL<<10)
+	#define BNX2_CSCH_CH_FTQ_CMD_WR_TOP_0               (0UL<<10)
+	#define BNX2_CSCH_CH_FTQ_CMD_WR_TOP_1               (1UL<<10)
+	#define BNX2_CSCH_CH_FTQ_CMD_SFT_RESET              (1UL<<25)
+	#define BNX2_CSCH_CH_FTQ_CMD_RD_DATA                (1UL<<26)
+	#define BNX2_CSCH_CH_FTQ_CMD_ADD_INTERVEN           (1UL<<27)
+	#define BNX2_CSCH_CH_FTQ_CMD_ADD_DATA               (1UL<<28)
+	#define BNX2_CSCH_CH_FTQ_CMD_INTERVENE_CLR          (1UL<<29)
+	#define BNX2_CSCH_CH_FTQ_CMD_POP                    (1UL<<30)
+	#define BNX2_CSCH_CH_FTQ_CMD_BUSY                   (1UL<<31)
+
+#define BNX2_CSCH_CH_FTQ_CTL                            0x000043fc
+	#define BNX2_CSCH_CH_FTQ_CTL_INTERVENE              (1UL<<0)
+	#define BNX2_CSCH_CH_FTQ_CTL_OVERFLOW               (1UL<<1)
+	#define BNX2_CSCH_CH_FTQ_CTL_FORCE_INTERVENE        (1UL<<2)
+	#define BNX2_CSCH_CH_FTQ_CTL_MAX_DEPTH              (0x3ffUL<<12)
+	#define BNX2_CSCH_CH_FTQ_CTL_CUR_DEPTH              (0x3ffUL<<22)
+
+#define BNX2_TIMER_COMMAND                              0x00004400
 
 /*
  *  rbuf_reg definition
@@ -5395,8 +5037,6 @@ struct l2_fhdr {
 #define BNX2_RV2P_MFTQ_CTL_MAX_DEPTH			 (0x3ffL<<12)
 #define BNX2_RV2P_MFTQ_CTL_CUR_DEPTH			 (0x3ffL<<22)
 
-
-
 /*
  *  mq_reg definition
  *  offset: 0x3c00
@@ -5514,12 +5154,29 @@ struct l2_fhdr {
  *  tsch_reg definition
  *  offset: 0x4c00
  */
+#define BNX2_TSCH_COMMAND                               0x00004c00
 #define BNX2_TSCH_TSS_CFG				0x00004c1c
 #define BNX2_TSCH_TSS_CFG_TSS_START_CID			 (0x7ffL<<8)
 #define BNX2_TSCH_TSS_CFG_NUM_OF_TSS_CON		 (0xfL<<24)
-
-
-
+#define BNX2_TSCH_TSCHQ                                 0x00004fc0
+#define BNX2_TSCH_FTQ_CMD                               0x00004ff8
+	#define BNX2_TSCH_FTQ_CMD_OFFSET                    (0x3ffUL<<0)
+	#define BNX2_TSCH_FTQ_CMD_WR_TOP                    (1UL<<10)
+	#define BNX2_TSCH_FTQ_CMD_WR_TOP_0                  (0UL<<10)
+	#define BNX2_TSCH_FTQ_CMD_WR_TOP_1                  (1UL<<10)
+	#define BNX2_TSCH_FTQ_CMD_SFT_RESET                 (1UL<<25)
+	#define BNX2_TSCH_FTQ_CMD_RD_DATA                   (1UL<<26)
+	#define BNX2_TSCH_FTQ_CMD_ADD_INTERVEN              (1UL<<27)
+	#define BNX2_TSCH_FTQ_CMD_ADD_DATA                  (1UL<<28)
+	#define BNX2_TSCH_FTQ_CMD_INTERVENE_CLR             (1UL<<29)
+	#define BNX2_TSCH_FTQ_CMD_POP                       (1UL<<30)
+	#define BNX2_TSCH_FTQ_CMD_BUSY                      (1UL<<31)
+#define BNX2_TSCH_FTQ_CTL                               0x00004ffc
+	#define BNX2_TSCH_FTQ_CTL_INTERVENE                 (1UL<<0)
+	#define BNX2_TSCH_FTQ_CTL_OVERFLOW                  (1UL<<1)
+	#define BNX2_TSCH_FTQ_CTL_FORCE_INTERVENE           (1UL<<2)
+	#define BNX2_TSCH_FTQ_CTL_MAX_DEPTH                 (0x3ffUL<<12)
+	#define BNX2_TSCH_FTQ_CTL_CUR_DEPTH                 (0x3ffUL<<22)
 /*
  *  tbdr_reg definition
  *  offset: 0x5000
@@ -5590,7 +5247,6 @@ struct l2_fhdr {
 #define BNX2_TBDR_FTQ_CTL_FORCE_INTERVENE		 (1L<<2)
 #define BNX2_TBDR_FTQ_CTL_MAX_DEPTH			 (0x3ffL<<12)
 #define BNX2_TBDR_FTQ_CTL_CUR_DEPTH			 (0x3ffL<<22)
-
 
 
 /*
@@ -5741,8 +5397,7 @@ struct l2_fhdr {
 #define BNX2_TDMA_FTQ_CTL_MAX_DEPTH			 (0x3ffL<<12)
 #define BNX2_TDMA_FTQ_CTL_CUR_DEPTH			 (0x3ffL<<22)
 
-
-
+#define BNX2_DBU_CMD                                    0x00006000
 /*
  *  hc_reg definition
  *  offset: 0x6800
@@ -6538,7 +6193,7 @@ struct l2_fhdr {
 					 BNX2_HC_SB_CONFIG_1)
 #define BNX2_HC_RX_TICKS_OFF	(BNX2_HC_RX_TICKS_1 - BNX2_HC_SB_CONFIG_1)
 
-
+#define BNX2_DEBUG_COMMAND                             0x00007000
 /*
  *  txp_reg definition
  *  offset: 0x40000
@@ -6728,6 +6383,20 @@ struct l2_fhdr {
 
 #define BNX2_TPAT_SCRATCH				0x000a0000
 
+#define BNX2_TAS_TASQ                                   0x001c03c0
+#define BNX2_TAS_FTQ_CTL				0x001c03fc
+#define BNX2_TAS_FTQ_CMD                                0x001c03f8
+	#define BNX2_TAS_FTQ_CMD_OFFSET                     (0x3ffUL<<0)
+	#define BNX2_TAS_FTQ_CMD_WR_TOP                     (1UL<<10)
+	#define BNX2_TAS_FTQ_CMD_WR_TOP_0                   (0UL<<10)
+	#define BNX2_TAS_FTQ_CMD_WR_TOP_1                   (1UL<<10)
+	#define BNX2_TAS_FTQ_CMD_SFT_RESET                  (1UL<<25)
+	#define BNX2_TAS_FTQ_CMD_RD_DATA                    (1UL<<26)
+	#define BNX2_TAS_FTQ_CMD_ADD_INTERVEN               (1UL<<27)
+	#define BNX2_TAS_FTQ_CMD_ADD_DATA                   (1UL<<28)
+	#define BNX2_TAS_FTQ_CMD_INTERVENE_CLR              (1UL<<29)
+	#define BNX2_TAS_FTQ_CMD_POP                        (1UL<<30)
+	#define BNX2_TAS_FTQ_CMD_BUSY                       (1UL<<31)
 
 /*
  *  rxp_reg definition
@@ -7033,6 +6702,7 @@ struct l2_fhdr {
 
 #define BNX2_COM_SCRATCH				0x00120000
 
+#define BNX2_FW_RX_LOW_LATENCY				 0x00120058
 #define BNX2_FW_RX_DROP_COUNT				 0x00120084
 
 
@@ -7446,37 +7116,38 @@ struct l2_fhdr {
 
 /* Use CPU native page size up to 16K for the ring sizes.  */
 #if (PAGE_SHIFT > 14)
-#define BCM_PAGE_BITS	14
+#define BNX2_PAGE_BITS	14
 #else
-#define BCM_PAGE_BITS	PAGE_SHIFT
+#define BNX2_PAGE_BITS	PAGE_SHIFT
 #endif
-#define BCM_PAGE_SIZE	(1 << BCM_PAGE_BITS)
+#define BNX2_PAGE_SIZE	(1 << BNX2_PAGE_BITS)
 
-#define TX_DESC_CNT  (BCM_PAGE_SIZE / sizeof(struct tx_bd))
-#define MAX_TX_DESC_CNT (TX_DESC_CNT - 1)
+#define BNX2_TX_DESC_CNT  (BNX2_PAGE_SIZE / sizeof(struct bnx2_tx_bd))
+#define BNX2_MAX_TX_DESC_CNT (BNX2_TX_DESC_CNT - 1)
 
-#define MAX_RX_RINGS	16
-#define MAX_RX_PG_RINGS	64
-#define RX_DESC_CNT  (BCM_PAGE_SIZE / sizeof(struct rx_bd))
-#define MAX_RX_DESC_CNT (RX_DESC_CNT - 1)
-#define MAX_TOTAL_RX_DESC_CNT (MAX_RX_DESC_CNT * MAX_RX_RINGS)
-#define MAX_TOTAL_RX_PG_DESC_CNT (MAX_RX_DESC_CNT * MAX_RX_PG_RINGS)
+#define BNX2_MAX_RX_RINGS	16
+#define BNX2_MAX_RX_PG_RINGS	64
+#define BNX2_RX_DESC_CNT  (BNX2_PAGE_SIZE / sizeof(struct bnx2_rx_bd))
+#define BNX2_MAX_RX_DESC_CNT (BNX2_RX_DESC_CNT - 1)
+#define BNX2_MAX_TOTAL_RX_DESC_CNT (BNX2_MAX_RX_DESC_CNT * BNX2_MAX_RX_RINGS)
+#define BNX2_MAX_TOTAL_RX_PG_DESC_CNT	\
+	(BNX2_MAX_RX_DESC_CNT * BNX2_MAX_RX_PG_RINGS)
 
-#define NEXT_TX_BD(x) (((x) & (MAX_TX_DESC_CNT - 1)) ==			\
-		(MAX_TX_DESC_CNT - 1)) ?				\
+#define BNX2_NEXT_TX_BD(x) (((x) & (BNX2_MAX_TX_DESC_CNT - 1)) ==	\
+		(BNX2_MAX_TX_DESC_CNT - 1)) ?				\
 	(x) + 2 : (x) + 1
 
-#define TX_RING_IDX(x) ((x) & MAX_TX_DESC_CNT)
+#define BNX2_TX_RING_IDX(x) ((x) & BNX2_MAX_TX_DESC_CNT)
 
-#define NEXT_RX_BD(x) (((x) & (MAX_RX_DESC_CNT - 1)) ==			\
-		(MAX_RX_DESC_CNT - 1)) ?				\
+#define BNX2_NEXT_RX_BD(x) (((x) & (BNX2_MAX_RX_DESC_CNT - 1)) ==	\
+		(BNX2_MAX_RX_DESC_CNT - 1)) ?				\
 	(x) + 2 : (x) + 1
 
-#define RX_RING_IDX(x) ((x) & bp->rx_max_ring_idx)
-#define RX_PG_RING_IDX(x) ((x) & bp->rx_max_pg_ring_idx)
+#define BNX2_RX_RING_IDX(x) ((x) & bp->rx_max_ring_idx)
+#define BNX2_RX_PG_RING_IDX(x) ((x) & bp->rx_max_pg_ring_idx)
 
-#define RX_RING(x) (((x) & ~MAX_RX_DESC_CNT) >> (BCM_PAGE_BITS - 4))
-#define RX_IDX(x) ((x) & MAX_RX_DESC_CNT)
+#define BNX2_RX_RING(x) (((x) & ~BNX2_MAX_RX_DESC_CNT) >> (BNX2_PAGE_BITS - 4))
+#define BNX2_RX_IDX(x) ((x) & BNX2_MAX_RX_DESC_CNT)
 
 /* Context size. */
 #define CTX_SHIFT                   7
@@ -7515,31 +7186,34 @@ struct l2_fhdr {
 #if defined(__VMKLNX__) && defined(__VMKNETDDI_QUEUEOPS__)
 #define NETQUEUE_KWQ_CID                97
 #define NETQUEUE_KCQ_CID                100
+
+#define BNX2_DRV_TO_FW_QUEUE_ID(id)	(id - 1)
+#define BNX2_FW_TO_DRV_QUEUE_ID(id)	(id + 1)
 #endif
 
-struct sw_bd {
+struct bnx2_sw_bd {
 	struct sk_buff		*skb;
 	struct l2_fhdr		*desc;
-	DECLARE_PCI_UNMAP_ADDR(mapping)
+	DEFINE_DMA_UNMAP_ADDR(mapping);
 };
 
-struct sw_pg {
+struct bnx2_sw_pg {
 	struct page		*page;
-	DECLARE_PCI_UNMAP_ADDR(mapping)
+	DEFINE_DMA_UNMAP_ADDR(mapping);
 };
 
-struct sw_tx_bd {
+struct bnx2_sw_tx_bd {
 	struct sk_buff		*skb;
 	unsigned short		is_gso;
 	unsigned short		nr_frags;
-	DECLARE_PCI_UNMAP_ADDR(mapping)
+	DEFINE_DMA_UNMAP_ADDR(mapping);
 };
 
-#define SW_RXBD_RING_SIZE (sizeof(struct sw_bd) * RX_DESC_CNT)
-#define SW_RXPG_RING_SIZE (sizeof(struct sw_pg) * RX_DESC_CNT)
-#define RXBD_RING_SIZE (sizeof(struct rx_bd) * RX_DESC_CNT)
-#define SW_TXBD_RING_SIZE (sizeof(struct sw_tx_bd) * TX_DESC_CNT)
-#define TXBD_RING_SIZE (sizeof(struct tx_bd) * TX_DESC_CNT)
+#define SW_RXBD_RING_SIZE (sizeof(struct bnx2_sw_bd) * BNX2_RX_DESC_CNT)
+#define SW_RXPG_RING_SIZE (sizeof(struct bnx2_sw_pg) * BNX2_RX_DESC_CNT)
+#define RXBD_RING_SIZE (sizeof(struct bnx2_rx_bd) * BNX2_RX_DESC_CNT)
+#define SW_TXBD_RING_SIZE (sizeof(struct bnx2_sw_tx_bd) * BNX2_TX_DESC_CNT)
+#define TXBD_RING_SIZE (sizeof(struct bnx2_tx_bd) * BNX2_TX_DESC_CNT)
 
 /* Buffered flash (Atmel: AT45DB011B) specific information */
 #define SEEPROM_PAGE_BITS			2
@@ -7600,15 +7274,17 @@ struct flash_spec {
 
 #define BNX2_MAX_MSIX_HW_VEC	9
 #define BNX2_MAX_MSIX_VEC	9
-#define BNX2_BASE_VEC		0
-#define BNX2_TX_VEC		1
-#define BNX2_TX_INT_NUM	(BNX2_TX_VEC << BNX2_PCICFG_INT_ACK_CMD_INT_NUM_SHIFT)
+#ifdef BCM_CNIC
+#define BNX2_MIN_MSIX_VEC	2
+#else
+#define BNX2_MIN_MSIX_VEC	1
+#endif
 
 struct bnx2_irq {
-#if (LINUX_VERSION_CODE < 0x020613) && (VMWARE_ESX_DDK_VERSION < 40000)
-	irqreturn_t	(*handler)(int, void *, struct pt_regs *);
-#else
+#if (LINUX_VERSION_CODE >= 0x20613) || (defined(__VMKLNX__) && (VMWARE_ESX_DDK_VERSION >= 40000))
 	irq_handler_t	handler;
+#else
+	irqreturn_t	(*handler)(int, void *, struct pt_regs *);
 #endif
 	unsigned int	vector;
 	u8		requested;
@@ -7621,8 +7297,8 @@ struct bnx2_tx_ring_info {
 	u32			tx_bidx_addr;
 	u32			tx_bseq_addr;
 
-	struct tx_bd		*tx_desc_ring;
-	struct sw_tx_bd		*tx_buf_ring;
+	struct bnx2_tx_bd	*tx_desc_ring;
+	struct bnx2_sw_tx_bd	*tx_buf_ring;
 
 	u16			tx_cons;
 	u16			hw_tx_cons;
@@ -7642,13 +7318,13 @@ struct bnx2_rx_ring_info {
 	u16			rx_pg_prod;
 	u16			rx_pg_cons;
 
-	struct sw_bd		*rx_buf_ring;
-	struct rx_bd		*rx_desc_ring[MAX_RX_RINGS];
-	struct sw_pg		*rx_pg_ring;
-	struct rx_bd		*rx_pg_desc_ring[MAX_RX_PG_RINGS];
+	struct bnx2_sw_bd	*rx_buf_ring;
+	struct bnx2_rx_bd	*rx_desc_ring[BNX2_MAX_RX_RINGS];
+	struct bnx2_sw_pg	*rx_pg_ring;
+	struct bnx2_rx_bd	*rx_pg_desc_ring[BNX2_MAX_RX_PG_RINGS];
 
-	dma_addr_t		rx_desc_mapping[MAX_RX_RINGS];
-	dma_addr_t		rx_pg_desc_mapping[MAX_RX_PG_RINGS];
+	dma_addr_t		rx_desc_mapping[BNX2_MAX_RX_RINGS];
+	dma_addr_t		rx_pg_desc_mapping[BNX2_MAX_RX_PG_RINGS];
 };
 
 struct bnx2_napi {
@@ -7685,7 +7361,6 @@ struct bnx2_napi {
 	u8			netq_state;
 #define BNX2_NETQ_SUSPENDED		0x0004
 #define BNX2_NETQ_RX_FILTER_APPLIED	0x0010
-
 	u32			tx_packets_sent;
 	u32			tx_packets_processed;
 
@@ -7711,6 +7386,9 @@ struct netq_ctx {
 #endif
 
 struct bnx2 {
+	u32		version;
+#define BNX2_DEV_VER 0xb2b20000 /* Change this when the structure changes */
+
 	/* Fields used in the tx and intr/napi performance paths are grouped */
 	/* together in the beginning of the structure. */
 	void __iomem		*regview;
@@ -7736,10 +7414,11 @@ struct bnx2 {
 #define BNX2_FLAG_JUMBO_BROKEN		0x00000800
 #define BNX2_FLAG_CAN_KEEP_VLAN		0x00001000
 #define BNX2_FLAG_BROKEN_STATS		0x00002000
+#define BNX2_FLAG_AER_ENABLED		0x00004000
 
 	struct bnx2_napi	bnx2_napi[BNX2_MAX_MSIX_VEC];
 
-#ifdef BCM_VLAN
+#if defined(BCM_VLAN) && !defined(NEW_VLAN)
 	struct			vlan_group *vlgrp;
 #endif
 
@@ -7756,7 +7435,7 @@ struct bnx2 {
 	int		tx_ring_size;
 	u32		tx_wake_thresh;
 
-	struct cnic_ops		*cnic_ops;
+	struct cnic_ops	__rcu	*cnic_ops;
 	void			*cnic_data;
 
 	/* End of fields used in the performance code paths. */
@@ -7799,33 +7478,31 @@ struct bnx2 {
 
 	u32			chip_id;
 	/* chip num:16-31, rev:12-15, metal:4-11, bond_id:0-3 */
-#define CHIP_NUM(bp)			(((bp)->chip_id) & 0xffff0000)
-#define CHIP_NUM_5706			0x57060000
-#define CHIP_NUM_5708			0x57080000
-#define CHIP_NUM_5709			0x57090000
+#define BNX2_CHIP(bp)			(((bp)->chip_id) & 0xffff0000)
+#define BNX2_CHIP_5706			0x57060000
+#define BNX2_CHIP_5708			0x57080000
+#define BNX2_CHIP_5709			0x57090000
 
-#define CHIP_REV(bp)			(((bp)->chip_id) & 0x0000f000)
-#define CHIP_REV_Ax			0x00000000
-#define CHIP_REV_Bx			0x00001000
-#define CHIP_REV_Cx			0x00002000
+#define BNX2_CHIP_REV(bp)		(((bp)->chip_id) & 0x0000f000)
+#define BNX2_CHIP_REV_Ax		0x00000000
+#define BNX2_CHIP_REV_Bx		0x00001000
+#define BNX2_CHIP_REV_Cx		0x00002000
 
-#define CHIP_METAL(bp)			(((bp)->chip_id) & 0x00000ff0)
-#define CHIP_BONDING(bp)		(((bp)->chip_id) & 0x0000000f)
+#define BNX2_CHIP_METAL(bp)		(((bp)->chip_id) & 0x00000ff0)
+#define BNX2_CHIP_BOND(bp)		(((bp)->chip_id) & 0x0000000f)
 
-#define CHIP_ID(bp)			(((bp)->chip_id) & 0xfffffff0)
-#define CHIP_ID_5706_A0			0x57060000
-#define CHIP_ID_5706_A1			0x57060010
-#define CHIP_ID_5706_A2			0x57060020
-#define CHIP_ID_5708_A0			0x57080000
-#define CHIP_ID_5708_B0			0x57081000
-#define CHIP_ID_5708_B1			0x57081010
-#define CHIP_ID_5709_A0			0x57090000
-#define CHIP_ID_5709_A1			0x57090010
-
-#define CHIP_BOND_ID(bp)		(((bp)->chip_id) & 0xf)
+#define BNX2_CHIP_ID(bp)		(((bp)->chip_id) & 0xfffffff0)
+#define BNX2_CHIP_ID_5706_A0		0x57060000
+#define BNX2_CHIP_ID_5706_A1			0x57060010
+#define BNX2_CHIP_ID_5706_A2			0x57060020
+#define BNX2_CHIP_ID_5708_A0			0x57080000
+#define BNX2_CHIP_ID_5708_B0			0x57081000
+#define BNX2_CHIP_ID_5708_B1			0x57081010
+#define BNX2_CHIP_ID_5709_A0			0x57090000
+#define BNX2_CHIP_ID_5709_A1			0x57090010
 
 /* A serdes chip will have the first bit of the bond id set. */
-#define CHIP_BOND_ID_SERDES_BIT		0x01
+#define BNX2_CHIP_BOND_SERDES_BIT		0x01
 
 	u32			phy_addr;
 	u32			phy_id;
@@ -7930,14 +7607,21 @@ struct bnx2 {
 	u8			num_tx_rings;
 	u8			num_rx_rings;
 
+	int			num_req_tx_rings;
+	int			num_req_rx_rings;
+
+	u8			func;
+
+	u32 			leds_save;
 	u32 			idle_chk_status_idx;
 
 #ifdef BCM_CNIC
 	struct mutex		cnic_lock;
 	struct cnic_eth_dev	cnic_eth_dev;
+	struct cnic_eth_dev	*(*cnic_probe)(struct net_device *);
 #endif
 
-#if defined(__VMKLNX__) && defined(__VMKNETDDI_QUEUEOPS__)
+#if defined(BNX2_ENABLE_NETQUEUE)
 	u16			n_rx_queues_allocated;
 	u16			n_tx_queues_allocated;
 
@@ -7964,25 +7648,28 @@ struct bnx2 {
 #define BNX2_NETQ_MAX_COMPLETED_KCQE	8
 	struct l2_kcqe		*netq_completed_kcq[BNX2_NETQ_MAX_COMPLETED_KCQE];
 
+	struct mutex		netq_lock;
+
 	u8			netq_flags;
 	u8			netq_enabled;
 	u8			netq_state;
 #define BNX2_NETQ_HW_OPENED		0x0001
 #define BNX2_NETQ_HW_STARTED		0x0002
-	u8			reserved1[1];
+	u8			skip_invalidate_tx_netq;
 
 	wait_queue_head_t	netq_wait;
 #endif
 	u8			reset_failed;
+	u32			msg_enable;
 };
 
-#define REG_RD(bp, offset)					\
+#define BNX2_RD(bp, offset)					\
 	readl(bp->regview + offset)
 
-#define REG_WR(bp, offset, val)					\
+#define BNX2_WR(bp, offset, val)					\
 	writel(val, bp->regview + offset)
 
-#define REG_WR16(bp, offset, val)				\
+#define BNX2_WR16(bp, offset, val)				\
 	writew(val, bp->regview + offset)
 
 struct cpu_reg {
@@ -8044,7 +7731,7 @@ struct fw_info {
 
 #define RV2P_P1_FIXUP_PAGE_SIZE_IDX		0
 #define RV2P_BD_PAGE_SIZE_MSK			0xffff
-#define RV2P_BD_PAGE_SIZE			((BCM_PAGE_SIZE / 16) - 1)
+#define RV2P_BD_PAGE_SIZE			((BNX2_PAGE_SIZE / 16) - 1)
 
 #define RV2P_PROC1                              0
 #define RV2P_PROC2                              1
@@ -8419,7 +8106,22 @@ struct fw_info {
 #define BNX2_RPHY_SERDES_LINK			0x374
 #define BNX2_RPHY_COPPER_LINK			0x378
 
+#define BNX2_ISCSI_INITIATOR			0x3dc
+#define BNX2_ISCSI_INITIATOR_EN			 0x00080000
+
+#define BNX2_ISCSI_MAX_CONN			0x3e4
+#define BNX2_ISCSI_MAX_CONN_MASK		 0xffff0000
+#define BNX2_ISCSI_MAX_CONN_SHIFT		 16
+
 #define HOST_VIEW_SHMEM_BASE			0x167c00
+
+#define DP_SHMEM_LINE(bp, offset)					\
+	netdev_err(bp->dev, "DEBUG: %08x: %08x %08x %08x %08x\n",	\
+		   offset,						\
+		   bnx2_shmem_rd(bp, offset),				\
+		   bnx2_shmem_rd(bp, offset + 4),			\
+		   bnx2_shmem_rd(bp, offset + 8),			\
+		   bnx2_shmem_rd(bp, offset + 12))
 
 #if defined(BNX2_VMWARE_BMAPILNX)
 
@@ -8430,16 +8132,24 @@ struct fw_info {
 #define BNX2_VMWARE_CIM_CMD_GET_NIC_PARAM	0x0005
 #define BNX2_VMWARE_CIM_CMD_GET_NIC_STATUS	0x0006
 
+/* Access type for Register Read/Write Ioctl */
+#define BRCM_VMWARE_REG_ACCESS_DIRECT		0x0000
+#define BRCM_VMWARE_REG_ACCESS_PCI_CFG		0x0001
+#define BRCM_VMWARE_REG_ACCESS_APE_REG		0x0002
+#define BRCM_VMWARE_REG_ACCESS_INDIRECT		0x0003
+
 struct bnx2_ioctl_reg_read_req
 {
 	u32 reg_offset;
    	u32 reg_value;
+	u32 reg_access_type;
 } __attribute__((packed));
 
 struct bnx2_ioctl_reg_write_req
 {
 	u32 reg_offset;
 	u32 reg_value;
+	u32 reg_access_type;
 } __attribute__((packed));
 
 struct bnx2_ioctl_get_nic_param_req
@@ -8465,7 +8175,57 @@ struct bnx2_ioctl_req
 		struct bnx2_ioctl_get_nic_status_req get_nic_status;
 	} cmd_req;
 } __attribute__((packed));
-
 #endif  /* BNX2_VMWARE_BMAPILNX */
+
+#if defined(__VMKLNX__) && (VMWARE_ESX_DDK_VERSION >= 55000)
+#define BNX2_FWDMP_GRC_DUMP     0
+#define BNX2_FWDMP_FTQ_DUMP     1
+#define BNX2_FWDMP_CPU_DUMP     2
+#define BNX2_FWDMP_HSI_DUMP     3
+#define BNX2_FWDMP_MCP_DUMP     4
+#define BNX2_FWDMP_TBDC_DUMP    5
+
+#define BNX2_FWDMP_SIZE		(64 * 1024)
+#define BNX2_FWDMP_MARKER       0x424e5832
+#define BNX2_FWDMP_MARKER_END   0x454E44
+#define BNX2_FWDMP_MARKER_SZ    20
+
+#define NIC_NAME_SIZE		(sizeof(((struct net_device *)0)->name))
+struct bnx2_fw_dmp_hdr {
+	u32	ver;
+	u32	len;
+	char	name[NIC_NAME_SIZE];
+	void	*bp;
+	u32	chip_id;
+	u32	dmp_size;  /*actual firmware/chip dump size */
+	u32	flags;
+	u32	reserved;
+};
+
+struct bnx2_chip_core_dmp {
+	struct bnx2_fw_dmp_hdr  fw_hdr;
+	u32                     fw_dmp_buf[(BNX2_FWDMP_SIZE -
+					   sizeof(struct bnx2_fw_dmp_hdr))/4];
+};
+
+#define BNX2_CP_HSI_START           0x1a0010
+#define BNX2_CP_HSI_SIZE            0x90
+
+#define BNX2_COM_HSI_START          0x120010
+#define BNX2_COM_HSI_SIZE           0xf8
+
+#define BNX2_RXP_HSI_START          0xe0010
+#define BNX2_RXP_HSI_SIZE           0x31ec
+
+#define BNX2_TXP_HSI_START          0x60010
+#define BNX2_TXP_HSI_SIZE           0x88
+
+#define BNX2_TPAT_HSI_START         0xa0410
+#define BNX2_TPAT_HSI_SIZE          0x6c
+
+#define BNX2_MCP_DUMP_SIZE          128
+#define BNX2_TBDC_DUMP_SIZE         384
+
+#endif /* defined(__VMKLNX__) && (VMWARE_ESX_DDK_VERSION >= 55000) */
 
 #endif

@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2003 - 2009 NetXen, Inc.
+ * Copyright (C) 2009 - QLogic Corporation.
  * All rights reserved.
  * 
  * This program is free software; you can redistribute it and/or
@@ -20,11 +21,6 @@
  * The full GNU General Public License is included in this distribution
  * in the file called LICENSE.
  * 
- * Contact Information:
- * licensing@netxen.com
- * NetXen, Inc.
- * 18922 Forge Drive
- * Cupertino, CA 95014
  */
 #include <linux/module.h>
 #include <linux/kernel.h>
@@ -41,12 +37,8 @@
 #include "unm_brdcfg.h"
 #include "unm_nic.h"
 
-#include "nx_nic_linux_tnic_api.h"
 #include "nxhal.h"
-#include "nxhal_v34.h"
-#include <unm_pstats.h>
 
-#define SNMP_ETH_FILENAME       "snmp_eth"
 static int unm_nic_port_read_proc(char *buf, char **start, off_t offset,
 					int count, int *eof, void *data);
 int unm_init_proc_drv_dir(void);
@@ -65,7 +57,14 @@ int nx_write_lro_stats(struct file *file, const char *buffer,
 		       unsigned long count, void *data);
 int nx_write_auto_fw_reset(struct file *file, const char *buffer,
 		       unsigned long count, void *data);
-
+static int nx_read_md_enable(char *buf, char **start, off_t offset, int count,
+              int *eof, void *data);
+static int nx_write_md_enable(struct file *file, const char *buffer,
+               unsigned long count, void *data);
+static int nx_read_log_collect_enable(char *buf, char **start, off_t offset, int count,
+		int *eof, void *data);
+static int nx_write_log_collect_enable(struct file *file, const char *buffer,
+		unsigned long count, void *data);
 
 /*Contains all the procfs related fucntions here */
 static struct proc_dir_entry *unm_proc_dir_entry;
@@ -118,6 +117,9 @@ void unm_init_proc_entries(struct unm_adapter_s *adapter) {
 	struct proc_dir_entry *lro_file = NULL;
 	struct proc_dir_entry *lro_stats_file = NULL;
 	struct proc_dir_entry *auto_fw_reset_file = NULL;
+	struct proc_dir_entry *md_enable_file = NULL;
+	struct proc_dir_entry *collect_logs_file = NULL;
+	uint64_t cur_fn = (uint64_t)unm_init_proc_entries;
 
 	adapter->dev_dir = proc_mkdir(adapter->procname, unm_proc_dir_entry);
 	stats_file = create_proc_entry("stats", S_IRUGO, adapter->dev_dir);
@@ -125,36 +127,44 @@ void unm_init_proc_entries(struct unm_adapter_s *adapter) {
 	rate_file = create_proc_entry("led_blink_rate", S_IRUGO|S_IWUSR, adapter->dev_dir);	
 	lro_file = create_proc_entry("lro_enabled", S_IRUGO|S_IWUSR, adapter->dev_dir);	
 	lro_stats_file = create_proc_entry("lro_stats", S_IRUGO|S_IWUSR, adapter->dev_dir);
-	if(adapter->portnum == 0)
+	if(adapter->portnum == 0) {
 		auto_fw_reset_file = create_proc_entry("auto_fw_reset",S_IRUGO|S_IWUSR ,adapter->dev_dir);
+		md_enable_file = create_proc_entry("md_enable", S_IRUGO|S_IWUSR, adapter->dev_dir);
+		collect_logs_file = create_proc_entry("collect_fw_logs", S_IRUGO|S_IWUSR, adapter->dev_dir);
+	}
 	if (stats_file) {
 		stats_file->data = netdev;
 		stats_file->owner = THIS_MODULE;
 		stats_file->read_proc = unm_nic_port_read_proc;
+		NX_NIC_TRC_FN(adapter, cur_fn, stats_file);
 	}
 	if (state_file) {
 		state_file->data = netdev;
 		state_file->owner = THIS_MODULE;
 		state_file->read_proc = unm_read_blink_state;
 		state_file->write_proc = unm_write_blink_state;
+		NX_NIC_TRC_FN(adapter, cur_fn, state_file);
 	}
 	if (rate_file) {
 		rate_file->data = netdev;
 		rate_file->owner = THIS_MODULE;
 		rate_file->read_proc = unm_read_blink_rate;
 		rate_file->write_proc = unm_write_blink_rate;
+		NX_NIC_TRC_FN(adapter, cur_fn, rate_file);
 	}
 	if (lro_file) {
 		lro_file->data = netdev;
 		lro_file->owner = THIS_MODULE;
 		lro_file->read_proc = nx_read_lro_state;
 		lro_file->write_proc = nx_write_lro_state;
+		NX_NIC_TRC_FN(adapter, cur_fn, lro_file);
 	}
 	if (lro_stats_file) {
 		lro_stats_file->data = netdev;
 		lro_stats_file->owner = THIS_MODULE;
 		lro_stats_file->read_proc = nx_read_lro_stats;
 		lro_stats_file->write_proc = nx_write_lro_stats;
+		NX_NIC_TRC_FN(adapter, cur_fn, lro_stats_file);
 	}
 
 	if(adapter->portnum == 0) {
@@ -163,30 +173,30 @@ void unm_init_proc_entries(struct unm_adapter_s *adapter) {
 			auto_fw_reset_file->owner = THIS_MODULE;
 			auto_fw_reset_file->read_proc = nx_read_auto_fw_reset;
 			auto_fw_reset_file->write_proc = nx_write_auto_fw_reset;
+			NX_NIC_TRC_FN(adapter, cur_fn, auto_fw_reset_file);
+		}
+		if (md_enable_file) {
+			md_enable_file->data = netdev;
+			md_enable_file->owner = THIS_MODULE;
+			md_enable_file->read_proc = nx_read_md_enable;
+			md_enable_file->write_proc = nx_write_md_enable;
+		}
+		if (collect_logs_file) {
+			collect_logs_file->data = netdev;
+			collect_logs_file->owner = THIS_MODULE;
+			collect_logs_file->read_proc = nx_read_log_collect_enable;
+			collect_logs_file->write_proc = nx_write_log_collect_enable;
 		}
 	}
-
-#ifdef UNM_NIC_SNMP
-	{
-		struct proc_dir_entry *snmp_proc = NULL;
-		snmp_proc = create_proc_entry(SNMP_ETH_FILENAME, S_IRUGO, adapter->dev_dir);
-
-		if (snmp_proc) {
-			snmp_proc->data = netdev;
-			snmp_proc->owner = THIS_MODULE;
-			snmp_proc->read_proc = unm_nic_snmp_ether_read_proc;
-		}
-	}
-#endif
 }
 void unm_cleanup_proc_entries(struct unm_adapter_s *adapter) {
 
 	if (strlen(adapter->procname) > 0) {
-#ifdef UNM_NIC_SNMP
-		remove_proc_entry(SNMP_ETH_FILENAME, adapter->dev_dir);
-#endif
-		if(adapter->portnum == 0)
+		if(adapter->portnum == 0) {
 			remove_proc_entry("auto_fw_reset", adapter->dev_dir);
+            remove_proc_entry("md_enable", adapter->dev_dir);
+			remove_proc_entry("collect_fw_logs", adapter->dev_dir);
+		}
 		remove_proc_entry("stats", adapter->dev_dir);
 		remove_proc_entry("led_blink_state", adapter->dev_dir);
 		remove_proc_entry("led_blink_rate", adapter->dev_dir);
@@ -194,17 +204,7 @@ void unm_cleanup_proc_entries(struct unm_adapter_s *adapter) {
 		remove_proc_entry("lro_stats", adapter->dev_dir);
 		remove_proc_entry(adapter->procname, unm_proc_dir_entry);
 	}
-
 }
-
-#ifndef ESX
-static int nx_procfs_print_tcp_ext_statistics(char *buffer, 
-					      nx_ctx_stats_t *pstat);
-static int nx_procfs_print_tcp_statistics(char *buffer, nx_ctx_stats_t *pstat);
-static int nx_procfs_print_ip_statistics(char *buffer, nx_ctx_stats_t *pstat);
-static int nx_procfs_print_ethernet_statistics(char *buffer, 
-						nx_ctx_stats_t *pstat);
-#endif
 
 static int
 unm_nic_port_read_proc(char *buf, char **start, off_t offset, int count,
@@ -231,63 +231,56 @@ unm_nic_port_read_proc(char *buf, char **start, off_t offset, int count,
 		       netdev->name);
 	len += sprintf(buf + len, "PCIE Function Number     : %d\n",
 		       adapter->ahw.pci_func);
-	if (NX_IS_REVISION_P2(adapter->ahw.revision_id)) {
-		len += sprintf(buf + len, "Virtual Port Number      : %d\n",
-		       adapter->portnum);
-		len += sprintf(buf + len, "Physical Port Number     : %d\n",
-			adapter->physical_port);
+	if (adapter->interface_id != -1) {
+		len += sprintf(buf + len,
+				"Virtual Port Number      : %d\n",
+				adapter->interface_id >> PORT_BITS);
+		len += sprintf(buf + len,
+				"Physical Port Number     : %d\n",
+				adapter->interface_id & PORT_MASK);
 	} else {
-		if (adapter->interface_id != -1) {
-			len += sprintf(buf + len,
-			    "Virtual Port Number      : %d\n",
-			    adapter->interface_id >> PORT_BITS);
-			len += sprintf(buf + len,
-			    "Physical Port Number     : %d\n",
-			    adapter->interface_id & PORT_MASK);
-		} else {
-			len += sprintf(buf + len,
-			    "Virtual Port Number      : Unavailable\n");
-			len += sprintf(buf + len,
-			    "Physical Port Number     : Unavailable\n");
-		}
+		len += sprintf(buf + len,
+				"Virtual Port Number      : Unavailable\n");
+		len += sprintf(buf + len,
+				"Physical Port Number     : Unavailable\n");
 	}
-	len += sprintf(buf + len, "Bad SKB                  : %lld\n",
+	len += sprintf(buf + len, "Bad SKB                  : %llu\n",
 		       adapter->stats.rcvdbadskb);
-	len += sprintf(buf + len, "Xmit called              : %lld\n",
+	len += sprintf(buf + len, "Xmit called              : %llu\n",
 		       adapter->stats.xmitcalled);
-	len += sprintf(buf + len, "Xmited Frames            : %lld\n",
+	len += sprintf(buf + len, "Xmited Frames            : %llu\n",
 		       adapter->stats.xmitedframes);
-	len += sprintf(buf + len, "Bad SKB length           : %lld\n",
+	len += sprintf(buf + len, "Bad SKB length           : %llu\n",
 		       adapter->stats.badskblen);
-	len += sprintf(buf + len, "Cmd Desc Error           : %lld\n",
+	len += sprintf(buf + len, "Cmd Desc Error           : %llu\n",
 		       adapter->stats.nocmddescriptor);
-	len += sprintf(buf + len, "Polled for Rcv           : %lld\n",
+	len += sprintf(buf + len, "Polled for Rcv           : %llu\n",
 		       adapter->stats.polled);
-	len += sprintf(buf + len, "Received Desc            : %lld\n",
+	len += sprintf(buf + len, "Received Desc            : %llu\n",
 		       adapter->stats.no_rcv);
-	len += sprintf(buf + len, "Rcv to stack             : %lld\n",
+	len += sprintf(buf + len, "Rcv to stack             : %llu\n",
 		       adapter->stats.uphappy);
-	len += sprintf(buf + len, "Stack dropped            : %lld\n",
+	len += sprintf(buf + len, "Stack dropped            : %llu\n",
 		       adapter->stats.updropped);
-	len += sprintf(buf + len, "Xmit finished            : %lld\n",
+	len += sprintf(buf + len, "Xmit finished            : %llu\n",
 		       adapter->stats.xmitfinished);
-	len += sprintf(buf + len, "Tx dropped SKBs          : %lld\n",
+	len += sprintf(buf + len, "Tx dropped SKBs          : %llu\n",
 		       adapter->stats.txdropped);
-	len += sprintf(buf + len, "TxOutOfBounceBuf dropped : %lld\n",
+	len += sprintf(buf + len, "TxOutOfBounceBuf dropped : %llu\n",
                        adapter->stats.txOutOfBounceBufDropped);
-	len += sprintf(buf + len, "Rcv of CSUMed SKB        : %lld\n",
+	len += sprintf(buf + len, "Rcv of CSUMed SKB        : %llu\n",
 		       adapter->stats.csummed);
-	len += sprintf(buf + len, "skb alloc fail immediate : %lld\n",
+	len += sprintf(buf + len, "skb alloc fail immediate : %llu\n",
 		       adapter->stats.alloc_failures_imm);
-	len += sprintf(buf + len, "skb alloc fail deferred  : %lld\n",
+	len += sprintf(buf + len, "skb alloc fail deferred  : %llu\n",
 		       adapter->stats.alloc_failures_def);
-	len += sprintf(buf + len, "rcv buf crunch           : %lld\n",
+	len += sprintf(buf + len, "rcv buf crunch           : %llu\n",
 		       adapter->stats.rcv_buf_crunch);
 	len += sprintf(buf + len, "\n");
 	len += sprintf(buf + len, "Ring Statistics\n");
-	len += sprintf(buf + len, "Command Producer    : %d\n",
+	len += sprintf(buf + len, "Command Producer    : %u\n",
 		       adapter->cmdProducer);
-	len += sprintf(buf + len, "LastCommand Consumer: %d\n",
+	len += sprintf(buf + len, "LastCommand Consumer: %u\n",
 		       adapter->lastCmdConsumer);
 	if(adapter->is_up == ADAPTER_UP_MAGIC) {
 		for (j = 0; j < adapter->max_rds_rings; j++) {
@@ -296,7 +289,7 @@ unm_nic_port_read_proc(char *buf, char **start, off_t offset, int count,
 		    				rds_rings[j].os_data;
 			len += sprintf(buf + len, "Rcv Ring %d\n", j);
 			len += sprintf(buf + len, "\tReceive Producer [%d]:"
-					" %d\n", j,host_rds_ring->producer);
+					" %u\n", j,host_rds_ring->producer);
 		}
 		for (j = 0; j < adapter->nx_dev->rx_ctxs[0]->
 						num_sds_rings; j++) {
@@ -304,9 +297,9 @@ unm_nic_port_read_proc(char *buf, char **start, off_t offset, int count,
 							sds_rings[j];
 	                host_sds_ring   = (sds_host_ring_t *)
 						nxhal_sds_ring->os_data;
-        	        len += sprintf(buf+len, "Rx Status Producer[%d]: %d\n",
+        	        len += sprintf(buf+len, "Rx Status Producer[%d]: %u\n",
                 	               j, host_sds_ring->producer);
-	                len += sprintf(buf+len, "Rx Status Consumer[%d]: %d\n",
+	                len += sprintf(buf+len, "Rx Status Consumer[%d]: %u\n",
         	                       j, host_sds_ring->consumer);
                 	len += sprintf(buf+len, "Rx Status Polled[%d]: %llu\n",
                         	       j, host_sds_ring->polled);
@@ -329,19 +322,6 @@ unm_nic_port_read_proc(char *buf, char **start, off_t offset, int count,
 			       adapter->link_width);
 	}
 
-#ifndef ESX
-	if (adapter->nic_net_stats.data) {
-		len += nx_procfs_print_tcp_ext_statistics(buf + len,
-						adapter->nic_net_stats.data);
-		len += nx_procfs_print_tcp_statistics(buf + len,
-						adapter->nic_net_stats.data);
-		len += nx_procfs_print_ip_statistics(buf + len,
-						adapter->nic_net_stats.data);
-		len += nx_procfs_print_ethernet_statistics(buf + len,
-						adapter->nic_net_stats.data);
-	}
-#endif
-
 	*eof = 1;
 	return len;
 }
@@ -349,26 +329,20 @@ unm_nic_port_read_proc(char *buf, char **start, off_t offset, int count,
 int nx_write_auto_fw_reset(struct file *file, const char *buffer,
                        unsigned long count, void *data)
 {
-        struct net_device       *netdev = (struct net_device *)data;
-        struct unm_adapter_s    *adapter;
-        int                     val = 0;
+	struct net_device       *netdev = (struct net_device *)data;
+	struct unm_adapter_s    *adapter;
+	int                     val = 0;
 
-        adapter = (struct unm_adapter_s *)netdev_priv(netdev);
-        if (!capable(CAP_NET_ADMIN)) {
-                return -EACCES;
-        }
+	adapter = (struct unm_adapter_s *)netdev_priv(netdev);
+	if (!capable(CAP_NET_ADMIN)) {
+		return -EACCES;
+	}
 
+	memcpy((void *)&val, (const void *)buffer, 1);
 
-#if (defined(ESX) || defined(ESX_3X_COS))
-        memcpy((void *)&val, (const void *)buffer, 1);
-#else
-        if (copy_from_user(&val, buffer, 1)) {
-                return -EFAULT;
-        }
-#endif
-        val = val - '0';
+	val = val - '0';
 	adapter->auto_fw_reset = val;
-        return count;
+	return count;
 }
 
 
@@ -384,232 +358,90 @@ int nx_read_auto_fw_reset(char *buf, char **start, off_t offset, int count,
         return len ;
 }
 
-#ifndef ESX
-static char *l2_stats_str[] = {
-	"RxBytes",
-	"TxBytes",
-};
-
-static char *ip_stats_str[] = {
-        "IpInReceives",
-        "IpInHdrErrors",
-        "IpInAddrErrors",
-        "IpInNoRoutes",
-        "IpInDiscards",
-        "IpInDelivers",
-        "IpOutRequests",
-        "IpOutDiscards",
-        "IpOutNoRoutes",
-        "IpReasmTimeout",
-        "IpReasmReqds",
-        "IpReasmOKs",
-        "IpReasmFails",
-        "IpFragOKs",
-        "IpFragFails",
-        "IpFragCreates"
-};
-
-static char *tcp_stats_str[] = {
-        "TcpActiveOpens",
-        "TcpPassiveOpens",
-        "TcpAttemptFails",
-        "TcpEstabResets",
-        "TcpCurrEstab",
-        "TcpInSegs",
-        "TcpOutSegs",
-        "TcpSlowOutSegs",
-        "TcpRetransSegs",
-        "TcpInErrs",
-        "TcpOutRsts",
-        "TcpOutCollapsed",
-        "TcpTimeWaitConns",
-};
-
-static char *tcp_ext_stats_str[] = {
-	"LroSegs",
-	"TcpPureAcks",
-	"TcpDelayedAcks",
-	"TcpDelayedAckLost",
-	"TcpListenDrops",
-	"TcpRenoRecovery",
-	"TcpSAckRecovery",
-	"TcpSAckReneging",
-	"TcpFAackReorder",
-	"TcpSAckReorder",
-	"TcpRenoReorder",
-	"TcpTSReorder",
-	"TcpFullUndo",
-	"TcpPartialUndo",
-	"TcpDSAckUndo",
-	"TcpLossUndo",
-	"TcpLoss",
-	"TcpLostRetransmit",
-	"TcpRenoFailures",
-	"TcpSAckFailures",
-	"TcpLossFailures",
-	"TcpFastRetrans",
-	"TcpForwardRetrans",
-	"TcpSlowStartRetrans",
-	"TcpRenoRecoveryFail",
-	"TcpSAckRecoveryFail",
-	"TcpDSAckOldSent",
-	"TcpDSAckOfoSent",
-	"TcpDSAckRcv",
-	"TcpDSAckOfoRcv",
-	"TcpAbortFailed",
-	"MmemoryPressure",
-	"TcpHPMiss",
-	"TcpHPAcksMiss",
-	"TcpPruneCalled",
-	"TcpRcvPruned",
-	"TcpOfoPruned",
-	"TcpRcvCollapse",
-	"PAWSActiveRejected",
-	"PAWSEstabRejected",
-	"TcpTimeOuts",
-	"AbortObSyn",
-	"AbortOnData",
-	"AbortOnClose",
-	"AbortOnMemory",
-	"AbortOnTimeOut",
-	"AbortOnLinger",
-};
-
-static int nx_procfs_print_ethernet_statistics(char *buffer, nx_ctx_stats_t *pstat)
+static int nx_write_md_enable(struct file *file, const char *buffer,
+                       unsigned long count, void *data)
 {
-	int		len = 0;
-	int		ii;
-	int		cnt1;
-	int		cnt2;
-	int		jj;
-	__uint64_t	value;
+		int  val = 0;
+		struct net_device *netdev = (struct net_device *)data;
+		struct unm_adapter_s *adapter = (struct unm_adapter_s *)netdev_priv(netdev);
 
-	cnt1 = sizeof (l2_stats_str) / sizeof (char *);
-	cnt2 = sizeof (nx_l2_stats_t) / sizeof (__uint64_t);
-
-	len += sprintf(buffer + len, "%s", "\nETHERNET Statistics");
-	len += sprintf(buffer + len, "%s", "\n===================\n");
-
-	if (cnt1 != (cnt2 - L2_RSVD)) {
-		len += sprintf(buffer + len, "Mismatch in number of elements "
-                               "in Ethernet string and statistics: strings[%d] != "
-                               "statistics[%d]\n", cnt1, cnt2);
-		return (len);
-	}
-
-	for (jj = 0; jj < cnt1; jj++) {
-		len += sprintf(buffer + len, "%-20s", l2_stats_str[jj]);
-		value = 0;
-		for (ii = 0; ii < NETXEN_NUM_PEGS; ++ii) {
-			value += ((__uint64_t *)&pstat->peg[ii].l2_stats)[jj];
+		if (!capable(CAP_NET_ADMIN)) {
+			return -EPERM;
 		}
-		len += sprintf(buffer + len, "%10llu\n", value);
-	}
 
-	return (len);
+		if (!buffer) {
+			return -EINVAL;
+		}
+
+		memcpy((void *)&val, (const void *)buffer, 1);
+		val = val - '0';
+
+		adapter->mdump.dump_needed = !!val;
+
+		return count;
 }
 
-static int nx_procfs_print_ip_statistics(char *buffer, nx_ctx_stats_t *pstat)
+static int nx_read_md_enable(char *buf, char **start, off_t offset, int count,
+                                int *eof, void *data)
 {
-	int		len = 0;
-	int		ii;
-	int		cnt1;
-	int		cnt2;
-	int		jj;
-	__uint64_t	value;
+        int len = 0;
+    	struct net_device *netdev = (struct net_device *)data;
+	    struct unm_adapter_s *adapter = (struct unm_adapter_s *)netdev_priv(netdev);
 
-	cnt1 = sizeof (ip_stats_str) / sizeof (char *);
-	cnt2 = sizeof (nx_ip_mib_t) / sizeof (__uint64_t);
+        if (!buf)
+            return -EINVAL;
 
-	len += sprintf(buffer + len, "%s", "\nIP Statistics");
-	len += sprintf(buffer + len, "%s", "\n=============\n");
+        len = sprintf(buf, "%d\n", adapter->mdump.dump_needed);
 
-	if (cnt1 != cnt2) {
-		len += sprintf(buffer + len, "Mismatch in number of elements "
-                               "in IP string and statistics: strings[%d] != "
-                               "statistics[%d]\n", cnt1, cnt2);
-		return (len);
-	}
-
-	for (jj = 0; jj < cnt1; jj++) {
-		len += sprintf(buffer + len, "%-20s", ip_stats_str[jj]);
-		value = 0;
-		for (ii = 0; ii < NETXEN_NUM_PEGS; ++ii) {
-			value += ((__uint64_t *)&pstat->peg[ii].ip_stats)[jj];
-		}
-		len += sprintf(buffer + len, "%10llu\n", value);
-	}
-
-	return (len);
+        *eof = 1;
+        return len ;
 }
 
-static int nx_procfs_print_tcp_statistics(char *buffer, nx_ctx_stats_t *pstat)
+static int nx_write_log_collect_enable(struct file *file, const char *buffer,
+		unsigned long count, void *data)
 {
-	int		len = 0;
-	int		ii;
-	int		cnt1;
-	int		cnt2;
-	int		jj;
-	__uint64_t	value;
+	uint32_t  val = 0;
+	struct net_device *netdev;
+	struct unm_adapter_s *adapter;
 
-	cnt1 = sizeof (tcp_stats_str) / sizeof (char *);
-	cnt2 = sizeof (nx_tcp_mib_t) / sizeof (__uint64_t);
-
-	len += sprintf(buffer + len, "%s", "\nTCP Statistics");
-	len += sprintf(buffer + len, "%s", "\n==============\n");
-
-	if (cnt1 != (cnt2 - TCP_RSVD)) {
-		len += sprintf(buffer + len, "Mismatch in number of elements "
-                               "in TCP string and statistics: strings[%d] != "
-                               "statistics[%d]\n", cnt1, cnt2);
-		return (len);
+	if (!capable(CAP_NET_ADMIN)) {
+		return -EPERM;
 	}
 
-	for (jj = 1; jj < cnt1; jj++) { 
-		len += sprintf(buffer + len, "%-20s", tcp_stats_str[jj]);
-		value = 0;
-		for (ii = 0; ii < NETXEN_NUM_PEGS; ++ii) {
-			value += ((__uint64_t *)&pstat->peg[ii].tcp_stats)[jj];
-		}
-		len += sprintf(buffer + len, "%10llu\n", value);
-	}
-	len += sprintf(buffer + len, "\n");
-	return (len);
+	if (!buffer || !data)
+		return -EINVAL;
+
+	netdev = (struct net_device *)data;
+	adapter = (struct unm_adapter_s *)netdev_priv(netdev);
+
+	memcpy((void *)&val, (const void *)buffer, 1);
+	val = val - '0';
+
+	if (val != 0 && val != 1) 
+		return -EINVAL;
+
+	adapter->fw_dmp.enabled = val;
+
+	return count;
 }
 
-static int nx_procfs_print_tcp_ext_statistics(char *buffer, nx_ctx_stats_t *pstat)
+static int nx_read_log_collect_enable(char *buf, char **start, off_t offset, int count,
+		int *eof, void *data)
 {
-	int		len = 0;
-	int		ii;
-	int		cnt1;
-	int		cnt2;
-	int		jj;
-	__uint64_t	value;
+	int len = 0;
+	struct net_device *netdev;
+	struct unm_adapter_s *adapter;
 
-	cnt1 = sizeof (tcp_ext_stats_str) / sizeof (char *);
-	cnt2 = sizeof (nx_tcp_ext_stats_t) / sizeof (__uint64_t);
+	if (!buf || !data)
+		return -EINVAL;
 
-	len += sprintf(buffer + len, "%s", "\nTCP Extended Statistics");
-	len += sprintf(buffer + len, "%s", "\n=======================\n");
+	netdev = (struct net_device *)data;
+	adapter = (struct unm_adapter_s *)netdev_priv(netdev);
 
-	if (cnt1 != (cnt2 - TCP_EXT_RSVD)) {
-		len += sprintf(buffer + len, "Mismatch in number of elements "
-                               "in TCP EXT string and statistics: strings[%d] != "
-                               "statistics[%d]\n", cnt1, cnt2);
-		return (len);
-	}
+	len = sprintf(buf, "%u\n", adapter->fw_dmp.enabled);
 
-	for (jj = 0; jj < cnt1; jj++) { 
-		len += sprintf(buffer + len, "%-20s", tcp_ext_stats_str[jj]);
-		value = 0;
-		for (ii = 0; ii < NETXEN_NUM_PEGS; ++ii) {
-			value += ((__uint64_t *)&pstat->peg[ii].tcp_ext_stats)[jj];
-		}
-		len += sprintf(buffer + len, "%10llu\n", value);
-	}
-	len += sprintf(buffer + len, "\n");
-	return (len);
+	*eof = 1;
+	return len ;
 }
-#endif
 
 EXPORT_SYMBOL(nx_nic_get_base_procfs_dir);

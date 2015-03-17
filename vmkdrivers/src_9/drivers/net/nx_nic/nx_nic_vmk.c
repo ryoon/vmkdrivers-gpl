@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2003 - 2009 NetXen, Inc.
+ * Copyright (C) 2009 - QLogic Corporation.
  * All rights reserved.
  * 
  * This program is free software; you can redistribute it and/or
@@ -20,11 +21,6 @@
  * The full GNU General Public License is included in this distribution
  * in the file called LICENSE.
  * 
- * Contact Information:
- * licensing@netxen.com
- * NetXen, Inc.
- * 18922 Forge Drive
- * Cupertino, CA 95014
  */
 
 
@@ -37,15 +33,9 @@
 #include "nxhal_nic_interface.h"
 #include "nxhal_nic_api.h"
 #include "nxhal.h"
-#include "nxhal_v34.h"
 
 #ifdef __VMKERNEL_MODULE__
 
-extern void *nx_alloc(struct unm_adapter_s *adapter, size_t sz,
-		                      dma_addr_t *ptr, struct pci_dev **used_dev);
-
-extern int  unm_post_rx_buffers(struct unm_adapter_s *adapter,
-		                                  uint32_t type);
 extern int nx_nic_multictx_get_ctx_count(struct net_device *netdev, int queue_type);
 extern int nx_nic_multictx_get_filter_count(struct net_device *netdev, int queue_type);
 extern int nx_nic_multictx_alloc_tx_ctx(struct net_device *netdev);
@@ -60,251 +50,6 @@ extern int nx_nic_multictx_get_ctx_stats(struct net_device *netdev, int ctx,
                                                 struct net_device_stats *stats);
 extern struct napi_struct* nx_nic_multictx_get_napi(struct net_device *netdev, int ctx);
 
-/*  Allocate some extra buffers 
- *  To be used when we see vlan packets
- *  whose first segment is not aligned
- *  to 8 bytes 
- */
-
-inline int nx_setup_vlan_buffers(struct unm_adapter_s * adapter)
-{
-	int i;
-	struct unm_cmd_buffer *cmd_buf = adapter->cmd_buf_arr;
-	struct nx_vlan_buffer *vlan_buf = &adapter->vlan_buffer;
-	void     *vaddr_off;
-	uint64_t dmaddr_off;
-	uint64_t size;
-
-	if (NX_IS_REVISION_P3(adapter->ahw.revision_id)) {
-		return 0;
-	}
-
-
-	size = HDR_CP * adapter->MaxTxDescCount;
-
-	vaddr_off = nx_alloc(adapter, size, (dma_addr_t *)&dmaddr_off, 
-			&vlan_buf->pdev);
-
-	if (vaddr_off == NULL) {
-			return -1;
-		}
-
-	vlan_buf->data = vaddr_off;
-	vlan_buf->phys = dmaddr_off;
-
-
-	for (i = 0; i < adapter->MaxTxDescCount; i++) {
-		cmd_buf[i].vlan_buf.data = vaddr_off;
-		cmd_buf[i].vlan_buf.phys = dmaddr_off;
-		vaddr_off += HDR_CP;
-		dmaddr_off += HDR_CP;
-	}
-	return 0;
-}
-
-inline int nx_setup_tx_vmkbounce_buffers(struct unm_adapter_s * adapter)
-{
-	int i;
-	void     *vaddr_off;
-	uint64_t dmaddr_off;
-	unsigned int len;
-	struct vmk_bounce *bounce = &adapter->vmk_bounce;
-	uint64_t max_phys_addr = vmk_MachMemMaxAddr();
-
-	if (max_phys_addr < adapter->dma_mask) { 
-		adapter->bounce = 0;
-		return 0;
-	}
-
-	adapter->bounce = 1;
-	len = PAGE_SIZE * MAX_VMK_BOUNCE;
-	bounce->len = len;
-	bounce->index = 0;
-	bounce->max = MAX_VMK_BOUNCE;
-	vaddr_off = nx_alloc(adapter, len, (dma_addr_t *)&dmaddr_off,
-			&bounce->pdev);
-	if (vaddr_off == NULL){
-		printk (KERN_WARNING"%s:%s failed to alloc tx bounce buffers for device %s \n",
-				unm_nic_driver_name,
-				__FUNCTION__,
-				adapter->netdev->name);
-		return -1;
-	}
-
-	bounce->vaddr_off = vaddr_off;
-	bounce->dmaddr_off = dmaddr_off;
-	TAILQ_INIT (&bounce->free_vmk_bounce);
-	for (i = 0; i < (bounce->max); i++) {
-		bounce->buf[i].data = vaddr_off;
-		bounce->buf[i].phys = dmaddr_off;
-		bounce->buf[i].busy = 0;
-		bounce->buf[i].index = i;
-		TAILQ_INSERT_TAIL(&bounce->free_vmk_bounce,
-				&(bounce->buf[i]), link);
-		vaddr_off += PAGE_SIZE;
-		dmaddr_off += PAGE_SIZE;
-	}
-
-	spin_lock_init(&bounce->lock);
-
-		return 0;
-}
-
-inline void nx_free_vlan_buffers(struct unm_adapter_s *adapter)
-{
-
-	int i;
-	struct unm_cmd_buffer *cmd_buf = adapter->cmd_buf_arr;
-	struct nx_vlan_buffer *vlan_buf = &adapter->vlan_buffer;
-
-	if (NX_IS_REVISION_P3(adapter->ahw.revision_id)) {
-		return ;
-	}
-
-	pci_free_consistent(vlan_buf->pdev, HDR_CP * adapter->MaxTxDescCount,
-			vlan_buf->data, vlan_buf->phys);
-
-	vlan_buf->data = NULL;
-
-	for (i = 0; i < adapter->MaxTxDescCount; i++) {
-		cmd_buf[i].vlan_buf.data = NULL;
-		cmd_buf[i].vlan_buf.phys = 0;
-	}
-}
-
-inline void nx_free_tx_vmkbounce_buffers(struct unm_adapter_s *adapter)
-{
-
-	if (adapter->bounce == 0) {
-		return ;
-	}
-
-	if (adapter->vmk_bounce.vaddr_off) {
-		pci_free_consistent (adapter->vmk_bounce.pdev,
-				adapter->vmk_bounce.len,
-				adapter->vmk_bounce.vaddr_off,
-				adapter->vmk_bounce.dmaddr_off);
-		adapter->vmk_bounce.vaddr_off = NULL;
-	}
-}
-
-
-void nx_free_frag_bounce_buf(struct unm_adapter_s *adapter,
-		struct unm_skb_frag *frag)
-{
-	int i;
-	unsigned long flags;
-
-	if (adapter->bounce == 0) {
-		return ;
-	}
-
-	BOUNCE_LOCK(&(adapter->vmk_bounce.lock), flags);
-	for (i = 0; i < MAX_PAGES_PER_FRAG; i++ ) {
-		if (!frag->bounce_buf[i]) {
-			BOUNCE_UNLOCK(&(adapter->vmk_bounce.lock), flags);
-			return ;
-		}
-		frag->bounce_buf[i]->busy = 0;
-		TAILQ_INSERT_TAIL(
-				&adapter->vmk_bounce.free_vmk_bounce,
-				frag->bounce_buf[i], link);
-	}
-	BOUNCE_UNLOCK(&(adapter->vmk_bounce.lock), flags);
-}
-
-
-/*
-    * Search req_bufs no. of contiguous buffers
-     * Return the first of them
-      */
-       static inline struct nx_cmd_struct *
-       nx_find_suitable_bounce_buf(struct vmk_bounce *bounce, int req_bufs)
-{
-	struct nx_cmd_struct *buf;
-	int i, j, k, index, max;
-
-	buf = TAILQ_FIRST(&bounce->free_vmk_bounce);
-
-	index  = buf->index;
-	max = bounce->max;
-
-	for (i = index; i  < (max + index); ) {
-
-		k = (i % max);
-		if ((k < index) && (k + req_bufs) > (index + 1)) {
-			return NULL;
-		} else if ((k >= index) && ((k + req_bufs) > max)) {
-			i = max;
-			continue;
-		}
-
-		buf = &(bounce->buf[k]);
-		for (j = 0; j < req_bufs; j++) {
-			if (buf->busy)
-				break;
-			++buf;
-		}
-		if (j == req_bufs)
-			return &(bounce->buf[k]);
-		i += (j + 1);
-	}
-
-	return NULL;
-}
-
-inline int nx_handle_large_addr(struct unm_adapter_s *adapter,
-		struct unm_skb_frag *frag, dma_addr_t *phys,
-		void *virt[], int len[], int tot_len)
-{
-	unsigned long  flags;
-	int i, req_bufs;
-	int p_i;
-	int temp_len;
-
-	if((*phys + tot_len)  >= adapter->dma_mask) {
-		struct vmk_bounce *bounce= &adapter->vmk_bounce;
-		struct nx_cmd_struct *buffer, *temp_buf;
-
-		BOUNCE_LOCK(&bounce->lock, flags);
-		if (TAILQ_EMPTY(&bounce->free_vmk_bounce)) {
-			BOUNCE_UNLOCK(&bounce->lock, flags);
-			return -1;
-		}
-
-		req_bufs = ((tot_len % PAGE_SIZE) ? (1 + (tot_len / PAGE_SIZE)) : (tot_len / PAGE_SIZE));
-		if(!(buffer = nx_find_suitable_bounce_buf(bounce, req_bufs))){
-			BOUNCE_UNLOCK(&bounce->lock, flags);
-			return -1;
-		}
-
-		temp_buf = buffer;
-
-		for ( i = 0; i < req_bufs; i++) {
-			TAILQ_REMOVE(&bounce->free_vmk_bounce, temp_buf,link);
-			temp_buf->busy = 1;
-			frag->bounce_buf[i] = temp_buf;
-			temp_buf++;
-		}
-		frag->bounce_buf[i] = NULL;
-		p_i = 0;
-		temp_len = 0;
-
-		while( (p_i < MAX_PAGES_PER_FRAG) && virt[p_i]) {
-			memcpy(buffer->data + temp_len,
-					virt[p_i], len[p_i]);
-			temp_len += len[p_i];
-			p_i++;
-		}
-
-		*phys = buffer->phys;
-
-		BOUNCE_UNLOCK(&bounce->lock, flags);
-	} else {
-		frag->bounce_buf[0] = NULL;
-	}
-	return 0;
-}
 
 #ifdef __VMKNETDDI_QUEUEOPS__
 
@@ -369,11 +114,9 @@ int nx_nic_netq_alloc_queue(vmknetddi_queueop_alloc_queue_args_t *args)
 
 		qid = nx_nic_multictx_alloc_rx_ctx(args->netdev);
 		args->queueid = VMKNETDDI_QUEUEOPS_MK_RX_QUEUEID(qid);
-#ifdef ESX_4X
 		args->napi = nx_nic_multictx_get_napi(args->netdev , qid);
 		if(args->napi == NULL)
 			return VMKNETDDI_QUEUEOPS_ERR;
-#endif
 
 	} else {
 		printk("%s: Invalid queue type\n",__FUNCTION__);
@@ -434,12 +177,9 @@ int nx_nic_netq_get_default_queue(vmknetddi_queueop_get_default_queue_args_t *ar
 	if (args->type == VMKNETDDI_QUEUEOPS_QUEUE_TYPE_RX) {
 		qid = nx_nic_multictx_get_default_rx_queue(netdev);
 		args->queueid = VMKNETDDI_QUEUEOPS_MK_RX_QUEUEID(qid);
-#ifdef ESX_4X
-		
 		args->napi = nx_nic_multictx_get_napi(args->netdev , qid);
 		if(args->napi == NULL)
 			return VMKNETDDI_QUEUEOPS_ERR;
-#endif
 
 		return VMKNETDDI_QUEUEOPS_OK;
 	} else {
@@ -579,5 +319,3 @@ int nx_nic_netqueue_ops(vmknetddi_queueops_op_t op, void *args)
 }
 #endif
 #endif
-
-

@@ -1,7 +1,7 @@
 /*
  *  Linux MegaRAID driver for SAS based RAID controllers
  *
- *  Copyright (c) 2009-2011  LSI Corporation.
+ *  Copyright (c) 2009-2012  LSI Corporation.
  *  Portions Copyright 2008 VMware, Inc.
  *
  *  This program is free software; you can redistribute it and/or
@@ -34,11 +34,8 @@
 /*
  * MegaRAID SAS Driver meta data
  */
-#define MEGASAS_VERSION				"00.00.05.34-1vmw"
-#define MEGASAS_RELDATE				"May 02, 2011"
-#define MEGASAS_EXT_VERSION			"Mon. May 2 17:00:00 PDT 2011"
-
-
+#define MEGASAS_VERSION				"6.603.55.00.1vmw"
+#define MEGASAS_RELDATE				"Feb 19, 2014"
 
 
 /*
@@ -52,6 +49,8 @@
 #define	PCI_DEVICE_ID_LSI_SAS0073SKINNY		0x0073
 #define	PCI_DEVICE_ID_LSI_SAS0071SKINNY		0x0071
 #define PCI_DEVICE_ID_LSI_FUSION		0x005b
+#define PCI_DEVICE_ID_LSI_INVADER		0x005d
+#define PCI_DEVICE_ID_LSI_FURY			0x005f
 
 /*
  * =====================================
@@ -182,7 +181,8 @@
 #define MR_EVT_CTRL_PERF_COLLECTION		0x017e
 
 #define MAX_LOGICAL_DRIVES                      64
-
+#define TAPE_IOTIME_LIMIT                      0xFFFF
+#define DISK_IOTIME_LIMIT                      0xFF
 
 /*
  * MFI command completion codes
@@ -245,6 +245,7 @@ enum MFI_STAT {
 	MFI_STAT_RESERVATION_IN_PROGRESS = 0x36,
 	MFI_STAT_I2C_ERRORS_DETECTED = 0x37,
 	MFI_STAT_PCI_ERRORS_DETECTED = 0x38,
+	MFI_STAT_CONFIG_SEQ_MISMATCH = 0x67,
 
 	MFI_STAT_INVALID_STATUS = 0xFF
 };
@@ -734,7 +735,124 @@ struct megasas_ctrl_info {
 	 */
 	char package_version[0x60];
 
-	u8 pad[0x800 - 0x6a0];
+	/*
+	* If adapterOperations.supportMoreThan8Phys is set, and deviceInterface.portCount is greater than 8,
+	* SAS Addrs for first 8 ports shall be populated in deviceInterface.portAddr, and the rest shall be
+	* populated in deviceInterfacePortAddr2.
+	*/
+	u64         deviceInterfacePortAddr2[8]; //0x6a0 
+	u8          reserved3[128];              //0x6e0 
+						     
+	struct {                                //0x760
+		u16 minPdRaidLevel_0                : 4;
+		u16 maxPdRaidLevel_0                : 12;
+
+		u16 minPdRaidLevel_1                : 4;
+		u16 maxPdRaidLevel_1                : 12;
+
+		u16 minPdRaidLevel_5                : 4;
+		u16 maxPdRaidLevel_5                : 12;
+
+		u16 minPdRaidLevel_1E               : 4;
+		u16 maxPdRaidLevel_1E               : 12;
+
+		u16 minPdRaidLevel_6                : 4;
+		u16 maxPdRaidLevel_6                : 12;
+
+		u16 minPdRaidLevel_10               : 4;
+		u16 maxPdRaidLevel_10               : 12;
+
+		u16 minPdRaidLevel_50               : 4;
+		u16 maxPdRaidLevel_50               : 12;
+
+		u16 minPdRaidLevel_60               : 4;
+		u16 maxPdRaidLevel_60               : 12;
+
+		u16 minPdRaidLevel_1E_RLQ0          : 4;
+		u16 maxPdRaidLevel_1E_RLQ0          : 12;
+
+		u16 minPdRaidLevel_1E0_RLQ0         : 4;
+		u16 maxPdRaidLevel_1E0_RLQ0         : 12;
+
+		u16 reserved[6];                    
+	} pdsForRaidLevels;
+
+	u16 maxPds;                             //0x780 
+	u16 maxDedHSPs;                         //0x782 
+	u16 maxGlobalHSPs;                      //0x784 
+	u16 ddfSize;                            //0x786 
+	u8  maxLdsPerArray;                     //0x788 
+	u8  partitionsInDDF;                    //0x789 
+	u8  lockKeyBinding;                     //0x78a 
+	u8  maxPITsPerLd;                       //0x78b 
+	u8  maxViewsPerLd;                      //0x78c 
+	u8  maxTargetId;                        //0x78d 
+	u16 maxBvlVdSize;                       //0x78e 
+
+	u16 maxConfigurableSSCSize;             //0x790 
+	u16 currentSSCsize;                     //0x792 
+
+	char    expanderFwVersion[12];          //0x794 
+
+	u16 PFKTrialTimeRemaining;              //0x7A0 
+
+	u16 cacheMemorySize;                    //0x7A2 
+
+	struct {                                //0x7A4
+		u32     supportPIcontroller         :1;         
+		u32     supportLdPIType1            :1;         
+		u32     supportLdPIType2            :1;         
+		u32     supportLdPIType3            :1;         
+		u32     supportLdBBMInfo            :1;         
+		u32     supportShieldState          :1;         
+		u32     blockSSDWriteCacheChange    :1;         
+		u32     supportSuspendResumeBGops   :1;         
+		u32     supportEmergencySpares      :1;         
+		u32     supportSetLinkSpeed         :1;         
+		u32     supportBootTimePFKChange    :1;         
+		u32     supportJBOD                 :1;         
+		u32     disableOnlinePFKChange      :1;         
+		u32     supportPerfTuning           :1;         
+		u32     supportSSDPatrolRead        :1;         
+		u32     realTimeScheduler           :1;         
+								
+		u32     supportResetNow             :1;         
+		u32     supportEmulatedDrives       :1;         
+		u32     headlessMode                :1;         
+		u32     dedicatedHotSparesLimited   :1;         
+								
+								
+		u32     supportUnevenSpans          :1;
+		u32     reserved                    :11;        
+	} adapterOperations2;
+
+	u8  driverVersion[32];                  //0x7A8 
+	u8  maxDAPdCountSpinup60;               //0x7C8 
+	u8  temperatureROC;                     //0x7C9 
+	u8  temperatureCtrl;                    //0x7CA 
+	u8  reserved4;                          //0x7CB
+	u16 maxConfigurablePds;                 //0x7CC 
+						    
+
+	u8  reserved5[2];                       //0x7CD reserved for future use
+
+	/*
+	* HA cluster information
+	*/
+	struct {
+		u32     peerIsPresent               :1;         
+		u32     peerIsIncompatible          :1;         
+								
+		u32     hwIncompatible              :1;         
+		u32     fwVersionMismatch           :1;         
+		u32     ctrlPropIncompatible        :1;         
+		u32     premiumFeatureMismatch      :1;         
+		u32     reserved                    :26;
+	} cluster;
+
+	char clusterId[16];                     //0x7D4 
+ 
+	u8          pad[0x800-0x7E4];           //0x7E4 
 
 } __attribute__ ((packed));
 
@@ -751,7 +869,7 @@ struct megasas_ctrl_info {
 #define MEGASAS_DEFAULT_INIT_ID			-1
 #define MEGASAS_MAX_LUN				8
 #define MEGASAS_MAX_LD				64
-#define MEGASAS_DEFAULT_CMD_PER_LUN		128
+#define MEGASAS_DEFAULT_CMD_PER_LUN		256
 #define MEGASAS_MAX_PD				(2 * \
 							MEGASAS_MAX_DEV_PER_CHANNEL)
 #define MEGASAS_MAX_LD_IDS			(MEGASAS_MAX_LD_CHANNELS * \
@@ -790,6 +908,7 @@ struct megasas_ctrl_info {
 #define MEGASAS_INT_CMDS			32
 #define MEGASAS_SKINNY_INT_CMDS			5	
 
+#define MEGASAS_MAX_MSIX_QUEUES			128
 /*
  * FW can accept both 32 and 64 bit SGLs. We want to allocate 32/64 bit
  * SGLs based on the size of dma_addr_t
@@ -818,7 +937,18 @@ struct megasas_ctrl_info {
 #define MFI_1068_FW_HANDSHAKE_OFFSET           0x64
 #define MFI_1068_FW_READY                      0xDDDD0000
 
+/*       U32     maxReplyQueues   : 5;
+ *       U32     maxChainSize     : 5;
+ *       U32     maxChainBuffers  : 4;
+ *       U32     maxReplyQueuesExt: 8;
+ *       U32     reserved1        : 6;
+ *       U32     state            : 4;
+ */
 
+#define MR_MAX_REPLY_QUEUES_OFFSET		0X0000001F
+#define MR_MAX_REPLY_QUEUES_EXT_OFFSET		0X003FC000
+#define MR_MAX_REPLY_QUEUES_EXT_OFFSET_SHIFT	14
+#define MR_MAX_MSIX_REG_ARRAY			16
 
 /*
 * register set for both 1068 and 1078 controllers
@@ -932,6 +1062,15 @@ union megasas_sgl_frame {
 
 } __attribute__ ((packed));
 
+typedef union _MFI_CAPABILITIES {
+	struct {
+		u32     support_fp_remote_lun:1;
+		u32     support_additional_msix:1;
+		u32     reserved:30;
+	} mfi_capabilities;
+	u32     reg;
+} MFI_CAPABILITIES;
+
 struct megasas_init_frame {
 
 	u8 cmd;			/*00h */
@@ -939,7 +1078,7 @@ struct megasas_init_frame {
 	u8 cmd_status;		/*02h */
 
 	u8 reserved_1;		/*03h */
-	u32 reserved_2;		/*04h */
+	MFI_CAPABILITIES driver_operations; /*04h*/
 
 	u32 context;		/*08h */
 	u32 pad_0;		/*0Ch */
@@ -1420,6 +1559,11 @@ typedef struct _PERFORMANCEMETRIC
     u32                         SavedCollectTimeSecs;
 }PERFORMANCEMETRIC;
 
+struct megasas_irq_context {
+	struct megasas_instance *instance;
+	u32 MSIxIndex;
+};
+
 struct megasas_instance {
 
 	u32 *producer;
@@ -1435,7 +1579,10 @@ struct megasas_instance {
 	unsigned long base_addr;
 	struct megasas_register_set __iomem *reg_set;
 
+	u32 *reply_post_host_index_addr[MR_MAX_MSIX_REG_ARRAY];
+
 	struct megasas_pd_list		pd_list[MEGASAS_MAX_PD];
+	struct megasas_pd_list		local_pd_list[MEGASAS_MAX_PD];
 	u8	ld_ids[MEGASAS_MAX_LD_IDS];
 	s8 init_id;
 
@@ -1500,19 +1647,19 @@ struct megasas_instance {
 	u8 flag_ieee;
 	u8 issuepend_done;
 	u8 disableOnlineCtrlReset;
+	u8 UnevenSpanSupport;
 	u8 adprecovery;
 
 	u32 mfiStatus;
 	u32 last_seq_num;
 	
-	struct timer_list io_completion_timer;
-	struct timer_list fw_live_poll_timer;
 	struct list_head internal_reset_pending_q;
 
 	/* Ptr to hba specfic information */
 	void *ctrl_context;
-	u8      msi_flag;
-	struct msix_entry msixentry;
+	unsigned int msix_vectors;
+	struct msix_entry msixentry[MEGASAS_MAX_MSIX_QUEUES];
+	struct megasas_irq_context irq_context[MEGASAS_MAX_MSIX_QUEUES];
 	u64 map_id;
 	struct megasas_cmd *map_update_cmd;
 	unsigned long bar;
@@ -1520,6 +1667,8 @@ struct megasas_instance {
 	PERFORMANCEMETRIC PerformanceMetric;
 	u32 CurLdCount;
 	struct mutex reset_mutex;
+	u8 is_imr;
+	u8 mask_interrupts;
 };
 enum {
 	MEGASAS_HBA_OPERATIONAL			= 0,
@@ -1533,16 +1682,17 @@ enum {
 struct megasas_instance_template {
        void (*fire_cmd)(struct megasas_instance *, dma_addr_t ,u32 ,struct megasas_register_set __iomem *);
 
-	void (*enable_intr)(struct megasas_register_set __iomem *) ;
-	void (*disable_intr)(struct megasas_register_set __iomem *);
+	void (*enable_intr)(struct megasas_instance *) ;
+	void (*disable_intr)(struct megasas_instance *);
 
-	u32 (*clear_intr)(struct megasas_register_set __iomem *);
+	int (*clear_intr)(struct megasas_register_set __iomem *);
 
 	u32 (*read_fw_status_reg)(struct megasas_register_set __iomem *);
 	int (*adp_reset)(struct megasas_instance *, struct megasas_register_set __iomem *);
 	int (*check_reset)(struct megasas_instance *, struct megasas_register_set __iomem *);
 
 	irqreturn_t (*service_isr )(int irq, void *devp, struct pt_regs *regs);
+	irqreturn_t (*coredump_poll_handler)(int irq, void *devp, struct pt_regs *regs);
 	void (*tasklet)(unsigned long);
 	u32 (*init_adapter)(struct megasas_instance *);
 	u32 (*build_and_issue_cmd) (struct megasas_instance *, struct scsi_cmnd *);
@@ -1658,10 +1808,6 @@ struct megasas_drv_info {
 	u8 version[64];
 };
 
-
-#define MEGASAS_IOC_GET_HOST_INFO _IOWR('M', 5, struct megasas_host_info)
-#define MEGASAS_IOC_GET_DRV_INFO _IOR('M', 7, struct megasas_drv_info)
-
 #endif /* defined(__VMKLNX__) */
 
 struct megasas_mgmt_info {
@@ -1670,5 +1816,180 @@ struct megasas_mgmt_info {
 	struct megasas_instance *instance[MAX_MGMT_ADAPTERS];
 	int max_index;
 };
+
+#define PCI_TYPE0_ADDRESSES             6
+#define PCI_TYPE1_ADDRESSES             2
+#define PCI_TYPE2_ADDRESSES             5
+
+typedef struct _MR_DRV_PCI_COMMON_HEADER
+{
+    u16  vendorID;                   // (ro)
+    u16  deviceID;                   // (ro)
+    u16  command;                    // Device control
+    u16  status;
+    u8   revisionID;                 // (ro)
+    u8   progIf;                     // (ro)
+    u8   subClass;                   // (ro)
+    u8   baseClass;                  // (ro)
+    u8   cacheLineSize;              // (ro+)
+    u8   latencyTimer;               // (ro+)
+    u8   headerType;                 // (ro)
+    u8   bist;                       // Built in self test
+
+    union
+    {
+        struct _MR_DRV_PCI_HEADER_TYPE_0
+        {
+            u32   baseAddresses[PCI_TYPE0_ADDRESSES];
+            u32   cis;
+            u16   subVendorID;
+            u16   subSystemID;
+            u32   romBaseAddress;
+            u8    capabilitiesPtr;
+            u8    reserved1[3];
+            u32   reserved2;
+            u8    interruptLine;      //
+            u8    interruptPin;       // (ro)
+            u8    minimumGrant;       // (ro)
+            u8    maximumLatency;     // (ro)
+        } type0;
+
+        //
+        // PCI to PCI Bridge
+        //
+
+        struct _MR_DRV_PCI_HEADER_TYPE_1
+        {
+            u32   baseAddresses[PCI_TYPE1_ADDRESSES];
+            u8    primaryBus;
+            u8    secondaryBus;
+            u8    subordinateBus;
+            u8    secondaryLatency;
+            u8    ioBase;
+            u8    ioLimit;
+            u16   secondaryStatus;
+            u16   memoryBase;
+            u16   memoryLimit;
+            u16   prefetchBase;
+            u16   prefetchLimit;
+            u32   prefetchBaseUpper32;
+            u32   prefetchLimitUpper32;
+            u16   ioBaseUpper16;
+            u16   ioLimitUpper16;
+            u8    capabilitiesPtr;
+            u8    reserved1[3];
+            u32   romBaseAddress;
+            u8    interruptLine;
+            u8    interruptPin;
+            u16   bridgeControl;
+        } type1;
+
+        //
+        // PCI to CARDBUS Bridge
+        //
+
+        struct _MR_DRV_PCI_HEADER_TYPE_2
+        {
+            u32   socketRegistersBaseAddress;
+            u8    capabilitiesPtr;
+            u8    reserved;
+            u16   secondaryStatus;
+            u8    primaryBus;
+            u8    secondaryBus;
+            u8    subordinateBus;
+            u8    secondaryLatency;
+            struct
+            {
+                u32   base;
+                u32   limit;
+            }    range[PCI_TYPE2_ADDRESSES-1];
+            u8   interruptLine;
+            u8   interruptPin;
+            u16  bridgeControl;
+        } type2;
+    } u;
+
+} MR_DRV_PCI_COMMON_HEADER, *PMR_DRV_PCI_COMMON_HEADER;
+
+#define MR_DRV_PCI_COMMON_HEADER_SIZE sizeof(MR_DRV_PCI_COMMON_HEADER)   //64 bytes
+
+typedef struct _MR_DRV_PCI_LINK_CAPABILITY
+{
+    union
+    {
+        struct
+        {
+            u32 linkSpeed         :4;
+            u32 linkWidth         :6;
+            u32 aspmSupport       :2;
+            u32 losExitLatency    :3;
+            u32 l1ExitLatency     :3;
+            u32 rsvdp             :6;
+            u32 portNumber        :8;
+        }bits;
+
+        u32 asUlong;
+    }u;
+
+}MR_DRV_PCI_LINK_CAPABILITY, *PMR_DRV_PCI_LINK_CAPABILITY;
+
+#define MR_DRV_PCI_LINK_CAPABILITY_SIZE sizeof(MR_DRV_PCI_LINK_CAPABILITY)
+
+typedef struct _MR_DRV_PCI_LINK_STATUS_CAPABILITY
+{
+    union
+    {
+        struct
+        {
+            u16 linkSpeed             :4;
+            u16 negotiatedLinkWidth   :6;
+            u16 linkTrainingError     :1;
+            u16 linkTraning           :1;
+            u16 slotClockConfig       :1;
+            u16 rsvdZ                  :3;
+        }bits;
+
+        u16 asUshort;
+    }u;
+
+    u16 reserved;
+
+} MR_DRV_PCI_LINK_STATUS_CAPABILITY, *PMR_DRV_PCI_LINK_STATUS_CAPABILITY;
+
+#define MR_DRV_PCI_LINK_STATUS_CAPABILITY_SIZE sizeof(MR_DRV_PCI_LINK_STATUS_CAPABILITY)
+
+
+typedef struct _MR_DRV_PCI_CAPABILITIES
+{
+    MR_DRV_PCI_LINK_CAPABILITY         linkCapability;
+    MR_DRV_PCI_LINK_STATUS_CAPABILITY  linkStatusCapability;
+
+}MR_DRV_PCI_CAPABILITIES, *PMR_DRV_PCI_CAPABILITIES;
+
+#define MR_DRV_PCI_CAPABILITIES_SIZE sizeof(MR_DRV_PCI_CAPABILITIES)
+
+typedef struct _MR_DRV_PCI_INFORMATION
+{
+    u32                        busNumber;
+    u8                         deviceNumber;
+    u8                         functionNumber;
+    u8                         interruptVector;
+    u8                         reserved;
+    MR_DRV_PCI_COMMON_HEADER   pciHeaderInfo;
+    MR_DRV_PCI_CAPABILITIES    capability;
+    u8                         reserved2[32];
+}MR_DRV_PCI_INFORMATION, *PMR_DRV_PCI_INFORMATION;
+
+typedef struct __MR_DRV_PCI_INFO {
+    u16                    hostno;
+    u16                    __pad1;
+    MR_DRV_PCI_INFORMATION PciInfo;
+} MR_DRV_PCI_INFO;
+
+#define MR_DRV_PCI_INFORMATION_SIZE sizeof(MR_DRV_PCI_INFORMATION)
+
+#define MEGASAS_IOC_GET_HOST_INFO	_IOWR('M', 5, struct megasas_host_info)
+#define MEGASAS_IOC_GET_DRV_INFO	_IOR('M', 7, struct megasas_drv_info)
+#define MEGASAS_IOC_GET_PCI_INFO	_IOR('M', 7, MR_DRV_PCI_INFO)
 
 #endif				/*LSI_MEGARAID_SAS_H */

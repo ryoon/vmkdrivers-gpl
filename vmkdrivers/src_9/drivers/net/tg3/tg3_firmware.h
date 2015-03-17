@@ -1,4 +1,4 @@
-/* Copyright (C) 2009-2012 Broadcom Corporation. */
+/* Copyright (C) 2009-2013 Broadcom Corporation. */
 
 #ifdef NETIF_F_TSO
 #define TG3_TSO_SUPPORT	1
@@ -12,6 +12,13 @@ struct tg3_firmware {
 	size_t size;
 	const u8 *data;
 };
+
+struct tg3_firmware_hdr {
+	u32 version; /* unused for fragments */
+	u32 base_addr;
+	u32 len;
+};
+#define TG3_FW_HDR_LEN		(sizeof(struct tg3_firmware_hdr))
 
 #ifndef MODULE_FIRMWARE
 #define MODULE_FIRMWARE(x)
@@ -205,6 +212,35 @@ static const struct tg3_firmware tg3_5701_fw = {
 	.data = (u8 *)&tg3FwText[0],
 };
 
+#define TG3_57766_FW_BASE_ADDR		0x00030000
+#define TG3_57766_FW_HANDSHAKE		0x0003fccc
+#define TG3_57766_FW_TEXT_ADDR		0x00030000
+#define TG3_57766_FW_TEXT_LEN		(0x58 + TG3_FW_HDR_LEN)
+#define TG3_57766_FW_PRIV1_ADDR		0x0003fd00
+#define TG3_57766_FW_PRIV1_SIZE		(0x4 + TG3_FW_HDR_LEN)
+#define TG3_57766_FW_PRIV2_ADDR		0x0003fccc
+#define TG3_57766_FW_PRIV2_SIZE		(0x4 + TG3_FW_HDR_LEN)
+#define TG3_57766_FW_RESERVED		0xdecafbad
+
+static const u32 tg3_57766_fwdata[] = {
+0x00000000, TG3_57766_FW_BASE_ADDR, 0xffffffff,
+TG3_57766_FW_RESERVED, TG3_57766_FW_TEXT_ADDR, TG3_57766_FW_TEXT_LEN,
+0x27800001, 0xf7f0403e, 0xcd283674, 0x11001100,
+0xf7ff1064, 0x376e0001, 0x27600000, 0xf7f07fea,
+0xf7f00004, 0xf7f00018, 0xcc10362c, 0x00180018,
+0x17800000, 0xf7f00008, 0xc33836b0, 0xf7f00004,
+0xc43836b0, 0xc62036bc, 0x00000009, 0xcb3836b0,
+0x17800001, 0x1760000a,
+TG3_57766_FW_RESERVED, TG3_57766_FW_PRIV1_ADDR, TG3_57766_FW_PRIV1_SIZE,
+0xd044d816,
+TG3_57766_FW_RESERVED, TG3_57766_FW_PRIV2_ADDR, TG3_57766_FW_PRIV2_SIZE,
+0x02300202,
+};
+
+static const struct tg3_firmware tg3_57766_fw = {
+	.size = sizeof(tg3_57766_fwdata),
+	.data = (u8 *)&tg3_57766_fwdata[0],
+};
 
 #if TG3_TSO_SUPPORT != 0
 
@@ -957,6 +993,8 @@ static int tg3_hidden_request_firmware(const struct tg3_firmware **fw,
 
 	if (strcmp(name, "tigon/tg3.bin") == 0)
 		*fw = &tg3_5701_fw;
+	else if (strcmp(name, "tigon/tg357766.bin") == 0)
+		*fw = &tg3_57766_fw;
 #if TG3_TSO_SUPPORT != 0
 	else if (strcmp(name, "tigon/tg3_tso.bin") == 0)
 		*fw = &tg3_lgcy_tso_fw;

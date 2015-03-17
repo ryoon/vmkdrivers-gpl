@@ -1,12 +1,17 @@
 /*
- *  Copyright (c) 2000-2010 LSI Corporation.
+ *  Copyright (c) 2000-2012 LSI Corporation.
  *
  *
  *           Name:  mpi2_targ.h
  *          Title:  MPI Target mode messages and structures
  *  Creation Date:  September 8, 2006
  *
- *    mpi2_targ.h Version: 02.00.04
+ *  mpi2_targ.h Version: 02.00.06
+ *
+ *  NOTE: Names (typedefs, defines, etc.) beginning with an MPI25 or Mpi25
+ *        prefix are for use only on MPI v2.5 products, and must not be used
+ *        with MPI v2.0 products. Unless otherwise noted, names beginning with
+ *        MPI2 or Mpi2 are for use with both MPI v2.0 and MPI v2.5 products.
  *
  *  Version History
  *  ---------------
@@ -22,6 +27,11 @@
  *                      Target Status Send Request only takes a single SGE for
  *                      response data.
  *  02-10-10  02.00.04  Added comment to MPI2_TARGET_SSP_RSP_IU structure.
+ *  11-18-11  02.00.05  Incorporating additions for MPI v2.5.
+ *  11-27-12  02.00.06  Added InitiatorDevHandle field to MPI2_TARGET_MODE_ABORT
+ *                      request message structure.
+ *                      Added AbortType MPI2_TARGET_MODE_ABORT_DEVHANDLE and
+ *                      MPI2_TARGET_MODE_ABORT_ALL_COMMANDS.
  *  --------------------------------------------------------------------------
  */
 
@@ -182,7 +192,7 @@ typedef struct _MPI2_TARGET_SSP_TASK_BUFFER
 
 
 /****************************************************************************
-*   Target Assist Request
+*   MPI v2.0 Target Assist Request
 ****************************************************************************/
 
 typedef struct _MPI2_TARGET_ASSIST_REQUEST
@@ -286,6 +296,117 @@ typedef struct _MPI2_TARGET_ASSIST_REQUEST
 
 
 /****************************************************************************
+*   MPI v2.5 Target Assist Request
+****************************************************************************/
+
+typedef struct _MPI25_TARGET_ASSIST_REQUEST
+{
+    U8                  Reserved1;                          /* 0x00 */
+    U8                  TargetAssistFlags;                  /* 0x01 */
+    U8                  ChainOffset;                        /* 0x02 */
+    U8                  Function;                           /* 0x03 */
+    U16                 QueueTag;                           /* 0x04 */
+    U8                  Reserved2;                          /* 0x06 */
+    U8                  MsgFlags;                           /* 0x07 */
+    U8                  VP_ID;                              /* 0x08 */
+    U8                  VF_ID;                              /* 0x09 */
+    U16                 Reserved3;                          /* 0x0A */
+    U16                 IoIndex;                            /* 0x0C */
+    U16                 InitiatorConnectionTag;             /* 0x0E */
+    U8                  DMAFlags;                           /* 0x10 */
+    U8                  Reserved9;                          /* 0x11 */
+    U8                  SequenceNumber;                     /* 0x12 */
+    U8                  Reserved4;                          /* 0x13 */
+    U8                  SGLOffset0;                         /* 0x14 */
+    U8                  SGLOffset1;                         /* 0x15 */
+    U8                  SGLOffset2;                         /* 0x16 */
+    U8                  SGLOffset3;                         /* 0x17 */
+    U32                 SkipCount;                          /* 0x18 */
+    U32                 DataLength;                         /* 0x1C */
+    U32                 BidirectionalDataLength;            /* 0x20 */
+    U16                 IoFlags;                            /* 0x24 */
+    U16                 EEDPFlags;                          /* 0x26 */
+    U16                 EEDPBlockSize;                      /* 0x28 */
+    U16                 Reserved10;                         /* 0x2A */
+    U32                 SecondaryReferenceTag;              /* 0x2C */
+    U16                 SecondaryApplicationTag;            /* 0x30 */
+    U16                 ApplicationTagTranslationMask;      /* 0x32 */
+    U32                 PrimaryReferenceTag;                /* 0x34 */
+    U16                 PrimaryApplicationTag;              /* 0x38 */
+    U16                 PrimaryApplicationTagMask;          /* 0x3A */
+    U32                 RelativeOffset;                     /* 0x3C */
+    U32                 Reserved5;                          /* 0x40 */
+    U32                 Reserved6;                          /* 0x44 */
+    U32                 Reserved7;                          /* 0x48 */
+    U32                 Reserved8;                          /* 0x4C */
+    MPI25_SGE_IO_UNION  SGL;                                /* 0x50 */
+} MPI25_TARGET_ASSIST_REQUEST, MPI2_POINTER PTR_MPI25_TARGET_ASSIST_REQUEST,
+  Mpi25TargetAssistRequest_t, MPI2_POINTER pMpi25TargetAssistRequest_t;
+
+/* use MPI2_TARGET_ASSIST_FLAGS_ defines for the Flags field */
+
+/* Defines for the DMAFlags field
+ *  Each setting affects 4 SGLS, from SGL0 to SGL3.
+ *      D = Data
+ *      C = Cache DIF
+ *      I = Interleaved
+ *      H = Host DIF
+ */
+#define MPI25_TA_DMAFLAGS_OP_MASK                   (0x0F)
+#define MPI25_TA_DMAFLAGS_OP_D_D_D_D                (0x00)
+#define MPI25_TA_DMAFLAGS_OP_D_D_D_C                (0x01)
+#define MPI25_TA_DMAFLAGS_OP_D_D_D_I                (0x02)
+#define MPI25_TA_DMAFLAGS_OP_D_D_C_C                (0x03)
+#define MPI25_TA_DMAFLAGS_OP_D_D_C_I                (0x04)
+#define MPI25_TA_DMAFLAGS_OP_D_D_I_I                (0x05)
+#define MPI25_TA_DMAFLAGS_OP_D_C_C_C                (0x06)
+#define MPI25_TA_DMAFLAGS_OP_D_C_C_I                (0x07)
+#define MPI25_TA_DMAFLAGS_OP_D_C_I_I                (0x08)
+#define MPI25_TA_DMAFLAGS_OP_D_I_I_I                (0x09)
+#define MPI25_TA_DMAFLAGS_OP_D_H_D_D                (0x0A)
+#define MPI25_TA_DMAFLAGS_OP_D_H_D_C                (0x0B)
+#define MPI25_TA_DMAFLAGS_OP_D_H_D_I                (0x0C)
+#define MPI25_TA_DMAFLAGS_OP_D_H_C_C                (0x0D)
+#define MPI25_TA_DMAFLAGS_OP_D_H_C_I                (0x0E)
+#define MPI25_TA_DMAFLAGS_OP_D_H_I_I                (0x0F)
+
+/* defines for the IoFlags field */
+#define MPI25_TARGET_ASSIST_IOFLAGS_BIDIRECTIONAL       (0x0800)
+#define MPI25_TARGET_ASSIST_IOFLAGS_RECEIVE_FIRST       (0x0200)
+
+/* defines for the EEDPFlags field */
+#define MPI25_TA_EEDPFLAGS_INC_PRI_REFTAG               (0x8000)
+#define MPI25_TA_EEDPFLAGS_INC_SEC_REFTAG               (0x4000)
+#define MPI25_TA_EEDPFLAGS_INC_PRI_APPTAG               (0x2000)
+#define MPI25_TA_EEDPFLAGS_INC_SEC_APPTAG               (0x1000)
+
+#define MPI25_TA_EEDPFLAGS_CHECK_REFTAG                 (0x0400)
+#define MPI25_TA_EEDPFLAGS_CHECK_APPTAG                 (0x0200)
+#define MPI25_TA_EEDPFLAGS_CHECK_GUARD                  (0x0100)
+
+#define MPI25_TA_EEDPFLAGS_ESCAPE_MODE_MASK             (0x00C0)
+#define MPI25_TA_EEDPFLAGS_COMPATIBLE_MODE              (0x0000)
+#define MPI25_TA_EEDPFLAGS_DO_NOT_DISABLE_MODE          (0x0040)
+#define MPI25_TA_EEDPFLAGS_APPTAG_DISABLE_MODE          (0x0080)
+#define MPI25_TA_EEDPFLAGS_APPTAG_REFTAG_DISABLE_MODE   (0x00C0)
+
+#define MPI25_TA_EEDPFLAGS_HOST_GUARD_METHOD_MASK       (0x0030)
+#define MPI25_TA_EEDPFLAGS_T10_CRC_HOST_GUARD           (0x0000)
+#define MPI25_TA_EEDPFLAGS_IP_CHKSUM_HOST_GUARD         (0x0010)
+
+#define MPI25_TA_EEDPFLAGS_PASSTHRU_REFTAG              (0x0008)
+
+#define MPI25_TA_EEDPFLAGS_MASK_OP                      (0x0007)
+#define MPI25_TA_EEDPFLAGS_NOOP_OP                      (0x0000)
+#define MPI25_TA_EEDPFLAGS_CHECK_OP                     (0x0001)
+#define MPI25_TA_EEDPFLAGS_STRIP_OP                     (0x0002)
+#define MPI25_TA_EEDPFLAGS_CHECK_REMOVE_OP              (0x0003)
+#define MPI25_TA_EEDPFLAGS_INSERT_OP                    (0x0004)
+#define MPI25_TA_EEDPFLAGS_REPLACE_OP                   (0x0006)
+#define MPI25_TA_EEDPFLAGS_CHECK_REGEN_OP               (0x0007)
+
+
+/****************************************************************************
 *  Target Status Send Request
 ****************************************************************************/
 
@@ -303,14 +424,14 @@ typedef struct _MPI2_TARGET_STATUS_SEND_REQUEST
     U16                     Reserved3;                  /* 0x0A */
     U16                     IoIndex;                    /* 0x0C */
     U16                     InitiatorConnectionTag;     /* 0x0E */
-    U16                     SGLFlags;                   /* 0x10 */
+    U16                     SGLFlags;                   /* 0x10 */ /* MPI v2.0 only. Reserved on MPI v2.5. */
     U16                     Reserved4;                  /* 0x12 */
     U8                      SGLOffset0;                 /* 0x14 */
     U8                      Reserved5;                  /* 0x15 */
     U16                     Reserved6;                  /* 0x16 */
     U32                     Reserved7;                  /* 0x18 */
     U32                     Reserved8;                  /* 0x1C */
-    MPI2_SIMPLE_SGE_UNION   StatusDataSGE;              /* 0x20 */
+    MPI2_SIMPLE_SGE_UNION   StatusDataSGE;              /* 0x20 */ /* MPI v2.5: This must be an IEEE Simple Element 64. */
 } MPI2_TARGET_STATUS_SEND_REQUEST,
   MPI2_POINTER PTR_MPI2_TARGET_STATUS_SEND_REQUEST,
   Mpi2TargetStatusSendRequest_t, MPI2_POINTER pMpi2TargetStatusSendRequest_t;
@@ -321,7 +442,7 @@ typedef struct _MPI2_TARGET_STATUS_SEND_REQUEST
 #define MPI2_TSS_FLAGS_RETRANSMIT                   (0x04)
 #define MPI2_TSS_FLAGS_AUTO_GOOD_STATUS             (0x01)
 
-/* Target Status Send SGLFlags bits */
+/* Target Status Send SGLFlags bits - MPI v2.0 only */
 /* Data Location Address Space */
 #define MPI2_TSS_SGLFLAGS_ADDR_MASK                 (0x0C)
 #define MPI2_TSS_SGLFLAGS_SYSTEM_ADDR               (0x00)
@@ -403,7 +524,7 @@ typedef struct _MPI2_TARGET_MODE_ABORT_REQUEST
     U8                      VF_ID;                      /* 0x09 */
     U16                     Reserved4;                  /* 0x0A */
     U16                     IoIndexToAbort;             /* 0x0C */
-    U16                     Reserved6;                  /* 0x0E */
+    U16                     InitiatorDevHandle;         /* 0x0E */
     U32                     MidToAbort;                 /* 0x10 */
 } MPI2_TARGET_MODE_ABORT, MPI2_POINTER PTR_MPI2_TARGET_MODE_ABORT,
   Mpi2TargetModeAbort_t, MPI2_POINTER pMpi2TargetModeAbort_t;
@@ -415,6 +536,8 @@ typedef struct _MPI2_TARGET_MODE_ABORT_REQUEST
 #define MPI2_TARGET_MODE_ABORT_EXACT_IO             (0x02)
 #define MPI2_TARGET_MODE_ABORT_EXACT_IO_REQUEST     (0x03)
 #define MPI2_TARGET_MODE_ABORT_IO_REQUEST_AND_IO    (0x04)
+#define MPI2_TARGET_MODE_ABORT_DEVHANDLE            (0x05)
+#define MPI2_TARGET_MODE_ABORT_ALL_COMMANDS         (0x06)
 
 
 /****************************************************************************

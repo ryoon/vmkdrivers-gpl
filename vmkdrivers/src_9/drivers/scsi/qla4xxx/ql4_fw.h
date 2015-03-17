@@ -1,6 +1,7 @@
 /*
  * QLogic iSCSI HBA Driver
  * Copyright (c)  2003-2006 QLogic Corporation
+ * Portions Copyright 2009-2011 VMware, Inc.
  *
  * See LICENSE.qla4xxx for copyright and licensing details.
  */
@@ -526,8 +527,19 @@ struct dev_db_entry {
 
 /*************************************************************************/
 
-/* Flash definitions */
+#ifdef __VMKLNX__
+/*
+ * MBOX 5 login error defintions.  Final 2 bytes reflect RFC-defined
+ * target login error codes.
+ */
+#define LOGIN_ERROR_TARGET_FORBIDDEN  0x080202
+#define LOGIN_ERROR_TARGET_NOT_FOUND  0x080203
+#define LOGIN_ERROR_TARGET_REMOVED    0x080204
 
+#define LOGIN_ERROR_MASK              0xffffff
+#endif  /* __VMKLNX__ */
+
+/* Flash definitions */
 #define FLASH_OFFSET_SYS_INFO	0x02000000
 #define FLASH_DEFAULTBLOCKSIZE	0x20000
 #define FLASH_EOF_OFFSET	(FLASH_DEFAULTBLOCKSIZE-8) /* 4 bytes

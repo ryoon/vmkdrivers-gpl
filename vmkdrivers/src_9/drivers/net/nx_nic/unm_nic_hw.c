@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2003 - 2009 NetXen, Inc.
+ * Copyright (C) 2009 - QLogic Corporation.
  * All rights reserved.
  * 
  * This program is free software; you can redistribute it and/or
@@ -20,16 +21,11 @@
  * The full GNU General Public License is included in this distribution
  * in the file called LICENSE.
  * 
- * Contact Information:
- * licensing@netxen.com
- * NetXen, Inc.
- * 18922 Forge Drive
- * Cupertino, CA 95014
  */
 /*
  * Source file for NIC routines to access the Phantom hardware
  *
- * $Id: //depot/vmkdrivers/esx50u2/src_9/drivers/net/nx_nic/unm_nic_hw.c#1 $
+ * $Id: //depot/vmkdrivers/vsphere-2015/src_9/drivers/net/nx_nic/unm_nic_hw.c#1 $
  *
  */
 #include <linux/delay.h>
@@ -37,7 +33,6 @@
 #include <linux/ethtool.h>
 #include <linux/version.h>
 #include <linux/pci.h>
-#include "queue.h"
 #include "unm_nic.h"
 #include "unm_nic_hw.h"
 #include "nic_cmn.h"
@@ -46,10 +41,6 @@
 #include "nxhal_nic_interface.h"
 #include "nxhal_nic_api.h"
 #include "nxhal.h"
-
-#ifdef ESX_3X
-#define dump_stack(...)
-#endif
 
 #define MASK(n)			((1ULL<<(n))-1)
 #define MN_WIN(addr) (((addr & 0x1fc0000) >> 1) | ((addr >> 25) & 0x3ff))
@@ -319,16 +310,12 @@ int crb_win_lock(struct unm_adapter_s *adapter)
         /*
          * Yield CPU
          */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,0)
         if(!in_atomic())
                 schedule();
         else {
-#endif
                 for(i = 0; i < 20; i++)
                         cpu_relax();    /*This a nop instr on i386*/
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,0)
         }
-#endif
     }
     NXWR32(adapter, UNM_CRB_WIN_LOCK_ID, adapter->portnum);
     return 0;
@@ -500,6 +487,7 @@ unm_nic_pci_set_crbwindow(unm_adapter *adapter, u64 off)
 
         return (off);
 }
+
 
 int
 unm_nic_hw_read_ioctl_2M(unm_adapter *adapter, u64 off, void *data, int len)
@@ -783,6 +771,124 @@ int unm_nic_pci_read_immediate_2M(unm_adapter *adapter, u64 off, u32 *data)
     return 0;
 }
 
+
+/* MINIDUMP RELATED FUNCTONS
+*/
+
+int unm_nic_hw_write_bar_reg_2M(unm_adapter *adapter, u64 off, u32 data)
+{
+	if (off >= 0xC0000 && off < 0x100000) { /* OCM */
+		UNM_NIC_PCI_WRITE_32(data, (void *)(uptr_t)(off + adapter->ahw.pci_base0));
+	} else {
+		unm_nic_hw_indirect_write_2M(adapter, off, data);
+	}
+
+        return 0;
+}
+
+u32 unm_nic_hw_read_bar_reg_2M(unm_adapter *adapter, u64 off)
+{
+	u32 data;
+
+	if (off >= 0xC0000 && off < 0x100000) { /* OCM */
+		data = UNM_NIC_PCI_READ_32((void *)(uptr_t)(off + adapter->ahw.pci_base0));
+	} else {
+		data = unm_nic_hw_indirect_read_2M(adapter, off);
+	}
+
+	return data;
+}
+
+
+/*
+ * write cross hw window boundary is not supported
+ * 'len' should be 4
+ */
+int
+unm_nic_hw_indirect_write_2M(unm_adapter *adapter, u64 off, u32 data)
+{
+	unsigned long flags = 0;
+	u32 win_read;
+	u32 win_base;
+
+	/* Take the lock */
+	write_lock_irqsave(&adapter->adapter_lock, flags);
+	crb_win_lock(adapter);
+
+	/* Set the window base */
+	win_base = off & 0xFFFF0000;
+
+	UNM_NIC_PCI_WRITE_32(win_base, (void *)(CRB_WINDOW_2M +
+                                        adapter->ahw.pci_base0));
+        /* Read back value to make sure write has gone through before trying
+         * to use it. */
+        win_read = UNM_NIC_PCI_READ_32(
+                        (void *)(CRB_WINDOW_2M + adapter->ahw.pci_base0));
+        if (win_read != win_base) {
+                printk("%s: Written crbwin (0x%x) != Read crbwin (0x%x), off=0x%llx\n",
+                    __FUNCTION__, win_base, win_read, off);
+        }
+
+	/* Get bar offset */
+        off = (off & 0x0000FFFF) + CRB_INDIRECT_2M + adapter->ahw.pci_base0;
+
+	DPRINTK(1, INFO, "write data %lx to offset %llx, len=%d\n",
+				data, off, len);
+
+	/* Do the write */
+	UNM_NIC_PCI_WRITE_32(data, (void *)(uptr_t)off);
+
+	/* Release the lock */
+   	crb_win_unlock(adapter);
+	write_unlock_irqrestore(&adapter->adapter_lock, flags);
+
+	return 0;
+}
+
+u32
+unm_nic_hw_indirect_read_2M(unm_adapter *adapter, u64 off)
+{
+	unsigned long flags = 0;
+	u32 data;
+	u32 win_read;
+	u32 win_base;
+
+	/* Take the lock */
+	write_lock_irqsave(&adapter->adapter_lock, flags);
+	crb_win_lock(adapter);
+
+	/* Set the window base */
+	win_base = off & 0xFFFF0000;
+
+	UNM_NIC_PCI_WRITE_32(win_base, (void *)(CRB_WINDOW_2M +
+                                         adapter->ahw.pci_base0));
+        /* Read back value to make sure write has gone through before trying
+         * to use it. */
+	win_read = UNM_NIC_PCI_READ_32(
+                        (void *)(CRB_WINDOW_2M + adapter->ahw.pci_base0));
+	if (win_read != win_base) {
+                printk("%s: Written crbwin (0x%x) != Read crbwin (0x%x), off=0x%llx\n",
+                    __FUNCTION__, win_base, win_read, off);
+       }
+
+	/* Get bar offset */
+        off = (off & 0x0000FFFF) + CRB_INDIRECT_2M + adapter->ahw.pci_base0;
+
+	DPRINTK(1, INFO, "read from offset %llx, len=%d\n", off, len);
+
+	/* Do the read */
+	data = UNM_NIC_PCI_READ_32((void *)(uptr_t)off);
+
+	DPRINTK(1, INFO, "read %lx\n", *(unsigned long *)data);
+
+	/* Release the lock */
+   	crb_win_unlock(adapter);
+	write_unlock_irqrestore(&adapter->adapter_lock, flags);
+
+	return data;
+}
+
+
 /*
  * write cross hw window boundary is not supported
  * 'len' should be 4
@@ -1013,11 +1119,7 @@ unsigned long unm_nic_pci_set_window_128M (struct unm_adapter_s *adapter,
         int			window;
 	unsigned long long	qdr_max;
 
-	if (NX_IS_REVISION_P2(adapter->ahw.revision_id)) {
-		qdr_max = NX_P2_ADDR_QDR_NET_MAX;
-	} else {
-		qdr_max = NX_P3_ADDR_QDR_NET_MAX;
-	}
+	qdr_max = NX_P3_ADDR_QDR_NET_MAX;
 
 	/* printk("unm_nic_pci_set_window addr_128M: %016llx\n", addr); */
         if (ADDR_IN_RANGE(addr, UNM_ADDR_DDR_NET, UNM_ADDR_DDR_NET_MAX)) {
@@ -1150,37 +1252,33 @@ unm_nic_pci_set_window_2M (struct unm_adapter_s *adapter, unsigned long long add
 static int unm_nic_pci_is_same_window(struct unm_adapter_s *adapter,
 				      unsigned long long addr)
 {
-        int			window;
+	int			window;
 	unsigned long long	qdr_max;
 
-	if (NX_IS_REVISION_P2(adapter->ahw.revision_id)) {
-		qdr_max = NX_P2_ADDR_QDR_NET_MAX;
-	} else {
-		qdr_max = NX_P3_ADDR_QDR_NET_MAX;
-	}
+	qdr_max = NX_P3_ADDR_QDR_NET_MAX;
 
-        if (ADDR_IN_RANGE(addr, UNM_ADDR_DDR_NET, UNM_ADDR_DDR_NET_MAX)) {
-                /* DDR network side */
+	if (ADDR_IN_RANGE(addr, UNM_ADDR_DDR_NET, UNM_ADDR_DDR_NET_MAX)) {
+		/* DDR network side */
 		BUG();	/* MN access can not come here */
 #if 0
-                window = ((addr - UNM_ADDR_DDR_NET) >> 25) & 0x3ff;
-                if (adapter->ahw.ddr_mn_window == window) {
-                        return 1;
-                }
+		window = ((addr - UNM_ADDR_DDR_NET) >> 25) & 0x3ff;
+		if (adapter->ahw.ddr_mn_window == window) {
+			return 1;
+		}
 #endif
-        } else if (ADDR_IN_RANGE(addr, UNM_ADDR_OCM0, UNM_ADDR_OCM0_MAX)) {
-                return 1;
-        } else if (ADDR_IN_RANGE(addr, UNM_ADDR_OCM1, UNM_ADDR_OCM1_MAX)) {
-                return 1;
-        } else if (ADDR_IN_RANGE(addr, UNM_ADDR_QDR_NET, qdr_max)) {
-                /* QDR network side */
-                window = ((addr - UNM_ADDR_QDR_NET) >> 22) & 0x3f;
-                if (adapter->ahw.qdr_sn_window == window) {
-                        return 1;
-                }
-        }
+	} else if (ADDR_IN_RANGE(addr, UNM_ADDR_OCM0, UNM_ADDR_OCM0_MAX)) {
+		return 1;
+	} else if (ADDR_IN_RANGE(addr, UNM_ADDR_OCM1, UNM_ADDR_OCM1_MAX)) {
+		return 1;
+	} else if (ADDR_IN_RANGE(addr, UNM_ADDR_QDR_NET, qdr_max)) {
+		/* QDR network side */
+		window = ((addr - UNM_ADDR_QDR_NET) >> 22) & 0x3f;
+		if (adapter->ahw.qdr_sn_window == window) {
+			return 1;
+		}
+	}
 
-        return 0;
+	return 0;
 }
 
 
@@ -1638,6 +1736,107 @@ unm_nic_pci_mem_write_2M(struct unm_adapter_s *adapter, u64 off, void *data,
         return ret;
 }
 
+//MINIDUMP related
+int
+unm_nic_pci_mem_read_md(struct unm_adapter_s *adapter, u64 off, void *data,
+    int size, int mem_type)
+{
+//        unsigned long   flags;
+        int             i, j=0, k, start, end, loop, sz[2], off0[2];
+        __uint32_t      temp;
+        __uint64_t      off8, val, mem_crb, word[2] = {0,0};
+#define MAX_CTL_CHECK   1000
+
+	/*
+	 * If not MN, go check for MS or invalid.
+	 */
+
+        if (mem_type == RDMEM) {
+            mem_crb = UNM_CRB_QDR_NET;
+        } else {
+            mem_crb = UNM_CRB_DDR_NET;
+            if (unm_nic_pci_mem_bound_check(adapter, off, size) == 0)
+		        return(unm_nic_pci_mem_read_direct(adapter, off, data, size));
+        }
+
+        off8 = off & 0xfffffff8;
+        off0[0] = off & 0x7;
+        off0[1] = 0;
+        sz[0] = (size < (8 - off0[0])) ? size : (8 - off0[0]);
+        sz[1] = size - sz[0];
+        loop = ((off0[0] + size - 1) >> 3) + 1;
+
+// don't get lock - write_wx will get it
+//	    write_lock_irqsave(&adapter->adapter_lock, flags);
+//	unm_nic_pci_change_crbwindow_128M(adapter, 0);
+
+        for (i = 0; i < loop; i++) {
+                temp = off8 + (i << 3);
+                NXWR32(adapter, mem_crb + MIU_TEST_AGT_ADDR_LO,
+                                       temp);
+                temp = 0;
+                NXWR32(adapter, mem_crb + MIU_TEST_AGT_ADDR_HI,
+                                 temp);
+                temp = MIU_TA_CTL_ENABLE;
+                NXWR32(adapter, mem_crb + MIU_TEST_AGT_CTRL,
+                                       temp);
+                temp = MIU_TA_CTL_START | MIU_TA_CTL_ENABLE;
+                NXWR32(adapter, mem_crb + MIU_TEST_AGT_CTRL,
+                               temp);
+
+                for (j = 0; j< MAX_CTL_CHECK; j++) {
+                        temp = NXRD32(adapter,
+						mem_crb + MIU_TEST_AGT_CTRL);
+                        if ((temp & MIU_TA_CTL_BUSY) == 0) {
+                                break;
+                        }
+                }
+
+                if (j >= MAX_CTL_CHECK) {
+                        printk("%s: Fail to read through agent\n",unm_nic_driver_name);
+                        break;
+                }
+
+                start = off0[i] >> 2;
+                end   = (off0[i] + sz[i] - 1) >> 2;
+                for (k = start; k <= end; k++) {
+                    temp = NXRD32(adapter,
+						mem_crb + MIU_TEST_AGT_RDDATA(k));
+                    word[i] |= ((__uint64_t)temp << (32 * k));
+                }
+        }
+
+//        unm_nic_pci_change_crbwindow_128M(adapter, 1);
+//        write_unlock_irqrestore(&adapter->adapter_lock, flags);
+
+        if (j >= MAX_CTL_CHECK)
+                return -1;
+
+        if (sz[0] == 8) {
+                val = word[0];
+        } else {
+                val = ((word[0] >> (off0[0] * 8)) & (~(~0ULL << (sz[0] * 8)))) |
+                        ((word[1] & (~(~0ULL << (sz[1] * 8)))) << (sz[0] * 8));
+        }
+
+        switch (size) {
+        case 1:
+                *(__uint8_t  *)data = val;
+                break;
+        case 2:
+                *(__uint16_t *)data = val;
+                break;
+        case 4:
+                *(__uint32_t *)data = val;
+                break;
+        case 8:
+                *(__uint64_t *)data = val;
+                break;
+        }
+        DPRINTK(1, INFO, "read %llx\n", *(unsigned long long*)data);
+        return 0;
+}
+
 int
 unm_nic_pci_mem_read_2M(struct unm_adapter_s *adapter, u64 off, void *data,
     int size)
@@ -1741,108 +1940,89 @@ unm_nic_pci_mem_read_2M(struct unm_adapter_s *adapter, u64 off, void *data,
 int
 unm_nic_get_board_info(struct unm_adapter_s *adapter)
 {
-        int                rv=0;
-        unm_board_info_t  *boardinfo;
-        int                i;
-        int                addr = BRDCFG_START;
-        uint32_t          *ptr32;
+	int                rv=0;
+	unm_board_info_t  *boardinfo;
+	int                i;
+	int                addr = BRDCFG_START;
+	uint32_t          *ptr32;
 	uint32_t          gpioval;
 
-        boardinfo = &adapter->ahw.boardcfg;
-        ptr32 = (uint32_t *)boardinfo;
+	boardinfo = &adapter->ahw.boardcfg;
+	ptr32 = (uint32_t *)boardinfo;
 
-        for (i=0;i<sizeof(unm_board_info_t)/sizeof(uint32_t);i++) {
-                if (rom_fast_read(adapter, addr, ptr32) == -1) {
+	for (i=0;i<sizeof(unm_board_info_t)/sizeof(uint32_t);i++) {
+		if (rom_fast_read(adapter, addr, ptr32) == -1) {
 			printk("%s: Rom read failed after %d \n",
 					unm_nic_driver_name,i);
-                        return -1;
-                }
-                //printk("ROM: %08X\n",*ptr32);
-                ptr32++;
-                addr+= sizeof(uint32_t);
-        }
-        if (boardinfo->magic != UNM_BDINFO_MAGIC) {
-                printk("%s: ERROR reading %s board config."
-                        " Read %x, expected %x\n", unm_nic_driver_name,
-                        unm_nic_driver_name, boardinfo->magic, UNM_BDINFO_MAGIC);
-                rv=-1;
-        }
-        if (boardinfo->header_version != UNM_BDINFO_VERSION) {
-                printk("%s: Unknown board config version."
-                        " Read %x, expected %x\n", unm_nic_driver_name,
-                        boardinfo->header_version, UNM_BDINFO_VERSION);
-                rv=-1;
-        }
+			return -1;
+		}
+		//printk("ROM: %08X\n",*ptr32);
+		ptr32++;
+		addr+= sizeof(uint32_t);
+	}
+	if (boardinfo->magic != UNM_BDINFO_MAGIC) {
+		printk("%s: ERROR reading %s board config."
+				" Read %x, expected %x\n", unm_nic_driver_name,
+				unm_nic_driver_name, boardinfo->magic, UNM_BDINFO_MAGIC);
+		rv=-1;
+	}
+	if (boardinfo->header_version != UNM_BDINFO_VERSION) {
+		printk("%s: Unknown board config version."
+				" Read %x, expected %x\n", unm_nic_driver_name,
+				boardinfo->header_version, UNM_BDINFO_VERSION);
+		rv=-1;
+	}
 
 	if (boardinfo->board_type == UNM_BRDTYPE_P3_4_GB_MM) {
-	    	gpioval = NXRD32(adapter, UNM_ROMUSB_GLB_PAD_GPIO_I);
+		gpioval = NXRD32(adapter, UNM_ROMUSB_GLB_PAD_GPIO_I);
 		if ((gpioval & 0x8000) == 0) {
 			boardinfo->board_type = UNM_BRDTYPE_P3_10G_TP;
 		}
 	}
 
-        DPRINTK(1, INFO, "Discovered board type:0x%x  ",boardinfo->board_type);
-        switch((unm_brdtype_t)boardinfo->board_type){
-        case UNM_BRDTYPE_P2_SB35_4G:
-                adapter->ahw.board_type = UNM_NIC_GBE;
-                break;
-        case UNM_BRDTYPE_P2_SB31_10G:
-        case UNM_BRDTYPE_P2_SB31_10G_IMEZ:
-        case UNM_BRDTYPE_P2_SB31_10G_HMEZ:
-        case UNM_BRDTYPE_P2_SB31_10G_CX4:
-	case UNM_BRDTYPE_P3_HMEZ:
-	case UNM_BRDTYPE_P3_XG_LOM:
-	case UNM_BRDTYPE_P3_10G_CX4:
-	case UNM_BRDTYPE_P3_10G_CX4_LP:
-	case UNM_BRDTYPE_P3_IMEZ:
-	case UNM_BRDTYPE_P3_10G_SFP_PLUS:
-	case UNM_BRDTYPE_P3_10G_XFP:
-	case UNM_BRDTYPE_P3_10000_BASE_T:
-                adapter->ahw.board_type = UNM_NIC_XGBE;
-                break;
-	case UNM_BRDTYPE_P3_REF_QG:
-	case UNM_BRDTYPE_P3_4_GB:
-	case UNM_BRDTYPE_P3_4_GB_MM:
-		adapter->ahw.board_type = UNM_NIC_GBE;
-		break;
-        case UNM_BRDTYPE_P1_BD:
-        case UNM_BRDTYPE_P1_SB:
-        case UNM_BRDTYPE_P1_SMAX:
-        case UNM_BRDTYPE_P1_SOCK:
-                adapter->ahw.board_type = UNM_NIC_GBE;
-                break;
-        case UNM_BRDTYPE_P3_10G_TP:
-                if (adapter->portnum < 2) {
-                        adapter->ahw.board_type = UNM_NIC_XGBE;
-                } else {
-                        adapter->ahw.board_type = UNM_NIC_GBE;
-                }
-                break;
-        default:
-                printk("%s: Unknown(%x)\n",unm_nic_driver_name,
-			boardinfo->board_type);
-                break;
-        }
+	DPRINTK(1, INFO, "Discovered board type:0x%x  ",boardinfo->board_type);
+	switch((unm_brdtype_t)boardinfo->board_type){
+		case UNM_BRDTYPE_P3_HMEZ:
+		case UNM_BRDTYPE_P3_XG_LOM:
+		case UNM_BRDTYPE_P3_10G_CX4:
+		case UNM_BRDTYPE_P3_10G_CX4_LP:
+		case UNM_BRDTYPE_P3_IMEZ:
+		case UNM_BRDTYPE_P3_10G_SFP_PLUS:
+		case UNM_BRDTYPE_P3_10G_XFP:
+		case UNM_BRDTYPE_P3_10000_BASE_T:
+			adapter->ahw.board_type = UNM_NIC_XGBE;
+			break;
+		case UNM_BRDTYPE_P3_REF_QG:
+		case UNM_BRDTYPE_P3_4_GB:
+		case UNM_BRDTYPE_P3_4_GB_MM:
+			adapter->ahw.board_type = UNM_NIC_GBE;
+			break;
+		case UNM_BRDTYPE_P1_BD:
+		case UNM_BRDTYPE_P1_SB:
+		case UNM_BRDTYPE_P1_SMAX:
+		case UNM_BRDTYPE_P1_SOCK:
+			adapter->ahw.board_type = UNM_NIC_GBE;
+			break;
+		case UNM_BRDTYPE_P3_10G_TP:
+			if (adapter->portnum < 2) {
+				adapter->ahw.board_type = UNM_NIC_XGBE;
+			} else {
+				adapter->ahw.board_type = UNM_NIC_GBE;
+			}
+			break;
+		default:
+			printk("%s: Unknown(%x)\n",unm_nic_driver_name,
+					boardinfo->board_type);
+			break;
+	}
 
-        return rv;
+	return rv;
 }
 
 int
 unm_nic_get_board_num(unm_adapter *adapter)
 {
         return adapter->ahw.boardcfg.board_num;
-}
-
-int unm_nic_macaddr_set(struct unm_adapter_s *adapter, __uint8_t *addr)
-{
-        int ret = 0;
-
-	if (NX_IS_REVISION_P3(adapter->ahw.revision_id))
-	    	return 0;
-
-	ret = unm_niu_xg_macaddr_set(adapter, addr);
-
-        return ret;
 }
 
 #define MTU_FUDGE_FACTOR 100
@@ -1881,24 +2061,7 @@ unm_nic_set_promisc_mode(struct unm_adapter_s *adapter)
 
 int unm_nic_unset_promisc_mode(struct unm_adapter_s *adapter)
 {
-        int	ret = 0;
-
-	/*
-	 * P3 does not unset promiscous mode. Why?
-	 */
-	if (adapter->ahw.revision_id >= NX_P3_A2) {
-		return (0);
-	}
-
-	if (!adapter->promisc)
-		return 0;
-
-	ret = unm_niu_xg_set_promiscuous_mode(adapter,
-			UNM_NIU_NON_PROMISCOUS_MODE);
-	if (!ret)
-		adapter->promisc = 0;
-
-        return ret;
+	return (0);
 }
 
 #define UNM_UNICAST_ADDR(port, index) (UNM_UNICAST_ADDR_BASE+(port*32)+(index*8))
@@ -1983,25 +2146,9 @@ unm_nic_set_mcast_addr(struct unm_adapter_s *adapter, int index, __u8 *addr)
 
 long unm_nic_init_port(struct unm_adapter_s *adapter)
 {
-        long                  portnum = adapter->physical_port;
-        long                  ret = 0;
-        long                  reg = 0;
+	unm_nic_set_link_parameters(adapter);
 
-        unm_nic_set_link_parameters(adapter);
-
-	if (NX_IS_REVISION_P3(adapter->ahw.revision_id)) {
-		/* do via fw */
-		return (0);
-	}
-
-	NXWR32(adapter, (UNM_NIU_XGE_CONFIG_0 + 
-						(0x10000 * portnum)), 0x5);
-	reg = NXRD32(adapter, (UNM_NIU_XGE_CONFIG_1 +
-						(0x10000 * portnum)));
-	reg = (reg & ~0x2000UL);
-	NXWR32(adapter, (UNM_NIU_XGE_CONFIG_1 + 
-						(0x10000 * portnum)), reg);
-        return ret;
+	return (0);
 }
 
 void nx_nic_p2_stop_port(struct unm_adapter_s *adapter)
@@ -2036,12 +2183,13 @@ void DELAY(A)
 
 void unm_nic_set_link_parameters(struct unm_adapter_s *adapter)
 {
-        unm_niu_phy_status_t status;
-        uint32_t autoneg;
-        u32 port_mode = 0;
+	unm_niu_phy_status_t status;
+	uint32_t autoneg;
+	u32 port_mode = 0;
 	uint32_t rv;
+	uint64_t cur_fn = (uint64_t) unm_nic_set_link_parameters;
 
-
+	NX_NIC_TRC_FN(adapter, cur_fn, 0);
 	port_mode = NXRD32(adapter, UNM_PORT_MODE_ADDR);
 
 	if (!netif_carrier_ok(adapter->netdev)) {
@@ -2049,6 +2197,7 @@ void unm_nic_set_link_parameters(struct unm_adapter_s *adapter)
 		adapter->link_duplex  = -1;
 		adapter->link_autoneg = (port_mode == UNM_PORT_MODE_802_3_AP) ? 
 			AUTONEG_DISABLE : AUTONEG_ENABLE;
+		NX_NIC_TRC_FN(adapter, cur_fn, 0);
 		return;
 	}
 
@@ -2063,11 +2212,14 @@ void unm_nic_set_link_parameters(struct unm_adapter_s *adapter)
 		adapter->link_speed   = SPEED_1000;
 		adapter->link_duplex  = DUPLEX_FULL;
 		adapter->link_autoneg = AUTONEG_DISABLE;
+		NX_NIC_TRC_FN(adapter, cur_fn, port_mode);
 		return;
 	}
 
-        if(adapter->ahw.board_type != UNM_NIC_GBE)
-                return;
+	if(adapter->ahw.board_type != UNM_NIC_GBE) {
+		NX_NIC_TRC_FN(adapter, cur_fn, adapter->ahw.board_type);
+		return;
+	}
 
 	rv = nx_fw_cmd_query_phy(adapter, adapter->portnum,
 			UNM_NIU_GB_MII_MGMT_ADDR_PHY_STATUS,
@@ -2084,24 +2236,24 @@ void unm_nic_set_link_parameters(struct unm_adapter_s *adapter)
 		if(status.link) {
 			adapter->state = 1;
 			switch(status.speed) {
-			case 0: adapter->link_speed = SPEED_10;
-				break;
-			case 1: adapter->link_speed = SPEED_100;
-				break;
-			case 2: adapter->link_speed = SPEED_1000;
-				break;
-			default:
-				adapter->link_speed = -1; // unknown speed
-				break;
+				case 0: adapter->link_speed = SPEED_10;
+						break;
+				case 1: adapter->link_speed = SPEED_100;
+						break;
+				case 2: adapter->link_speed = SPEED_1000;
+						break;
+				default:
+						adapter->link_speed = -1; // unknown speed
+						break;
 			}
 			switch(status.duplex) {
-			case 0: adapter->link_duplex = DUPLEX_HALF;
-				break;
-			case 1: adapter->link_duplex = DUPLEX_FULL;
-				break;
-			default:
-				adapter->link_duplex = -1; // unknown mode
-				break;
+				case 0: adapter->link_duplex = DUPLEX_HALF;
+						break;
+				case 1: adapter->link_duplex = DUPLEX_FULL;
+						break;
+				default:
+						adapter->link_duplex = -1; // unknown mode
+						break;
 			}
 		} else {
 			adapter->state = -1;
@@ -2113,6 +2265,8 @@ void unm_nic_set_link_parameters(struct unm_adapter_s *adapter)
 		adapter->link_speed = -1;
 		adapter->link_duplex = -1;
 	}
+	NX_NIC_TRC_FN(adapter, cur_fn, status.link);
+	NX_NIC_TRC_FN(adapter, cur_fn, rv);
 }
 
 #define FLASH_SIZE      (0x100000)

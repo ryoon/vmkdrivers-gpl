@@ -1,6 +1,7 @@
 /*
  * QLogic iSCSI HBA Driver
  * Copyright (c)  2003-2006 QLogic Corporation
+ * Portions Copyright 2009-2011 VMware, Inc.
  *
  * See LICENSE.qla4xxx for copyright and licensing details.
  */
@@ -190,6 +191,9 @@ struct srb {
 	uint8_t *req_sense_ptr;
 	uint16_t req_sense_len;
 	uint16_t reserved2;
+#if defined(__VMKLNX__)
+	uint64_t scsi_sec_lun_id;       /* Second-level lun id for SCSI cmnd */
+#endif
 };
 
 	/*
@@ -227,7 +231,9 @@ struct ddb_entry {
 					 * deleted so stop relogins */
 #endif /* __VMKLNX__ */
 #define DF_DYNAMIC_LUN_SCAN_NEEDED	7
-
+#ifdef __VMKLNX__
+#define DF_MARK_PERM_LOSS       8       /* Relogin indicated device lost */
+#endif /* __VMKLINX__ */
 	unsigned long dev_scan_wait_to_start_relogin;
 	unsigned long dev_scan_wait_to_complete_relogin;
 

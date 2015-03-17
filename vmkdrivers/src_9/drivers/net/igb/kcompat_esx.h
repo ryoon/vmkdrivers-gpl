@@ -1,7 +1,7 @@
 /*******************************************************************************
 
   Intel(R) Gigabit Ethernet Linux driver
-  Copyright(c) 2007-2009 Intel Corporation.
+  Copyright(c) 2007-2013 Intel Corporation.
 
   This program is free software; you can redistribute it and/or modify it
   under the terms and conditions of the GNU General Public License,
@@ -33,6 +33,11 @@
 
 #include "vmkapi.h"
 
+#define ESX40_PRODUCT_VER	"4.0.0"
+#define ESX41_PRODUCT_VER	"4.1.0"
+#define ESX50_PRODUCT_VER	"5.0.0"
+#define ESX51_PRODUCT_VER	"5.1.0"
+
 /* disable features that VMware ESX does not support */
 
 #ifndef CONFIG_PM
@@ -48,9 +53,8 @@
 #define vmalloc_node(a,b)  vmalloc(a)
 
 #define skb_record_rx_queue(a, b)  \
-	if (adapter->flags & IXGBE_FLAG_VMDQ_ENABLED) \
-		vmknetddi_queueops_set_skb_queueid((a),  \
-					VMKNETDDI_QUEUEOPS_MK_RX_QUEUEID((b)));
+	vmknetddi_queueops_set_skb_queueid((a),  \
+				VMKNETDDI_QUEUEOPS_MK_RX_QUEUEID((b)));
 
 
 #define skb_trim _kc_skb_trim
@@ -65,8 +69,6 @@ static inline void _kc_skb_trim(struct sk_buff *skb, unsigned int len)
 		skb->tail = skb->data + len;
 	}
 }
-/* disable pskb_trim usage for now - should break lots of stuff */
-#define pskb_trim(a,b)
 
 /* Alternate __VMKLNX__ DMA memory allocation stuff */
 #define alloc_page(A) __get_free_pages(A, 0)
@@ -81,6 +83,7 @@ static inline void _kc_skb_trim(struct sk_buff *skb, unsigned int len)
 /*
  * A couple of quick hacks for working with esx40
  */
+#define vmknetddi_queueops_queue_features_t unsigned int
 #define HAVE_NETDEV_NAPI_LIST
 #define vmk_set_module_version(x,y) 1
 #define VMKNETDDI_REGISTER_QUEUEOPS(ndev, ops)  \
@@ -100,3 +103,10 @@ static inline void _kc_skb_trim(struct sk_buff *skb, unsigned int len)
 #define device_set_wakeup_enable(d, w) device_init_wakeup(d, w);
 
 
+#define nr_cpu_ids      smp_num_cpus 
+#define ESX_ALLOC_PERCPU( type )      \
+	kmalloc(sizeof(type) * nr_cpu_ids, GFP_KERNEL)
+#define ESX_FREE_PERCPU( ptr )        kfree(ptr)
+#define ESX_PER_CPU_PTR( ptr, cpu, type )     (((cpu) < nr_cpu_ids)? \
+	((typeof(ptr))((char*)(ptr) + (cpu) * sizeof(type))):NULL)
+#define __percpu

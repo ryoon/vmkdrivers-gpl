@@ -34,8 +34,8 @@
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/errno.h>
-#include <asm/system.h>
 #include <linux/poll.h>
+#include <linux/sched.h>
 #include <linux/spinlock.h>
 #include <linux/slab.h>
 #include <linux/ipmi.h>
@@ -46,7 +46,7 @@
 
 #if defined(__VMKLNX__)
 
-#define IPMI_DRIVER_VERSION "39.1-4vmw"
+#define IPMI_DRIVER_VERSION "39.2-6vmw"
 
 #define MAX_DEVICES 10
 static int majors[MAX_DEVICES];
@@ -65,6 +65,7 @@ struct ipmi_file_private
 	unsigned int         default_retry_time_ms;
 };
 
+static DEFINE_MUTEX(ipmi_mutex);
 static void file_receive_handler(struct ipmi_recv_msg *msg,
 				 void                 *handler_data)
 {
@@ -108,7 +109,9 @@ static int ipmi_fasync(int fd, struct file *file, int on)
 	struct ipmi_file_private *priv = file->private_data;
 	int                      result;
 
+	mutex_lock(&ipmi_mutex); /* could race against open() otherwise */
 	result = fasync_helper(fd, file, on, &priv->fasync_queue);
+	mutex_unlock(&ipmi_mutex);
 
 	return (result);
 }
@@ -128,20 +131,21 @@ static int ipmi_open(struct inode *inode, struct file *file)
 	int  rv;
 	struct ipmi_file_private *priv;
 	int  if_num;
-        for (if_num = 0; if_num < MAX_DEVICES; if_num++) {
-           if (majors[if_num] == imajor(inode)) {
-              break;
-           }
-        }
-        if (if_num == MAX_DEVICES) {
-           return -ENODEV;
-        }
+	for (if_num = 0; if_num < MAX_DEVICES; if_num++) {
+		if (majors[if_num] == imajor(inode)) {
+		break;
+		}
+	}
+	if (if_num == MAX_DEVICES) {
+		return -ENODEV;
+	}
 #endif //__VMKLNX__
 
 	priv = kmalloc(sizeof(*priv), GFP_KERNEL);
 	if (!priv)
 		return -ENOMEM;
 
+	mutex_lock(&ipmi_mutex);
 	priv->file = file;
 
 	rv = ipmi_create_user(if_num,
@@ -150,7 +154,7 @@ static int ipmi_open(struct inode *inode, struct file *file)
 			      &(priv->user));
 	if (rv) {
 		kfree(priv);
-		return rv;
+		goto out;
 	}
 
 	file->private_data = priv;
@@ -165,7 +169,9 @@ static int ipmi_open(struct inode *inode, struct file *file)
 	priv->default_retries = -1;
 	priv->default_retry_time_ms = 0;
 
-	return 0;
+out:
+	mutex_unlock(&ipmi_mutex);
+	return rv;
 }
 
 static int ipmi_release(struct inode *inode, struct file *file)
@@ -177,7 +183,9 @@ static int ipmi_release(struct inode *inode, struct file *file)
 	if (rv)
 		return rv;
 
+#if defined(__VMKLNX__)
 	ipmi_fasync (-1, file, 0);
+#endif
 
 	/* FIXME - free the messages in the list. */
 	kfree(priv);
@@ -207,8 +215,10 @@ static int handle_send_req(ipmi_user_t     user,
 	if (!msg.data)
 		return -ENOMEM;
 
-	/* From here out we cannot return, we must jump to "out" for
-	   error exits to free msgdata. */
+	/*
+	 * From here out we cannot return, we must jump to "out" for
+	 * error exits to free msgdata.
+	 */
 
 	rv = ipmi_validate_addr(&addr, req->addr_len);
 	if (rv)
@@ -244,8 +254,7 @@ static int handle_send_req(ipmi_user_t     user,
 	return rv;
 }
 
-static int ipmi_ioctl(struct inode  *inode,
-		      struct file   *file,
+static int ipmi_ioctl(struct file   *file,
 		      unsigned int  cmd,
 		      unsigned long data)
 {
@@ -253,7 +262,7 @@ static int ipmi_ioctl(struct inode  *inode,
 	struct ipmi_file_private *priv = file->private_data;
 	void __user *arg = (void __user *)data;
 
-	switch (cmd) 
+	switch (cmd)
 	{
 	case IPMICTL_SEND_COMMAND:
 	{
@@ -295,7 +304,7 @@ static int ipmi_ioctl(struct inode  *inode,
 		struct list_head *entry;
 		struct ipmi_recv_msg  *msg;
 		unsigned long    flags;
-		
+
 
 		rv = 0;
 		if (copy_from_user(&rsp, arg, sizeof(rsp))) {
@@ -303,14 +312,16 @@ static int ipmi_ioctl(struct inode  *inode,
 			break;
 		}
 
-		/* We claim a mutex because we don't want two
-                   users getting something from the queue at a time.
-                   Since we have to release the spinlock before we can
-                   copy the data to the user, it's possible another
-                   user will grab something from the queue, too.  Then
-                   the messages might get out of order if something
-                   fails and the message gets put back onto the
-                   queue.  This mutex prevents that problem. */
+		/*
+		 * We claim a mutex because we don't want two
+		 * users getting something from the queue at a time.
+		 * Since we have to release the spinlock before we can
+		 * copy the data to the user, it's possible another
+		 * user will grab something from the queue, too.  Then
+		 * the messages might get out of order if something
+		 * fails and the message gets put back onto the
+		 * queue.  This mutex prevents that problem.
+		 */
 		mutex_lock(&priv->recv_mutex);
 
 		/* Grab the message off the list. */
@@ -375,8 +386,10 @@ static int ipmi_ioctl(struct inode  *inode,
 		break;
 
 	recv_putback_on_err:
-		/* If we got an error, put the message back onto
-		   the head of the queue. */
+		/*
+		 * If we got an error, put the message back onto
+		 * the head of the queue.
+		 */
 		spin_lock_irqsave(&(priv->recv_msg_lock), flags);
 		list_add(entry, &(priv->recv_msgs));
 		spin_unlock_irqrestore(&(priv->recv_msg_lock), flags);
@@ -642,8 +655,25 @@ static int ipmi_ioctl(struct inode  *inode,
 		break;
 	}
 	}
-  
+
 	return rv;
+}
+
+/*
+ * Note: it doesn't make sense to take the BKL here but
+ *       not in compat_ipmi_ioctl. -arnd
+ */
+static long ipmi_unlocked_ioctl(struct file   *file,
+				unsigned int  cmd,
+				unsigned long data)
+{
+	int ret;
+
+	mutex_lock(&ipmi_mutex);
+	ret = ipmi_ioctl(file, cmd, data);
+	mutex_unlock(&ipmi_mutex);
+
+	return ret;
 }
 
 #ifdef CONFIG_COMPAT
@@ -788,18 +818,20 @@ static long compat_ipmi_receive(struct file *file, unsigned int cmd, struct ipmi
 	struct list_head *entry;
 	struct ipmi_recv_msg  *msg;
 	unsigned long    flags;
-		
+
 	rv = 0;
 	rsp = *data;
 
-	/* We claim a mutex because we don't want two
-	   users getting something from the queue at a time.
-	   Since we have to release the spinlock before we can
-	   copy the data to the user, it's possible another
-	   user will grab something from the queue, too.  Then
-	   the messages might get out of order if something
-	   fails and the message gets put back onto the
-	   queue.  This mutex prevents that problem. */
+	/*
+	 * We claim a mutex because we don't want two
+	 * users getting something from the queue at a time.
+	 * Since we have to release the spinlock before we can
+	 * copy the data to the user, it's possible another
+	 * user will grab something from the queue, too.  Then
+	 * the messages might get out of order if something
+	 * fails and the message gets put back onto the
+	 * queue.  This mutex prevents that problem.
+	 */
 	mutex_lock(&priv->recv_mutex);
 
 	/* Grab the message off the list. */
@@ -861,8 +893,10 @@ static long compat_ipmi_receive(struct file *file, unsigned int cmd, struct ipmi
 	return rv;
 
 recv_putback_on_err:
-	/* If we got an error, put the message back onto
-	   the head of the queue. */
+	/*
+	 * If we got an error, put the message back onto
+	 * the head of the queue.
+	 */
 	spin_lock_irqsave(&(priv->recv_msg_lock), flags);
 	list_add(entry, &(priv->recv_msgs));
 	spin_unlock_irqrestore(&(priv->recv_msg_lock), flags);
@@ -923,7 +957,7 @@ static long compat_ipmi_ioctl(struct file *filep, unsigned int cmd,
 		if (copy_to_user(precv64, &recv64, sizeof(recv64)))
 			return -EFAULT;
 
-		rc = ipmi_ioctl(filep->f_path.dentry->d_inode, filep,
+		rc = ipmi_ioctl(filep,
 				((cmd == COMPAT_IPMICTL_RECEIVE_MSG)
 				 ? IPMICTL_RECEIVE_MSG
 				 : IPMICTL_RECEIVE_MSG_TRUNC),
@@ -931,11 +965,11 @@ static long compat_ipmi_ioctl(struct file *filep, unsigned int cmd,
 #endif /* #if defined(__VMKLNX__) */
 
 #if defined(__VMKLNX__)
-                if (rc != 0 &&
-                    (cmd != COMPAT_IPMICTL_RECEIVE_MSG_TRUNC ||
-                     rc != -EMSGSIZE)) {
-                   return rc;
-                }
+		if (rc != 0 &&
+		    (cmd != COMPAT_IPMICTL_RECEIVE_MSG_TRUNC ||
+		    rc != -EMSGSIZE)) {
+			return rc;
+		}
 #else
 		if (rc != 0)
 			return rc;
@@ -952,16 +986,7 @@ static long compat_ipmi_ioctl(struct file *filep, unsigned int cmd,
 		return rc;
 	}
 	default:
-#if defined(__VMKLNX__)
-		/*
-		 * The inode information is not referenced in that function.
-		 * This is just to make the interface happy.
-		 * The original code wont compile with vmklinux.
-		 */
-		return ipmi_ioctl(NULL, filep, cmd, arg);
-#else
-		return ipmi_ioctl(filep->f_path.dentry->d_inode, filep, cmd, arg);
-#endif /* #if defined(__VMKLNX__) */
+		return ipmi_ioctl(filep, cmd, arg);
 
 	}
 }
@@ -969,7 +994,7 @@ static long compat_ipmi_ioctl(struct file *filep, unsigned int cmd,
 
 static const struct file_operations ipmi_fops = {
 	.owner		= THIS_MODULE,
-	.ioctl		= ipmi_ioctl,
+	.unlocked_ioctl = ipmi_unlocked_ioctl,
 #ifdef CONFIG_COMPAT
 	.compat_ioctl   = compat_ipmi_ioctl,
 #endif
@@ -977,6 +1002,10 @@ static const struct file_operations ipmi_fops = {
 	.release	= ipmi_release,
 	.fasync		= ipmi_fasync,
 	.poll		= ipmi_poll,
+#if !defined(__VMKLNX__)
+	//VMKLNX does not provide a generic noop_llseek stub to link.
+	.llseek		= noop_llseek,
+#endif
 };
 
 #if defined(__VMKLNX__)
@@ -1017,16 +1046,21 @@ static void ipmi_new_smi(int if_num, struct device *device)
 	entry->dev = dev;
 
 	mutex_lock(&reg_list_mutex);
+#if defined(__VMKLNX__)
+	//VMKLNX does not provide a non-racy device-create yet
 	device_create(ipmi_class, device, dev, "ipmi%d", if_num);
+#else
+	device_create(ipmi_class, device, dev, NULL, "ipmi%d", if_num);
+#endif
 	list_add(&entry->link, &reg_list);
 #if defined(__VMKLNX__)
-        {
-           char name[6];
-           if (if_num <= MAX_DEVICES) {
-              snprintf(name, sizeof name, "ipmi%d", if_num);
-              majors[if_num] = register_chrdev(0, name, &ipmi_fops);
-           }
-        }
+	{
+		char name[6];
+		if (if_num <= MAX_DEVICES) {
+			snprintf(name, sizeof name, "ipmi%d", if_num);
+			majors[if_num] = register_chrdev(0, name, &ipmi_fops);
+		}
+	}
 #endif //__VMKLNX__
 	mutex_unlock(&reg_list_mutex);
 }
@@ -1046,11 +1080,11 @@ static void ipmi_smi_gone(int if_num)
 	}
 	device_destroy(ipmi_class, dev);
 #if defined(__VMKLNX__)
-        if (majors[if_num] > 0) {
-           char name[6];
-           snprintf(name, sizeof name, "ipmi%d", if_num);
-           majors[if_num] = unregister_chrdev(majors[if_num], name);
-        }
+	if (majors[if_num] > 0) {
+		char name[6];
+		snprintf(name, sizeof name, "ipmi%d", if_num);
+		majors[if_num] = unregister_chrdev(majors[if_num], name);
+	}
 #endif //__VMKLNX__
 	mutex_unlock(&reg_list_mutex);
 }
@@ -1062,7 +1096,7 @@ static struct ipmi_smi_watcher smi_watcher =
 	.smi_gone = ipmi_smi_gone,
 };
 
-static __init int init_ipmi_devintf(void)
+static int __init init_ipmi_devintf(void)
 {
 	int rv;
 
@@ -1104,7 +1138,7 @@ static __init int init_ipmi_devintf(void)
 }
 module_init(init_ipmi_devintf);
 
-static __exit void cleanup_ipmi(void)
+static void __exit cleanup_ipmi(void)
 {
 	struct ipmi_reg_list *entry, *entry2;
 	mutex_lock(&reg_list_mutex);
@@ -1126,6 +1160,7 @@ module_exit(cleanup_ipmi);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Corey Minyard <minyard@mvista.com>");
 MODULE_DESCRIPTION("Linux device interface for the IPMI message handler.");
+MODULE_ALIAS("platform:ipmi_si");
 #if defined(__VMKLNX__)
 MODULE_VERSION(IPMI_DRIVER_VERSION);
 #endif

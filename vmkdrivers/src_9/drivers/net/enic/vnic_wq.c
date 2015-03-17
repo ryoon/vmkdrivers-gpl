@@ -16,7 +16,6 @@
  * SOFTWARE.
  *
  */
-#ident "$Id: vnic_wq.c 64224 2010-11-09 19:43:13Z vkolluri $"
 
 #include <linux/kernel.h>
 #include <linux/errno.h>
@@ -147,6 +146,11 @@ void vnic_wq_init(struct vnic_wq *wq, unsigned int cq_index,
 	vnic_wq_init_start(wq, cq_index, 0, 0,
 		error_interrupt_enable,
 		error_interrupt_offset);
+}
+
+void vnic_wq_error_out(struct vnic_wq *wq, unsigned int error)
+{
+        iowrite32(error, &wq->ctrl->error_status);
 }
 
 unsigned int vnic_wq_error_status(struct vnic_wq *wq)

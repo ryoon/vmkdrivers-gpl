@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2003 - 2009 NetXen, Inc.
+ * Copyright (C) 2009 - QLogic Corporation.
  * All rights reserved.
  * 
  * This program is free software; you can redistribute it and/or
@@ -20,11 +21,6 @@
  * The full GNU General Public License is included in this distribution
  * in the file called LICENSE.
  * 
- * Contact Information:
- * licensing@netxen.com
- * NetXen, Inc.
- * 18922 Forge Drive
- * Cupertino, CA 95014
  */
 /* ethtool support for unm nic */
 
@@ -38,7 +34,6 @@
 #include <linux/delay.h>
 #include <linux/spinlock.h>
 
-#include "queue.h"
 #include "unm_nic_hw.h"
 #include "unm_nic.h"
 #include "nic_phan_reg.h"
@@ -50,7 +45,6 @@
 #include "nxhal.h"
 #include "kernel_compatibility.h"
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,4,21)
 extern char *unm_nic_driver_string;
 extern void unm_change_ringparam(struct unm_adapter_s *adapter);
 extern int rom_fast_read(struct unm_adapter_s *adapter, int addr, int *valp);
@@ -122,29 +116,25 @@ int sw_lock(struct unm_adapter_s *adapter)
     int i;
     int done = 0, timeout = 0;
 
-    while (!done) {
-        /* acquire semaphore3 from PCI HW block */
-        done = NXRD32(adapter, UNM_PCIE_REG(PCIE_SEM6_LOCK));
-        if (done == 1)
-            break;
-        if (timeout >= sw_lock_timeout) {
-            return -1;
-        }
-        timeout++;
-        /*
-         * Yield CPU
-         */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,0)
-        if(!in_atomic())
-                schedule();
-        else {
-#endif
-                for(i = 0; i < 20; i++)
-                        cpu_relax();    /*This a nop instr on i386*/
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,0)
-        }
-#endif
-    }
+	while (!done) {
+		/* acquire semaphore3 from PCI HW block */
+		done = NXRD32(adapter, UNM_PCIE_REG(PCIE_SEM6_LOCK));
+		if (done == 1)
+			break;
+		if (timeout >= sw_lock_timeout) {
+			return -1;
+		}
+		timeout++;
+		/*
+		 * Yield CPU
+		 */
+		if(!in_atomic())
+			schedule();
+		else {
+			for(i = 0; i < 20; i++)
+				cpu_relax();    /*This a nop instr on i386*/
+		}
+	}
     return 0;
 }
 
@@ -184,42 +174,31 @@ unm_nic_set_tx_csum(struct net_device *netdev, uint32_t data)
 	return 0;
 }
 
-#if (!defined (__VMKERNEL_MODULE__) && !defined(ESX_3X_COS))
 #ifdef NETIF_F_TSO
 static uint32_t unm_nic_get_tso(struct net_device *dev)
 {
 #ifdef NETIF_F_TSO6
-	struct unm_adapter_s *adapter = netdev_priv(dev);
-        if (NX_IS_REVISION_P3(adapter->ahw.revision_id))
-                return (dev->features & (NETIF_F_TSO | NETIF_F_TSO6)) != 0;
+	return (dev->features & (NETIF_F_TSO | NETIF_F_TSO6)) != 0;
 #endif
-
-        return (dev->features & NETIF_F_TSO) != 0;
 }
 
 static int unm_nic_set_tso(struct net_device *dev, u32 data)
 {
-        if (data) {
+	if (data) {
+		dev->features |= NETIF_F_TSO;
 #ifdef NETIF_F_TSO6
-		struct unm_adapter_s *adapter = netdev_priv(dev);
+		dev->features |= NETIF_F_TSO6;
 #endif
-                dev->features |= NETIF_F_TSO;
-#ifdef NETIF_F_TSO6
-                if (NX_IS_REVISION_P3(adapter->ahw.revision_id))
-                        dev->features |= NETIF_F_TSO6;
-#endif
-        } else {
-
+	} else {
 		dev->features &= ~NETIF_F_TSO;
 #ifdef NETIF_F_TSO6
 		dev->features &= ~NETIF_F_TSO6;
 #endif
 	}
 
-        return 0;
+	return 0;
 }
 #endif //#ifdef NETIF_F_TSO
-#endif //#if (!defined (__VMKERNEL_MODULE__) && !defined(ESX_3X_COS))
 
 static void
 unm_nic_get_drvinfo(struct net_device *netdev, struct ethtool_drvinfo *drvinfo)
@@ -242,7 +221,11 @@ unm_nic_get_drvinfo(struct net_device *netdev, struct ethtool_drvinfo *drvinfo)
 	strncpy(drvinfo->bus_info, pci_name(adapter->pdev), 32);
 	drvinfo->n_stats = UNM_NIC_STATS_LEN;
 	drvinfo->testinfo_len = UNM_NIC_TEST_LEN;
-	drvinfo->regdump_len = UNM_NIC_REGS_LEN;
+    if (adapter->mdump.has_valid_dump) {
+        drvinfo->regdump_len = adapter->mdump.md_dump_size;
+    } else {
+        drvinfo->regdump_len = UNM_NIC_REGS_LEN;
+    }
 	drvinfo->eedump_len = unm_nic_get_eeprom_len(netdev);
 }
 
@@ -261,16 +244,11 @@ unm_nic_get_settings(struct net_device *netdev, struct ethtool_cmd *ecmd)
 
 	// read which mode
 	if (adapter->ahw.board_type == UNM_NIC_GBE) {
-		ecmd->supported = (SUPPORTED_10baseT_Half |
-				SUPPORTED_10baseT_Full |
-				SUPPORTED_100baseT_Half |
+		ecmd->supported = ( SUPPORTED_10baseT_Full |
 				SUPPORTED_100baseT_Full |
-				SUPPORTED_1000baseT_Half |
 				SUPPORTED_1000baseT_Full);
 
-		ecmd->advertising = (ADVERTISED_100baseT_Half |
-				ADVERTISED_100baseT_Full |
-				ADVERTISED_1000baseT_Half |
+		ecmd->advertising = ( ADVERTISED_100baseT_Full |
 				ADVERTISED_1000baseT_Full);
 
 		ecmd->speed = adapter->link_speed;
@@ -319,8 +297,6 @@ unm_nic_get_settings(struct net_device *netdev, struct ethtool_cmd *ecmd)
 	ecmd->transceiver = XCVR_EXTERNAL;
 
 	switch ((unm_brdtype_t) boardinfo->board_type) {
-	case UNM_BRDTYPE_P2_SB35_4G:
-	case UNM_BRDTYPE_P2_SB31_2G:
 	case UNM_BRDTYPE_P3_REF_QG:
 	case UNM_BRDTYPE_P3_4_GB:
 	case UNM_BRDTYPE_P3_4_GB_MM:
@@ -328,14 +304,11 @@ unm_nic_get_settings(struct net_device *netdev, struct ethtool_cmd *ecmd)
 		ecmd->advertising |= ADVERTISED_Autoneg;
 	case UNM_BRDTYPE_P3_10G_CX4:
 	case UNM_BRDTYPE_P3_10G_CX4_LP:
-	case UNM_BRDTYPE_P2_SB31_10G_CX4:
 	case UNM_BRDTYPE_P3_10000_BASE_T:
 		ecmd->supported |= SUPPORTED_TP;
 		ecmd->advertising |= ADVERTISED_TP;
 		ecmd->port = PORT_TP;
-		ecmd->autoneg = (boardinfo->board_type ==
-				 UNM_BRDTYPE_P2_SB31_10G_CX4) ?
-		    (AUTONEG_DISABLE) : (adapter->link_autoneg);
+		ecmd->autoneg = adapter->link_autoneg;
 		break;
 	case UNM_BRDTYPE_P3_XG_LOM:
 	case UNM_BRDTYPE_P3_HMEZ:
@@ -348,8 +321,6 @@ unm_nic_get_settings(struct net_device *netdev, struct ethtool_cmd *ecmd)
 		ecmd->port = PORT_MII;
 		ecmd->autoneg = AUTONEG_ENABLE;
 		break;
-	case UNM_BRDTYPE_P2_SB31_10G_HMEZ:
-	case UNM_BRDTYPE_P2_SB31_10G_IMEZ:
 	case UNM_BRDTYPE_P3_IMEZ:
 		ecmd->supported |= SUPPORTED_MII;
 		ecmd->advertising |= ADVERTISED_MII;
@@ -357,7 +328,6 @@ unm_nic_get_settings(struct net_device *netdev, struct ethtool_cmd *ecmd)
 		ecmd->autoneg = AUTONEG_DISABLE;
 		break;
 
-	case UNM_BRDTYPE_P2_SB31_10G:
 	case UNM_BRDTYPE_P3_10G_SFP_PLUS:
 	case UNM_BRDTYPE_P3_10G_XFP:
 		ecmd->supported |= SUPPORTED_FIBRE;
@@ -429,275 +399,39 @@ unm_nic_set_settings(struct net_device *netdev, struct ethtool_cmd *ecmd)
 
 static int unm_nic_get_regs_len(struct net_device *netdev)
 {
-	return UNM_NIC_REGS_LEN;
+	u32 dump_size;
+	struct unm_adapter_s *adapter = netdev_priv(netdev);
+
+    if (adapter->mdump.has_valid_dump) {
+        dump_size = adapter->mdump.md_dump_size;
+    } else {
+        dump_size = UNM_NIC_REGS_LEN;
+    }
+	return dump_size;
 }
 
 static void
 unm_nic_get_regs(struct net_device *netdev, struct ethtool_regs *regs, void *p)
 {
 	struct unm_adapter_s *adapter = netdev_priv(netdev);
-	unm_crbword_t mode, *regs_buff = p;
-	void *addr;
 
-	memset(p, 0, UNM_NIC_REGS_LEN);
-	regs->version = (1 << 24) | (adapter->ahw.revision_id << 16) |
-	    adapter->ahw.device_id;
+	if (adapter->mdump.has_valid_dump) {
 
+		u8 *capture_buff = adapter->mdump.md_capture_buff;
+		memset(p, 0, adapter->mdump.md_dump_size);
+		regs->version = (1 << 24) | (adapter->ahw.revision_id << 16) |
+					adapter->ahw.device_id;
+		memcpy(p, capture_buff, adapter->mdump.md_dump_size);
 
-	if (NX_IS_REVISION_P2(adapter->ahw.revision_id)) {
-
-		read_lock(&adapter->adapter_lock);
-		// which mode
-		UNM_NIC_LOCKED_READ_REG(UNM_NIU_MODE, &regs_buff[0]);
-		mode = regs_buff[0];
-
-		// Common registers to all the modes
-		UNM_NIC_LOCKED_READ_REG(UNM_NIU_STRAP_VALUE_SAVE_HIGHER, &regs_buff[2]);
-		switch (mode) {
-		case 4:{		//XGB Mode
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_XG_SINGLE_TERM,
-						&regs_buff[3]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_XG_DRIVE_HI,
-						&regs_buff[4]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_XG_DRIVE_LO,
-						&regs_buff[5]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_XG_DTX, &regs_buff[6]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_XG_DEQ, &regs_buff[7]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_XG_WORD_ALIGN,
-						&regs_buff[8]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_XG_RESET,
-						&regs_buff[9]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_XG_POWER_DOWN,
-						&regs_buff[10]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_XG_RESET_PLL,
-						&regs_buff[11]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_XG_SERDES_LOOPBACK,
-						&regs_buff[12]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_XG_DO_BYTE_ALIGN,
-						&regs_buff[13]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_XG_TX_ENABLE,
-						&regs_buff[14]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_XG_RX_ENABLE,
-						&regs_buff[15]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_XG_STATUS,
-						&regs_buff[16]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_XG_PAUSE_THRESHOLD,
-						&regs_buff[17]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_XGE_CONFIG_0,
-						&regs_buff[18]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_XGE_CONFIG_1,
-						&regs_buff[19]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_XGE_IPG,
-						&regs_buff[20]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_XGE_STATION_ADDR_0_HI,
-						&regs_buff[21]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_XGE_STATION_ADDR_0_1,
-						&regs_buff[22]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_XGE_STATION_ADDR_1_LO,
-						&regs_buff[23]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_XGE_STATUS,
-						&regs_buff[24]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_XGE_MAX_FRAME_SIZE,
-						&regs_buff[25]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_XGE_PAUSE_FRAME_VALUE,
-						&regs_buff[26]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_XGE_TX_BYTE_CNT,
-						&regs_buff[27]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_XGE_TX_FRAME_CNT,
-						&regs_buff[28]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_XGE_RX_BYTE_CNT,
-						&regs_buff[29]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_XGE_RX_FRAME_CNT,
-						&regs_buff[30]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_XGE_AGGR_ERROR_CNT,
-						&regs_buff[31]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_XGE_MULTICAST_FRAME_CNT,
-						&regs_buff[32]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_XGE_UNICAST_FRAME_CNT,
-						&regs_buff[33]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_XGE_CRC_ERROR_CNT,
-						&regs_buff[34]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_XGE_OVERSIZE_FRAME_ERR,
-						&regs_buff[35]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_XGE_UNDERSIZE_FRAME_ERR,
-						&regs_buff[36]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_XGE_LOCAL_ERROR_CNT,
-						&regs_buff[37]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_XGE_REMOTE_ERROR_CNT,
-						&regs_buff[38]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_XGE_CONTROL_CHAR_CNT,
-						&regs_buff[39]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_XGE_PAUSE_FRAME_CNT,
-						&regs_buff[40]);
-			break;
-			}
-
-		case 2:{		// GB Mode
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_GB_SERDES_RESET,
-						&regs_buff[3]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_GB0_MII_MODE,
-						&regs_buff[4]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_GB1_MII_MODE,
-						&regs_buff[5]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_GB2_MII_MODE,
-						&regs_buff[6]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_GB3_MII_MODE,
-						&regs_buff[7]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_GB0_GMII_MODE,
-						&regs_buff[8]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_GB1_GMII_MODE,
-						&regs_buff[9]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_GB2_GMII_MODE,
-						&regs_buff[10]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_GB3_GMII_MODE,
-						&regs_buff[11]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_REMOTE_LOOPBACK,
-						&regs_buff[12]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_GB0_HALF_DUPLEX,
-						&regs_buff[13]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_GB1_HALF_DUPLEX,
-						&regs_buff[14]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_RESET_SYS_FIFOS,
-						&regs_buff[15]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_GB_CRC_DROP,
-						&regs_buff[16]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_GB_DROP_WRONGADDR,
-						&regs_buff[17]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_TEST_MUX_CTL,
-						&regs_buff[18]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_GB_MAC_CONFIG_0
-						(adapter->physical_port),
-						&regs_buff[19]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_GB_MAC_CONFIG_1
-						(adapter->physical_port),
-						&regs_buff[20]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_GB_HALF_DUPLEX_CTRL
-						(adapter->physical_port),
-						&regs_buff[21]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_GB_MAX_FRAME_SIZE
-						(adapter->physical_port),
-						&regs_buff[22]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_GB_TEST_REG
-						(adapter->physical_port),
-						&regs_buff[23]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_GB_MII_MGMT_CONFIG
-						(adapter->physical_port),
-						&regs_buff[24]);
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_GB_MII_MGMT_COMMAND
-						(adapter->physical_port),
-						&regs_buff[25]);
-
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_GB_MII_MGMT_ADDR
-						(adapter->physical_port),
-						&regs_buff[26]);
-
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_GB_MII_MGMT_CTRL
-						(adapter->physical_port),
-						&regs_buff[27]);
-
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_GB_MII_MGMT_STATUS
-						(adapter->physical_port),
-						&regs_buff[28]);
-
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_GB_MII_MGMT_INDICATE
-						(adapter->physical_port),
-						&regs_buff[29]);
-
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_GB_INTERFACE_CTRL
-						(adapter->physical_port),
-						&regs_buff[30]);
-
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_GB_INTERFACE_STATUS
-						(adapter->physical_port),
-						&regs_buff[31]);
-
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_GB_STATION_ADDR_0
-						(adapter->physical_port),
-						&regs_buff[32]);
-
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_GB_STATION_ADDR_1
-						(adapter->physical_port),
-						&regs_buff[33]);
-			break;
-			}
-
-		case 1:{		// FC Mode
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_FC_RX_STATUS
-						(adapter->physical_port),
-						&regs_buff[3]);
-
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_FC_RX_COMMA_DETECT
-						(adapter->physical_port),
-						&regs_buff[4]);
-
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_FC_LASER_UNSAFE
-						(adapter->physical_port),
-						&regs_buff[5]);
-
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_FC_TX_CONTROL
-						(adapter->physical_port),
-						&regs_buff[6]);
-
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_FC_ON_OFFLINE_CTL
-						(adapter->physical_port),
-						&regs_buff[7]);
-
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_FC_PORT_ACTIVE_STAT
-						(adapter->physical_port),
-						&regs_buff[8]);
-
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_FC_PORT_INACTIVE_STAT
-						(adapter->physical_port),
-						&regs_buff[9]);
-
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_FC_LINK_FAILURE_CNT
-						(adapter->physical_port),
-						&regs_buff[10]);
-
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_FC_LOSS_SYNC_CNT
-						(adapter->physical_port),
-						&regs_buff[11]);
-
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_FC_LOSS_SIGNAL_CNT
-						(adapter->physical_port),
-						&regs_buff[12]);
-
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_FC_PRIM_SEQ_ERR_CNT
-						(adapter->physical_port),
-						&regs_buff[13]);
-
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_FC_INVLD_TX_WORD_CNT
-						(adapter->physical_port),
-						&regs_buff[14]);
-
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_FC_INVLD_CRC_CNT
-						(adapter->physical_port),
-						&regs_buff[15]);
-
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_FC_RX_CELL_CNT
-						(adapter->physical_port),
-						&regs_buff[16]);
-
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_FC_TX_CELL_CNT
-						(adapter->physical_port),
-						&regs_buff[17]);
-
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_FC_B2B_CREDIT
-						(adapter->physical_port),
-						&regs_buff[18]);
-
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_FC_LOGIN_DONE
-						(adapter->physical_port),
-						&regs_buff[19]);
-
-			UNM_NIC_LOCKED_READ_REG(UNM_NIU_FC_OPERATING_SPEED
-						(adapter->physical_port),
-						&regs_buff[20]);
-			break;
-			}
-		}
-		read_unlock(&adapter->adapter_lock);
 	} else {
+
+		unm_crbword_t mode, *regs_buff = p;
+
+		memset(p, 0, UNM_NIC_REGS_LEN);
+		regs->version = (1 << 24) | (adapter->ahw.revision_id << 16) |
+			adapter->ahw.device_id;
+
+
 		/* P3 */
 		// which mode
 		regs_buff[0] = NXRD32(adapter, UNM_PORT_MODE_ADDR);
@@ -705,226 +439,226 @@ unm_nic_get_regs(struct net_device *netdev, struct ethtool_regs *regs, void *p)
 
 		// Common registers to all the modes
 		nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-			crb_pci_to_internal(UNM_NIU_STRAP_VALUE_SAVE_HIGHER),
-			0, &regs_buff[2]);
+				crb_pci_to_internal(UNM_NIU_STRAP_VALUE_SAVE_HIGHER),
+				0, &regs_buff[2]);
 		switch (mode) {
 
-		case UNM_PORT_MODE_XG:
-		case UNM_PORT_MODE_AUTO_NEG_XG:{
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_XG_SINGLE_TERM),
-				0, &regs_buff[3]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_XG_DRIVE_HI),
-				0, &regs_buff[4]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_XG_DRIVE_LO),
-				0, &regs_buff[5]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_XG_DTX),
-				0, &regs_buff[6]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_XG_DEQ),
-				0, &regs_buff[7]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_XG_WORD_ALIGN),
-				0, &regs_buff[8]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_XG_RESET),
-				0, &regs_buff[9]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_XG_POWER_DOWN),
-				0, &regs_buff[10]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_XG_RESET_PLL),
-				0, &regs_buff[11]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_XG_SERDES_LOOPBACK),
-				0, &regs_buff[12]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_XG_DO_BYTE_ALIGN),
-				0, &regs_buff[13]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_XG_TX_ENABLE),
-				0, &regs_buff[14]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_XG_RX_ENABLE),
-				0, &regs_buff[15]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_XG_STATUS),
-				0, &regs_buff[16]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_XG_PAUSE_THRESHOLD),
-				0, &regs_buff[17]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_XGE_CONFIG_0),
-				0, &regs_buff[18]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_XGE_CONFIG_1),
-				0, &regs_buff[19]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_XGE_IPG),
-				0, &regs_buff[20]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_XGE_STATION_ADDR_0_HI),
-				0, &regs_buff[21]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_XGE_STATION_ADDR_0_1),
-				0, &regs_buff[22]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_XGE_STATION_ADDR_1_LO),
-				0, &regs_buff[23]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_XGE_STATUS),
-				0, &regs_buff[24]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_XGE_MAX_FRAME_SIZE),
-				0, &regs_buff[25]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_XGE_PAUSE_FRAME_VALUE),
-				0, &regs_buff[26]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_XGE_TX_BYTE_CNT),
-				0, &regs_buff[27]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_XGE_TX_FRAME_CNT),
-				0, &regs_buff[28]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_XGE_RX_BYTE_CNT),
-				0, &regs_buff[29]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_XGE_RX_FRAME_CNT),
-				0, &regs_buff[30]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_XGE_AGGR_ERROR_CNT),
-				0, &regs_buff[31]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_XGE_MULTICAST_FRAME_CNT),
-				0, &regs_buff[32]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_XGE_UNICAST_FRAME_CNT),
-				0, &regs_buff[33]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_XGE_CRC_ERROR_CNT),
-				0, &regs_buff[34]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_XGE_OVERSIZE_FRAME_ERR),
-				0, &regs_buff[35]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_XGE_UNDERSIZE_FRAME_ERR),
-				0, &regs_buff[36]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_XGE_LOCAL_ERROR_CNT),
-				0, &regs_buff[37]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_XGE_REMOTE_ERROR_CNT),
-				0, &regs_buff[38]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_XGE_CONTROL_CHAR_CNT),
-				0, &regs_buff[39]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_XGE_PAUSE_FRAME_CNT),
-				0, &regs_buff[40]);
-			break;
-			}
+			case UNM_PORT_MODE_XG:
+			case UNM_PORT_MODE_AUTO_NEG_XG:{
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_XG_SINGLE_TERM),
+													   0, &regs_buff[3]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_XG_DRIVE_HI),
+													   0, &regs_buff[4]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_XG_DRIVE_LO),
+													   0, &regs_buff[5]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_XG_DTX),
+													   0, &regs_buff[6]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_XG_DEQ),
+													   0, &regs_buff[7]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_XG_WORD_ALIGN),
+													   0, &regs_buff[8]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_XG_RESET),
+													   0, &regs_buff[9]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_XG_POWER_DOWN),
+													   0, &regs_buff[10]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_XG_RESET_PLL),
+													   0, &regs_buff[11]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_XG_SERDES_LOOPBACK),
+													   0, &regs_buff[12]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_XG_DO_BYTE_ALIGN),
+													   0, &regs_buff[13]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_XG_TX_ENABLE),
+													   0, &regs_buff[14]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_XG_RX_ENABLE),
+													   0, &regs_buff[15]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_XG_STATUS),
+													   0, &regs_buff[16]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_XG_PAUSE_THRESHOLD),
+													   0, &regs_buff[17]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_XGE_CONFIG_0),
+													   0, &regs_buff[18]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_XGE_CONFIG_1),
+													   0, &regs_buff[19]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_XGE_IPG),
+													   0, &regs_buff[20]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_XGE_STATION_ADDR_0_HI),
+													   0, &regs_buff[21]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_XGE_STATION_ADDR_0_1),
+													   0, &regs_buff[22]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_XGE_STATION_ADDR_1_LO),
+													   0, &regs_buff[23]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_XGE_STATUS),
+													   0, &regs_buff[24]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_XGE_MAX_FRAME_SIZE),
+													   0, &regs_buff[25]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_XGE_PAUSE_FRAME_VALUE),
+													   0, &regs_buff[26]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_XGE_TX_BYTE_CNT),
+													   0, &regs_buff[27]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_XGE_TX_FRAME_CNT),
+													   0, &regs_buff[28]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_XGE_RX_BYTE_CNT),
+													   0, &regs_buff[29]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_XGE_RX_FRAME_CNT),
+													   0, &regs_buff[30]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_XGE_AGGR_ERROR_CNT),
+													   0, &regs_buff[31]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_XGE_MULTICAST_FRAME_CNT),
+													   0, &regs_buff[32]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_XGE_UNICAST_FRAME_CNT),
+													   0, &regs_buff[33]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_XGE_CRC_ERROR_CNT),
+													   0, &regs_buff[34]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_XGE_OVERSIZE_FRAME_ERR),
+													   0, &regs_buff[35]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_XGE_UNDERSIZE_FRAME_ERR),
+													   0, &regs_buff[36]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_XGE_LOCAL_ERROR_CNT),
+													   0, &regs_buff[37]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_XGE_REMOTE_ERROR_CNT),
+													   0, &regs_buff[38]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_XGE_CONTROL_CHAR_CNT),
+													   0, &regs_buff[39]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_XGE_PAUSE_FRAME_CNT),
+													   0, &regs_buff[40]);
+											   break;
+										   }
 
-		case UNM_PORT_MODE_GB:
-		case UNM_PORT_MODE_AUTO_NEG_1G:{
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_GB_SERDES_RESET),
-				0, &regs_buff[3]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_GB0_MII_MODE),
-				0, &regs_buff[4]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_GB1_MII_MODE),
-				0, &regs_buff[5]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_GB2_MII_MODE),
-				0, &regs_buff[6]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_GB3_MII_MODE),
-				0, &regs_buff[7]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_GB0_GMII_MODE),
-				0, &regs_buff[8]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_GB1_GMII_MODE),
-				0, &regs_buff[9]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_GB2_GMII_MODE),
-				0, &regs_buff[10]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_GB3_GMII_MODE),
-				0, &regs_buff[11]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_REMOTE_LOOPBACK),
-				0, &regs_buff[12]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_GB0_HALF_DUPLEX),
-				0, &regs_buff[13]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_GB1_HALF_DUPLEX),
-				0, &regs_buff[14]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_RESET_SYS_FIFOS),
-				0, &regs_buff[15]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_GB_CRC_DROP),
-				0, &regs_buff[16]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_GB_DROP_WRONGADDR),
-				0, &regs_buff[17]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_TEST_MUX_CTL),
-				0, &regs_buff[18]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_GB_MAC_CONFIG_0(0)),
-				0x10000, &regs_buff[19]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_GB_MAC_CONFIG_1(0)),
-				0x10000, &regs_buff[20]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_GB_HALF_DUPLEX_CTRL(0)),
-				0x10000, &regs_buff[21]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_GB_MAX_FRAME_SIZE(0)),
-				0x10000, &regs_buff[22]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_GB_TEST_REG(0)),
-				0x10000, &regs_buff[23]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_GB_MII_MGMT_CONFIG(0)),
-				0x10000, &regs_buff[24]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_GB_MII_MGMT_COMMAND(0)),
-				0x10000, &regs_buff[25]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_GB_MII_MGMT_ADDR(0)),
-				0x10000, &regs_buff[26]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_GB_MII_MGMT_CTRL(0)),
-				0x10000, &regs_buff[27]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_GB_MII_MGMT_STATUS(0)),
-				0x10000, &regs_buff[28]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_GB_MII_MGMT_INDICATE(0)),
-				0x10000, &regs_buff[29]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_GB_INTERFACE_CTRL(0)),
-				0x10000, &regs_buff[30]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_GB_INTERFACE_STATUS(0)),
-				0x10000, &regs_buff[31]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_GB_STATION_ADDR_0(0)),
-				0x10000, &regs_buff[32]);
-			nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
-				crb_pci_to_internal(UNM_NIU_GB_STATION_ADDR_1(0)),
-				0x10000, &regs_buff[33]);
-			break;
-			}
+			case UNM_PORT_MODE_GB:
+			case UNM_PORT_MODE_AUTO_NEG_1G:{
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_GB_SERDES_RESET),
+													   0, &regs_buff[3]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_GB0_MII_MODE),
+													   0, &regs_buff[4]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_GB1_MII_MODE),
+													   0, &regs_buff[5]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_GB2_MII_MODE),
+													   0, &regs_buff[6]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_GB3_MII_MODE),
+													   0, &regs_buff[7]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_GB0_GMII_MODE),
+													   0, &regs_buff[8]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_GB1_GMII_MODE),
+													   0, &regs_buff[9]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_GB2_GMII_MODE),
+													   0, &regs_buff[10]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_GB3_GMII_MODE),
+													   0, &regs_buff[11]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_REMOTE_LOOPBACK),
+													   0, &regs_buff[12]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_GB0_HALF_DUPLEX),
+													   0, &regs_buff[13]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_GB1_HALF_DUPLEX),
+													   0, &regs_buff[14]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_RESET_SYS_FIFOS),
+													   0, &regs_buff[15]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_GB_CRC_DROP),
+													   0, &regs_buff[16]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_GB_DROP_WRONGADDR),
+													   0, &regs_buff[17]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_TEST_MUX_CTL),
+													   0, &regs_buff[18]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_GB_MAC_CONFIG_0(0)),
+													   0x10000, &regs_buff[19]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_GB_MAC_CONFIG_1(0)),
+													   0x10000, &regs_buff[20]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_GB_HALF_DUPLEX_CTRL(0)),
+													   0x10000, &regs_buff[21]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_GB_MAX_FRAME_SIZE(0)),
+													   0x10000, &regs_buff[22]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_GB_TEST_REG(0)),
+													   0x10000, &regs_buff[23]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_GB_MII_MGMT_CONFIG(0)),
+													   0x10000, &regs_buff[24]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_GB_MII_MGMT_COMMAND(0)),
+													   0x10000, &regs_buff[25]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_GB_MII_MGMT_ADDR(0)),
+													   0x10000, &regs_buff[26]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_GB_MII_MGMT_CTRL(0)),
+													   0x10000, &regs_buff[27]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_GB_MII_MGMT_STATUS(0)),
+													   0x10000, &regs_buff[28]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_GB_MII_MGMT_INDICATE(0)),
+													   0x10000, &regs_buff[29]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_GB_INTERFACE_CTRL(0)),
+													   0x10000, &regs_buff[30]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_GB_INTERFACE_STATUS(0)),
+													   0x10000, &regs_buff[31]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_GB_STATION_ADDR_0(0)),
+													   0x10000, &regs_buff[32]);
+											   nx_fw_cmd_query_hw_reg(adapter, adapter->portnum,
+													   crb_pci_to_internal(UNM_NIU_GB_STATION_ADDR_1(0)),
+													   0x10000, &regs_buff[33]);
+											   break;
+										   }
 
 		}
 	}
@@ -1023,7 +757,7 @@ static void unm_nic_get_ringparam(struct net_device *netdev,
 	ring->rx_mini_max_pending = 0;
 
 	ring->rx_pending = adapter->MaxRxDescCount;
-	ring->rx_max_pending = NX_MAX_SUPPORTED_RDS_SZ(adapter->fw_v34);
+	ring->rx_max_pending = NX_MAX_SUPPORTED_RDS_SZ;
 
 	ring->rx_jumbo_pending = adapter->MaxJumboRxDescCount;
 	ring->rx_jumbo_max_pending = NX_MAX_JUMBO_RDS_SIZE;
@@ -1049,26 +783,20 @@ unm_nic_get_pauseparam(struct net_device *netdev,
 	pause->autoneg = AUTONEG_DISABLE;
 
 	if ((adapter->ahw.board_type != UNM_NIC_GBE) &&
-	    (adapter->ahw.board_type != UNM_NIC_XGBE)) {
+			(adapter->ahw.board_type != UNM_NIC_XGBE)) {
 		printk(KERN_ERR "%s: Unknown board type: %x\n",
-		       unm_nic_driver_name, adapter->ahw.board_type);
+				unm_nic_driver_name, adapter->ahw.board_type);
 		return;
 	}
 
-	if (NX_IS_REVISION_P3(adapter->ahw.revision_id)) {
-		if (nx_fw_cmd_get_flow_ctl(adapter, adapter->portnum, 0,
-			&temp) == 0)
-			pause->rx_pause = temp;
-		if (nx_fw_cmd_get_flow_ctl(adapter, adapter->portnum, 1,
-			&temp) == 0)
-			pause->tx_pause = temp;
-		return;
-	}
-
-	if (unm_niu_xg_get_tx_flow_ctl(adapter, &temp) == 0) {
+	if (nx_fw_cmd_get_flow_ctl(adapter, adapter->portnum, 0,
+				&temp) == 0)
+		pause->rx_pause = temp;
+	if (nx_fw_cmd_get_flow_ctl(adapter, adapter->portnum, 1,
+				&temp) == 0)
 		pause->tx_pause = temp;
-	}
-	pause->rx_pause = 1;	// always on for XG
+	return;
+
 }
 
 static int
@@ -1082,38 +810,28 @@ unm_nic_set_pauseparam(struct net_device *netdev,
 		return -EOPNOTSUPP;
 
 	if ((adapter->ahw.board_type != UNM_NIC_GBE) &&
-	    (adapter->ahw.board_type != UNM_NIC_XGBE))
+			(adapter->ahw.board_type != UNM_NIC_XGBE))
 		return -EIO;
 
-	if (NX_IS_REVISION_P3(adapter->ahw.revision_id)) {
-		if (nx_fw_cmd_set_flow_ctl(adapter, adapter->portnum, 1,
-			pause->tx_pause) != 0)
-			ret = -EIO;
-
-		if ((adapter->ahw.board_type == UNM_NIC_XGBE) &&
-		    (!pause->rx_pause)) {
-			/*
-			 * Changing rx pause parameter is not
-			 * supported for now
-			 */
-			ret = -EOPNOTSUPP;
-		} else {
-
-			if (nx_fw_cmd_set_flow_ctl(adapter, adapter->portnum, 0,
-				pause->rx_pause) != 0)
-				ret = -EIO;
-		}
-		return ret;
-	}
-
-	if (unm_niu_xg_set_tx_flow_ctl(adapter, pause->tx_pause)) {
+	if (nx_fw_cmd_set_flow_ctl(adapter, adapter->portnum, 1,
+				pause->tx_pause) != 0)
 		ret = -EIO;
-	}
-	/* Changing rx pause parameter is not supported for now */
-	if (!pause->rx_pause) {
+
+	if ((adapter->ahw.board_type == UNM_NIC_XGBE) &&
+			(!pause->rx_pause)) {
+		/*
+		 * Changing rx pause parameter is not
+		 * supported for now
+		 */
 		ret = -EOPNOTSUPP;
+	} else {
+
+		if (nx_fw_cmd_set_flow_ctl(adapter, adapter->portnum, 0,
+					pause->rx_pause) != 0)
+			ret = -EIO;
 	}
 	return ret;
+
 }
 
 static uint32_t unm_nic_get_rx_csum(struct net_device *netdev)
@@ -1152,15 +870,10 @@ static int unm_nic_reg_test(struct net_device *netdev)
 
 	return 0;
 }
-#if (!defined(ESX) && !defined(ESX_3X_COS))
+#ifndef	ESX
 static int unm_nic_intr_test(struct net_device *netdev)
 {
 	struct unm_adapter_s *adapter = netdev_priv(netdev);
-
-	if(NX_IS_REVISION_P2(adapter->ahw.revision_id)) {
-		//Not Supported on P2
-		return 0;
-	}
 
 	if (!unm_irq_test(adapter))
 		return 0;
@@ -1179,7 +892,7 @@ unm_nic_diag_test(struct net_device *netdev,
 		  struct ethtool_test *eth_test, uint64_t * data)
 {
 	struct unm_adapter_s *adapter;
-#if (!defined(ESX) && !defined(ESX_3X_COS))
+#ifndef ESX
         int count;
 #endif
 	adapter = (struct unm_adapter_s *)netdev_priv(netdev);
@@ -1191,7 +904,7 @@ unm_nic_diag_test(struct net_device *netdev,
 	// link test
 	if ((data[1] = (uint64_t) unm_link_test(adapter)))
 		eth_test->flags |= ETH_TEST_FL_FAILED;
-#if (!defined(ESX) && !defined(ESX_3X_COS))
+#ifndef ESX
 	//LED test
 	(adapter->ahw).LEDTestLast = 0;
 	for (count = 0; count < 8; count++) {
@@ -1225,6 +938,11 @@ unm_nic_diag_test(struct net_device *netdev,
 		data[2] = 0;
 		data[3] = 0;
 	}
+#else
+		data[2] = 1;
+		data[3] = -LB_NOT_SUPPORTED;
+		data[4] = -LED_TEST_NOT_SUPPORTED;
+		eth_test->flags |= ETH_TEST_FL_FAILED;
 #endif
 }
 
@@ -1278,25 +996,8 @@ unm_nic_get_ethtool_stats(struct net_device *netdev,
 
 void unm_nic_get_wol(struct net_device *netdev, struct ethtool_wolinfo *wol)
 {
-	struct unm_adapter_s *adapter = netdev_priv(netdev);
-	u32 wol_cfg = 0;
-
 	wol->supported = 0;
 	wol->wolopts = 0;
-
-	if (NX_IS_REVISION_P2(adapter->ahw.revision_id))
-		return;
-
-	sw_lock(adapter);
-	wol_cfg = NXRD32(adapter, UNM_WOL_CONFIG_NV);
-	if (wol_cfg & (1UL << adapter->portnum)) {
-		wol->supported |= WAKE_MAGIC;
-
-		wol_cfg = NXRD32(adapter, UNM_WOL_CONFIG);
-		if (wol_cfg & (1 << adapter->portnum))
-			wol->wolopts = WAKE_MAGIC;
-	}
-	sw_unlock(adapter);
 
 	return;
 }
@@ -1304,30 +1005,8 @@ void unm_nic_get_wol(struct net_device *netdev, struct ethtool_wolinfo *wol)
 static int
 unm_nic_set_wol(struct net_device *netdev, struct ethtool_wolinfo *wol)
 {
-	struct unm_adapter_s	*adapter = netdev_priv(netdev);
-	u32 wol_cfg = 0;
-
-	if (NX_IS_REVISION_P2(adapter->ahw.revision_id))
+	if (wol->wolopts)
 		return -EOPNOTSUPP;
-
-	if (wol->wolopts & ~WAKE_MAGIC)
-		return -EOPNOTSUPP;
-
-	sw_lock(adapter);
-	wol_cfg = NXRD32(adapter, UNM_WOL_CONFIG_NV);
-	if (!(wol_cfg & (1UL << adapter->portnum))) {
-		sw_unlock(adapter);
-		return -EOPNOTSUPP;
-	}
-
-	wol_cfg = NXRD32(adapter, UNM_WOL_CONFIG);
-	if (wol->wolopts & WAKE_MAGIC) {
-	    	wol_cfg |= 1 << adapter->portnum;
-	} else {
-	    	wol_cfg &= ~(1U << adapter->portnum);
-	}
-	NXWR32(adapter, UNM_WOL_CONFIG, wol_cfg);
-	sw_unlock(adapter);
 
 	return 0;
 }
@@ -1451,9 +1130,7 @@ static int nx_ethtool_set_phys_id(struct net_device *netdev,u32 val)
 
 	if (val == 0)
 		msec=DEFAULT_LED_BLINK_TIME; /* Default blinking time is 10 sec  */
-	if (NX_IS_REVISION_P2(adapter->ahw.revision_id)) {
-		return (-LED_TEST_NOT_SUPPORTED);
-	}
+
 	if(unm_led_blink_state_set(adapter, state)) {
 		nx_nic_print4(adapter, "unm_led_blink_state_set failed\n");
 		ret=LED_TEST_ERR;
@@ -1495,9 +1172,7 @@ static struct ethtool_ops unm_nic_ethtool_ops = {
 	.get_link		= ethtool_op_get_link,
 
 #ifndef __VMKERNEL_MODULE__
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,0)
 	.get_eeprom_len		= unm_nic_get_eeprom_len,
-#endif
 #endif
 	.get_eeprom		= unm_nic_get_eeprom,
 	.get_ringparam		= unm_nic_get_ringparam,
@@ -1510,11 +1185,9 @@ static struct ethtool_ops unm_nic_ethtool_ops = {
 	.set_tx_csum		= unm_nic_set_tx_csum,
 	.get_sg			= ethtool_op_get_sg,
 	.set_sg			= ethtool_op_set_sg,
-#if (!defined (__VMKERNEL_MODULE__) && !defined(ESX_3X_COS))
 #ifdef NETIF_F_TSO
 	.get_tso                = unm_nic_get_tso,
 	.set_tso                = unm_nic_set_tso,
-#endif
 #endif
 	.self_test_count	= unm_nic_diag_test_count,
 	.self_test		= unm_nic_diag_test,
@@ -1530,4 +1203,3 @@ void set_ethtool_ops(struct net_device *netdev)
 {
 	netdev->ethtool_ops = &unm_nic_ethtool_ops;
 }
-#endif /* LINUX_VERSION */

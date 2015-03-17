@@ -1,6 +1,6 @@
 /*
  *    Disk Array driver for HP Smart Array SAS controllers
- *    Copyright 2000, 2010 Hewlett-Packard Development Company, L.P.
+ *    Copyright 2000-2012 Hewlett-Packard Development Company, L.P.
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
@@ -27,6 +27,7 @@
  *************/
 #include <scsi/scsi_transport_sas.h>
 #include <linux/proc_fs.h>
+#include "hpsa_cmd.h"
 /**************
  * DEFINES 
  **************/
@@ -37,10 +38,9 @@ enum {
 };
 
 #define DMA_BIT_MASK(n) (((n) == 64) ? ~0ULL : ((1ULL<<(n))-1))
-#define MAX_PATHS 8             /* Maximum SAS paths */
 #define CONTROLLER_DEVICE 7     /* Physical device type of controller */
 #define MAX_CTLR        10       /* Only support 10 controllers in VMware */
-#define HPSA_VMWARE_SGLIMIT 128	/* limit maxsgentries to conserve heap */
+#define HPSA_VMWARE_SGLIMIT 129	/* limit maxsgentries to conserve heap */
 struct scsi_transport_template *hpsa_transport_template = NULL;
 
 #define ENG_GIG 1000000000
@@ -120,7 +120,7 @@ hpsa_limit_maxsgentries(struct ctlr_info *h);
 /**************
  * STRUCTURES
  **************/
-u64 target_sas_id[MAX_CTLR][MAX_PATHS];
+u64 target_sas_id[MAX_CTLR][MAX_EXT_TARGETS];
 u64 cntl_sas_id[MAX_CTLR];
 static struct sas_function_template hpsa_transport_functions = {
 	.get_linkerrors			= hpsa_get_linkerrors,

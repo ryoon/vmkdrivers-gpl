@@ -1,6 +1,6 @@
 /*
  *    Disk Array driver for HP Smart Array SAS controllers
- *    Copyright 2000, 2010 Hewlett-Packard Development Company, L.P.
+ *    Copyright 2000-2012 Hewlett-Packard Development Company, L.P.
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
@@ -25,7 +25,7 @@
  * driver revision/version/name/description 
  * can vary per OS type
  */
-#define HPSA_ESX5_0
+#define HPSA_ESX6_0
 /* VMware-specific */
 #if defined(__VMKLNX__)
 
@@ -41,10 +41,18 @@
 #define DRIVER_REV "5.0.0"
 #endif
 
-#define DRIVER_REL "17"
-#define DRIVER_BUILD "17"
+#ifdef HPSA_ESX5_1
+#define DRIVER_REV "5.1.0"
+#endif
+
+#ifdef HPSA_ESX6_0
+#define DRIVER_REV "6.0.0.44"
+#endif
+
+#define DRIVER_REL "4"
+#define DRIVER_BUILD "01"
 #define HPSA_DRIVER_VERSION DRIVER_REV "-" DRIVER_REL "vmw"
-MODULE_SUPPORTED_DEVICE("HP P700M, Smart Array G2 Series, and Virtual Smart Array");
+MODULE_SUPPORTED_DEVICE("HP Smart Array Controllers");
 
 #else // not defined(__VMKLNX__)
 

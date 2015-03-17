@@ -1,6 +1,6 @@
-/* bnx2i_sysfs.c: Broadcom NetXtreme II iSCSI driver.
- *
- * Copyright (c) 2006 - 2010 Broadcom Corporation
+/*
+ * QLogic NetXtreme II iSCSI offload driver.
+ * Copyright (c)   2003-2014 QLogic Corporation
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -14,7 +14,7 @@
 
 #ifndef __VMKLNX__
 
-#define BNX2I_SYSFS_VERSION	0x2
+#define BNX2I_SYSFS_VERSION	0x3
 
 
 static ssize_t bnx2i_show_net_if_name(struct class_device *cdev, char *buf)
@@ -343,7 +343,7 @@ int bnx2i_proc_info(struct Scsi_Host *shost, char *buffer, char **start,
 	info.offset     = offset;
 	info.pos        = 0;
 
-	copy_info(&info, "Broadcom Offload iSCSI Initiator\n");
+	copy_info(&info, "QLogic NetXtreme II Offload iSCSI Initiator\n");
 	copy_info(&info, "  Global Params\n");
 	copy_info(&info, "    event_coal_div                = %u\n", event_coal_div);
 	copy_info(&info, "    bnx2i_nopout_when_cmds_active = %u\n", bnx2i_nopout_when_cmds_active);
@@ -362,6 +362,8 @@ int bnx2i_proc_info(struct Scsi_Host *shost, char *buffer, char **start,
 
 	copy_info(&info, "  HBA\n");
 	copy_info(&info, "    age                  = %u\n", hba->age);
+	copy_info(&info, "    OOO COUNT            = %u\n", hba->cnic->ooo_tx_count);
+	copy_info(&info, "    PMTU mismatch        = %u\n", hba->cnic->pmtu_fails);
 	copy_info(&info, "    cnic_dev_type        = %lu\n", hba->cnic_dev_type);
 	copy_info(&info, "    mail_queue_access    = %u\n", hba->mail_queue_access);
 	copy_info(&info, "    reg_with_cnic        = %lu\n", hba->reg_with_cnic);
@@ -390,10 +392,21 @@ int bnx2i_proc_info(struct Scsi_Host *shost, char *buffer, char **start,
 	copy_info(&info, "    stop_evt - ifc_login = %u\n", hba->stop_event_ifc_abort_login);
 	copy_info(&info, "    stop_evt - ep_rej    = %u\n", hba->stop_event_ep_conn_failed);
 	copy_info(&info, "    stop_evt - repeat    = %u\n", hba->stop_event_repeat);
+	copy_info(&info, "    task_cleanup_failed  = %u\n", hba->task_cleanup_failed);
+	copy_info(&info, "    tcp_error_kcqes      = %u\n", hba->tcp_error_kcqes);
+	copy_info(&info, "    iscsi_error_kcqes    = %u\n", hba->iscsi_error_kcqes);
+	copy_info(&info, "    ep_tmo_active_cnt     = %u\n", hba->ep_tmo_active_cnt);
+	copy_info(&info, "    ep_tmo_cmpl_cnt       = %u\n", hba->ep_tmo_cmpl_cnt);
+	copy_info(&info, "    max_scsi_task_queued  = %u\n", hba->max_scsi_task_queued);
 
 	copy_info(&info, "  SESSIONS\n");
 	spin_lock(&hba->lock);
 	list_for_each_entry(sess, &hba->active_sess, link) {
+		u32 l5_cid = 0xFF, cid = 0xFF;
+		if (sess->lead_conn && sess->lead_conn->ep) {
+			l5_cid = sess->lead_conn->ep->ep_iscsi_cid;
+			cid = sess->lead_conn->ep->ep_cid;
+		}
 		copy_info(&info, "    SESSION(%p)\n", sess);
 		copy_info(&info, "      timestamp                    = %lu\n", sess->timestamp);
 		copy_info(&info, "      worker_time_slice            = %lu\n", sess->worker_time_slice);
@@ -406,6 +419,7 @@ int bnx2i_proc_info(struct Scsi_Host *shost, char *buffer, char **start,
 		          atomic_read(&sess->do_recovery_inprogess));
 		copy_info(&info, "      device_offline               = %u\n",
 		          atomic_read(&sess->device_offline));
+		copy_info(&info, "      max_iscsi_tasks              = %d\n", sess->max_iscsi_tasks);
 		copy_info(&info, "      num_free_cmds                = %d\n", sess->num_free_cmds);
 		copy_info(&info, "      allocated_cmds               = %d\n", sess->allocated_cmds);
 		copy_info(&info, "      total_cmds_allocated         = %d\n", sess->total_cmds_allocated);
@@ -459,6 +473,8 @@ int bnx2i_proc_info(struct Scsi_Host *shost, char *buffer, char **start,
 		copy_info(&info, "      noopin_processed_count       = %d\n", sess->noopin_processed_count);
 		copy_info(&info, "      tgt_noopin_count             = %d\n", sess->tgt_noopin_count);
 		copy_info(&info, "      alloc_scsi_task_failed       = %lu\n", sess->alloc_scsi_task_failed);
+		copy_info(&info, "      cid                          = %x\n", cid);
+		copy_info(&info, "      iscsi cid                    = %x\n", l5_cid);
 	}
 	spin_unlock(&hba->lock);
 

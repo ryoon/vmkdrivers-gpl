@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2003 - 2009 NetXen, Inc.
+ * Copyright (C) 2009 - QLogic Corporation.
  * All rights reserved.
  * 
  * This program is free software; you can redistribute it and/or
@@ -20,11 +21,6 @@
  * The full GNU General Public License is included in this distribution
  * in the file called LICENSE.
  * 
- * Contact Information:
- * licensing@netxen.com
- * NetXen, Inc.
- * 18922 Forge Drive
- * Cupertino, CA 95014
  */
 /*
  * NetXen:
@@ -72,6 +68,8 @@ typedef struct {
 	nx_hbucket_head_t	*buckets;
 	int			bucket_cnt;
 	nx_hash_tbl_ops_t	*ops;
+	struct mutex		tbl_lock;
+	unsigned int		init_flag;
 } nx_hash_tbl_t;
 
 #define INIT_NX_HBUCKET_HEAD(PTR)		\

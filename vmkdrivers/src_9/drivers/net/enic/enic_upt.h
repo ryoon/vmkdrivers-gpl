@@ -16,7 +16,6 @@
  * SOFTWARE.
  *
  */
-#ident "$Id$"
 
 #ifndef _ENIC_UPT_H_
 #define _ENIC_UPT_H_

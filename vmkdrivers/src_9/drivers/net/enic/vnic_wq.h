@@ -16,7 +16,6 @@
  * SOFTWARE.
  *
  */
-#ident "$Id: vnic_wq.h 64224 2010-11-09 19:43:13Z vkolluri $"
 
 #ifndef _VNIC_WQ_H_
 #define _VNIC_WQ_H_
@@ -162,6 +161,7 @@ void vnic_wq_init_start(struct vnic_wq *wq, unsigned int cq_index,
 void vnic_wq_init(struct vnic_wq *wq, unsigned int cq_index,
 	unsigned int error_interrupt_enable,
 	unsigned int error_interrupt_offset);
+void vnic_wq_error_out(struct vnic_wq *wq, unsigned int error);
 unsigned int vnic_wq_error_status(struct vnic_wq *wq);
 void vnic_wq_enable(struct vnic_wq *wq);
 int vnic_wq_disable(struct vnic_wq *wq);

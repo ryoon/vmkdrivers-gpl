@@ -1,16 +1,8 @@
-/* Copyright (C) 2008-2012 Broadcom Corporation. */
-
-#include "tg3_flags.h"
+/* Copyright (C) 2008-2013 Broadcom Corporation. */
 
 #ifdef CONFIG_X86
 #undef NET_IP_ALIGN
 #define NET_IP_ALIGN	0
-#endif
-
-#ifdef BCM_HAS_IEEE1588_SUPPORT
-#include <linux/timecompare.h>
-#include <linux/clocksource.h>
-#include <linux/net_tstamp.h>
 #endif
 
 #if !defined(__maybe_unused)
@@ -302,6 +294,12 @@ static inline void * pci_ioremap_bar(struct pci_dev *pdev, int bar)
 	.subvendor = PCI_ANY_ID, .subdevice = PCI_ANY_ID
 #endif
 
+#ifndef PCI_DEVICE_SUB
+#define PCI_DEVICE_SUB(vend, dev, subvend, subdev) \
+	.vendor = (vend), .device = (dev), \
+	.subvendor = (subvend), .subdevice = (subdev)
+#endif
+
 #ifndef PCI_DEVICE_ID_TIGON3_5704S_2
 #define PCI_DEVICE_ID_TIGON3_5704S_2	0x1649
 #endif
@@ -488,6 +486,10 @@ static inline void * pci_ioremap_bar(struct pci_dev *pdev, int bar)
 
 #ifndef PCI_DEVICE_ID_INTEL_PXH_1
 #define PCI_DEVICE_ID_INTEL_PXH_1	0x032A
+#endif
+
+#ifndef PCI_VENDOR_ID_LENOVO
+#define PCI_VENDOR_ID_LENOVO		0x17aa
 #endif
 
 #ifndef PCI_D0
@@ -946,6 +948,7 @@ static inline void tg3_enable_intx(struct pci_dev *pdev)
 #endif
 
 #if defined(INIT_DELAYED_WORK_DEFERRABLE) || \
+    defined(INIT_DEFERRABLE_WORK) || \
     defined(INIT_WORK_NAR) || \
     defined(__VMKLNX__)
 #define BCM_HAS_NEW_INIT_WORK
@@ -1043,6 +1046,19 @@ static int tg3_set_tx_hw_csum(struct net_device *dev, u32 data)
 
 #ifndef BCM_HAS_SKB_TX_TIMESTAMP
 #define skb_tx_timestamp(skb)
+#endif
+
+#ifdef BCM_HAS_SKB_SHARED_TX_UNION
+#define tx_flags tx_flags.flags
+
+/* Definitions for tx_flags in struct skb_shared_info */
+enum {
+	/* generate hardware time stamp */
+	SKBTX_HW_TSTAMP = 1 << 0,
+
+	/* device driver is going to provide hardware time stamp */
+	SKBTX_IN_PROGRESS = 1 << 2,
+};
 #endif
 
 #ifndef BCM_HAS_SKB_FRAG_SIZE
@@ -1480,6 +1496,18 @@ static inline void netif_tx_unlock(struct net_device *dev)
 #define skb_get_queue_mapping(skb)		0
 #endif
 
+#ifdef TG3_NAPI
+#if (LINUX_VERSION_CODE < 0x02061b) && !defined(__VMKLNX__)
+
+static inline void netif_napi_del(struct napi_struct *napi)
+{
+#ifdef CONFIG_NETPOLL
+	list_del(&napi->dev_list);
+#endif
+}
+#endif
+
+#endif
 #if (LINUX_VERSION_CODE < 0x020612)
 static inline struct sk_buff *netdev_alloc_skb(struct net_device *dev,
 		unsigned int length)
@@ -1525,12 +1553,27 @@ static inline void netif_tx_disable(struct net_device *dev)
 #define netdev_sent_queue(dev, bytes)
 #endif
 
+#ifndef BCM_HAS_NETDEV_TX_SENT_QUEUE
+#define netdev_tx_sent_queue(q, bytes) \
+	netdev_sent_queue(tp->dev, bytes)
+#endif
+
 #ifndef BCM_HAS_NETDEV_COMPLETED_QUEUE
 #define netdev_completed_queue(dev, pkts, bytes)
 #endif
 
+#ifndef BCM_HAS_NETDEV_TX_COMPLETED_QUEUE
+#define netdev_tx_completed_queue(q, pkt_cnt, byte_cnt) \
+	netdev_completed_queue(tp->dev, pkt_cnt, byte_cnt)
+#endif
+
 #ifndef BCM_HAS_NETDEV_RESET_QUEUE
 #define netdev_reset_queue(dev_queue)
+#endif
+
+#ifndef BCM_HAS_NETDEV_TX_RESET_QUEUE
+#define netdev_tx_reset_queue(q) \
+	netdev_reset_queue(tp->dev)
 #endif
 
 #ifndef BCM_HAS_NETIF_SET_REAL_NUM_TX_QUEUES
@@ -1538,7 +1581,10 @@ static inline void netif_tx_disable(struct net_device *dev)
 #endif
 
 #ifndef BCM_HAS_NETIF_SET_REAL_NUM_RX_QUEUES
-#define netif_set_real_num_rx_queues(dev, nq)	0
+static inline int netif_set_real_num_rx_queues(struct net_device *dev, int num)
+{
+	return 0;
+}
 #endif
 
 #ifndef netdev_mc_count
@@ -1689,7 +1735,15 @@ struct netdev_hw_addr {
 #define MDIO_AN_EEE_ADV_1000T		0x0004
 #endif
 
-#ifndef BCM_HAS_ETHTOOL_ADV_TO_MII_100BT
+#ifndef SPEED_UNKNOWN
+#define SPEED_UNKNOWN			-1
+#endif
+
+#ifndef DUPLEX_UNKNOWN
+#define DUPLEX_UNKNOWN			0xff
+#endif
+
+#ifndef BCM_HAS_ETHTOOL_ADV_TO_MII_ADV_T
 static inline u32 ethtool_adv_to_mii_adv_t(u32 ethadv)
 {
 	u32 result = 0;
@@ -1948,3 +2002,25 @@ static inline __u32 ethtool_cmd_speed_set(struct ethtool_cmd *ep, __u32 speed)
 	return 0;
 }
 #endif /* BCM_HAS_ETHTOOL_CMD_SPEED_SET */
+
+#ifdef BCM_HAS_PCI_BUSN_RES
+#define busn_res_end busn_res.end
+#else
+#define busn_res_end subordinate
+#endif
+
+#ifndef BCM_HAS_DEVINIT
+#define __devinit
+#define __devinitdata
+#define __devexit
+#define __devexit_p(x) (x)
+#endif
+
+#ifndef BCM_HAS_SSB
+#define ssb_gige_get_macaddr(a, b) (0)
+#define pdev_is_ssb_gige_core(a) (0)
+#define ssb_gige_must_flush_posted_writes(a) (0)
+#define ssb_gige_one_dma_at_once(a) (0)
+#define ssb_gige_have_roboswitch(a) (0)
+#define ssb_gige_is_rgmii(a) (0)
+#endif

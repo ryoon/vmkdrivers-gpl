@@ -1,12 +1,17 @@
 /*
- *  Copyright (c) 2009-2010 LSI Corporation.
+ *  Copyright (c) 2009-2011 LSI Corporation.
  *
  *
  *           Name:  mpi2_hbd.h
  *          Title:  MPI Host Based Discovery messages and structures
  *  Creation Date:  October 21, 2009
  *
- *  mpi2_hbd.h Version:  02.00.00
+ *  mpi2_hbd.h Version:  02.00.02
+ *
+ *  NOTE: Names (typedefs, defines, etc.) beginning with an MPI25 or Mpi25
+ *        prefix are for use only on MPI v2.5 products, and must not be used
+ *        with MPI v2.0 products. Unless otherwise noted, names beginning with
+ *        MPI2 or Mpi2 are for use with both MPI v2.0 and MPI v2.5 products.
  *
  *  Version History
  *  ---------------
@@ -14,6 +19,9 @@
  *  Date      Version   Description
  *  --------  --------  ------------------------------------------------------
  *  10-28-09  02.00.00  Initial version.
+ *  08-11-10  02.00.01  Removed PortGroups, DmaGroup, and ControlGroup from
+ *                      HBD Action request, replaced by AdditionalInfo field.
+ *  11-18-11  02.00.02  Incorporating additions for MPI v2.5.
  *  --------------------------------------------------------------------------
  */
 
@@ -47,10 +55,7 @@ typedef struct _MPI2_HBD_ACTION_REQUEST
     U8                      Port;               /* 0x25 */
     U8                      MaxConnections;     /* 0x26 */
     U8                      MaxRate;            /* 0x27 */
-    U8                      PortGroups;         /* 0x28 */
-    U8                      DmaGroup;           /* 0x29 */
-    U8                      ControlGroup;       /* 0x2A */
-    U8                      Reserved6;          /* 0x2B */
+    U32                     AdditionalInfo;     /* 0x28 */
     U16                     InitialAWT;         /* 0x2C */
     U16                     Reserved7;          /* 0x2E */
     U32                     Reserved8;          /* 0x30 */
@@ -86,6 +91,7 @@ typedef struct _MPI2_HBD_ACTION_REQUEST
 #define MPI2_HBD_MAX_RATE_1_5                   (0x08)
 #define MPI2_HBD_MAX_RATE_3_0                   (0x09)
 #define MPI2_HBD_MAX_RATE_6_0                   (0x0A)
+#define MPI25_HBD_MAX_RATE_12_0                 (0x0B)
 
 
 /* Host Based Discovery Action Reply Message */

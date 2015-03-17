@@ -17,12 +17,13 @@
  * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
+ * [Insert appropriate license here when releasing outside of Cisco]
+ * $Id: fnic_tag_map.h 101907 2012-04-25 08:16:26Z sebaddel $
  */
 
 #ifndef _FNIC_TAG_MAP_H_
 #define _FNIC_TAG_MAP_H_
 
-#include "fnic.h"
 #include <linux/kernel.h>
 #include <linux/string.h>
 #include <linux/errno.h>
@@ -46,6 +47,7 @@
 #include <scsi/scsi_tcq.h>
 #include <scsi/libfc.h>
 #include <scsi/fc_frame.h>
+#include "fnic.h"
 
 #define scsi_init_shared_tag_map         fnic_init_shared_tag_map
 #define scsi_host_start_tag(shost, sc)   fnic_host_start_tag(shost, sc)
@@ -65,6 +67,7 @@ struct fnic_host_tag {
 	struct scsi_cmnd **tag_index;	/* map of busy tags */
 	unsigned long *tag_map;		/* bit map of free/busy tags */
 	int max_depth;			/* what we will send to device */
+	int next_tag;			/* Most recently allocated tag */
 };
 
 int fnic_init_shared_tag_map(struct Scsi_Host *shost, int depth);

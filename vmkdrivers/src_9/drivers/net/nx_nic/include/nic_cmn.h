@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2003 - 2009 NetXen, Inc.
+ * Copyright (C) 2009 - QLogic Corporation.
  * All rights reserved.
  * 
  * This program is free software; you can redistribute it and/or
@@ -20,11 +21,6 @@
  * The full GNU General Public License is included in this distribution
  * in the file called LICENSE.
  * 
- * Contact Information:
- * licensing@netxen.com
- * NetXen, Inc.
- * 18922 Forge Drive
- * Cupertino, CA 95014
  */
 /* Header file with definitions for both host and Phantom */
 
@@ -50,13 +46,16 @@
 
 #define IP_ALIGNMENT_BYTES		2  /* make ip aligned on 16byteaddr */
 
-#define P2_MAX_MTU			(8000)
+#if 0
 #define P3_MAX_MTU			(9600)
+#else
+#define P3_MAX_MTU			(9000)
+#endif
+
 #define NX_ETHERMTU			1500
 #define NX_MAX_ETHERHDR			32 /* This contains some padding */
 
 #define NX_RX_NORMAL_BUF_MAX_LEN	(NX_MAX_ETHERHDR + NX_ETHERMTU)
-#define NX_P2_RX_JUMBO_BUF_MAX_LEN	(NX_MAX_ETHERHDR + P2_MAX_MTU)
 #define NX_P3_RX_JUMBO_BUF_MAX_LEN	(NX_MAX_ETHERHDR + P3_MAX_MTU)
 
 #define RX_JUMBO_DMA_MAP_LEN (MAX_RX_JUMBO_BUFFER_LENGTH-IP_ALIGNMENT_BYTES)
@@ -856,26 +855,6 @@ typedef struct {
         __uint16_t              ring_ctx;
         __uint16_t              rsvd;           /* 64 bit alignment */
 } get_stats_request_t;
-
-
-/*
- * SNMP STATISTICS :-
- */
-struct unm_nic_snmp_ether_stats{
-	__uint64_t jabber_state_entered;
-	__uint64_t false_carrier;
-	__uint64_t available_mau_state_exits; /*Not in available state*/
-	__uint64_t unknow_opcodes;	/*MAC control frame, Other than Pause */ 
-	__uint64_t alignment_errors;
-	__uint64_t fcs_errors;		/*Check sum error*/
-	__uint64_t frame_too_long;
-	__uint64_t mac_transmit_erros;
-	__uint64_t mac_receive_errors;
-	__uint64_t symbol_errors;	/*PHY indicate recieve error */
-	__uint64_t pause_frame_received;
-	__uint64_t pause_frame_transmit;
-};
-
 
 
 typedef struct PREALIGN(64) _RingContext

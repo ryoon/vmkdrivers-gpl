@@ -1,8 +1,8 @@
-/* cnic_register.c: Broadcom CNIC Registration Agent
+/* cnic_register.c: QLogic CNIC Registration Agent
  *
- * Copyright (c) 2010 Broadcom Corporation
+ * Copyright (c) 2010-2014 QLogic Corporation
  *
- * Portions Copyright (c) VMware, Inc. 2010, All Rights Reserved.
+ * Portions Copyright (c) VMware, Inc. 2010-2013, All Rights Reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -29,9 +29,9 @@
 #define PFX DRV_MODULE_NAME ": "
 
 static char version[] __devinitdata =
-        "Broadcom NetXtreme II CNIC Registration Agent " DRV_MODULE_NAME " v" CNIC_REGISTER_MODULE_VERSION " (" CNIC_REGISTER_MODULE_RELDATE ")\n";
+        "QLogic NetXtreme II CNIC Registration Agent " DRV_MODULE_NAME " v" CNIC_REGISTER_MODULE_VERSION " (" CNIC_REGISTER_MODULE_RELDATE ")\n";
 
-MODULE_DESCRIPTION("Broadcom NetXtreme II CNIC Registration Agent");
+MODULE_DESCRIPTION("QLogic NetXtreme II CNIC Registration Agent");
 MODULE_LICENSE("GPL");
 MODULE_VERSION(CNIC_REGISTER_MODULE_VERSION);
 

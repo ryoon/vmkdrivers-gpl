@@ -16,7 +16,6 @@
  * SOFTWARE.
  *
  */
-#ident "$Id: vnic_stats.h 59839 2010-09-27 20:36:31Z roprabhu $"
 
 #ifndef _VNIC_STATS_H_
 #define _VNIC_STATS_H_

@@ -887,6 +887,7 @@ struct fe_priv {
 };
 
 static void nv_do_special_dev_handling(struct fe_priv *np);
+static void nv_setup_special_dev_handling (struct fe_priv *np);
 
 /*
  * Maximum number of loops until we assume that a bit in the irq mask
@@ -2353,6 +2354,10 @@ static int nv_start_xmit_optimized(struct sk_buff *skb, struct net_device *dev)
 
 #if defined (__VMKLNX__)
 	spin_lock_irqsave(&np->lock, flags);
+	if (unlikely(test_bit(NV_DO_SPECIAL_DEV_HANDLING, &np->special_dev_handling))) {
+		spin_unlock_irqrestore(&np->lock, flags);
+		return NETDEV_TX_BUSY;
+	}
 #endif
 
 	empty_slots = nv_get_empty_tx_slots(np);
@@ -2699,6 +2704,9 @@ static void nv_tx_timeout(struct net_device *dev)
 #endif /* !defined(__VMKLNX__) */
 	spin_lock_irq(&np->lock);
 
+#if defined (__VMKLNX__)
+	nv_setup_special_dev_handling(np);
+#else /* (__VMKLNX__) */
 	/* 1) stop tx engine */
 	nv_stop_tx(dev);
 
@@ -2736,6 +2744,7 @@ static void nv_tx_timeout(struct net_device *dev)
 	/* 5) restart tx engine */
 	nv_start_tx(dev);
 	netif_wake_queue(dev);
+#endif /* (__VMKLNX__) */
 	spin_unlock_irq(&np->lock);
 }
 
@@ -3075,13 +3084,26 @@ static int nv_change_mtu(struct net_device *dev, int new_mtu)
 		return -EINVAL;
 
 	old_mtu = dev->mtu;
+#if !defined (__VMKLNX__)
 	dev->mtu = new_mtu;
+#endif /* defined(__VMKLNX__) */
 
 	/* return early if the buffer sizes will not change */
 	if (old_mtu <= ETH_DATA_LEN && new_mtu <= ETH_DATA_LEN)
 		return 0;
 	if (old_mtu == new_mtu)
 		return 0;
+
+#if defined (__VMKLNX__)
+	spin_lock_irq(&np->lock);
+	if (unlikely(test_bit(NV_DO_SPECIAL_DEV_HANDLING, &np->special_dev_handling))) {
+		spin_unlock_irq(&np->lock);
+		return -EBUSY;
+	}
+	spin_unlock_irq(&np->lock);
+
+	dev->mtu = new_mtu;
+#endif /* (__VMKLNX__) */
 
 	/* synchronized against open : rtnl_lock() held by caller */
 	if (netif_running(dev)) {
@@ -3172,6 +3194,15 @@ static int nv_set_mac_address(struct net_device *dev, void *addr)
 	if (!is_valid_ether_addr(macaddr->sa_data))
 		return -EADDRNOTAVAIL;
 
+#if defined (__VMKLNX__)
+	spin_lock_irq(&np->lock);
+	if (unlikely(test_bit(NV_DO_SPECIAL_DEV_HANDLING, &np->special_dev_handling))) {
+		spin_unlock_irq(&np->lock);
+		return -EBUSY;
+	}
+	spin_unlock_irq(&np->lock);
+#endif /* (__VMKLNX__) */
+
 	/* synchronized against open : rtnl_lock() held by caller */
 	memcpy(dev->dev_addr, macaddr->sa_data, ETH_ALEN);
 
@@ -3208,6 +3239,15 @@ static void nv_set_multicast(struct net_device *dev)
 	u32 addr[2];
 	u32 mask[2];
 	u32 pff = readl(base + NvRegPacketFilterFlags) & NVREG_PFF_PAUSE_RX;
+
+#if defined (__VMKLNX__)
+	spin_lock_irq(&np->lock);
+	if (unlikely(test_bit(NV_DO_SPECIAL_DEV_HANDLING, &np->special_dev_handling))) {
+		spin_unlock_irq(&np->lock);
+		return;
+	}
+	spin_unlock_irq(&np->lock);
+#endif /* (__VMKLNX__) */
 
 	memset(addr, 0, sizeof(addr));
 	memset(mask, 0, sizeof(mask));
@@ -4488,7 +4528,9 @@ static void nv_do_special_dev_handling(struct fe_priv *np)
 	for (i = 0;i < 0x78/sizeof(u32); i++)
 		pci_read_config_dword(np->pci_dev, i*sizeof(u32), &pci_array[i]);
 	
+	spin_unlock(&np->lock);
 	nv_hard_reset(np->pci_dev, 1);
+	spin_lock(&np->lock);
 	
 	/* restore pci configuration space */
 	for (i = 0;i < 0x78/sizeof(u32); i++)
@@ -4798,9 +4840,15 @@ static void nv_do_stats_poll(unsigned long data)
 static void nv_get_drvinfo(struct net_device *dev, struct ethtool_drvinfo *info)
 {
 	struct fe_priv *np = netdev_priv(dev);
-	strcpy(info->driver, DRV_NAME);
+#if !defined(__VMKLNX__)
+	strcpy(info->driver, DRV_NAME)
 	strcpy(info->version, FORCEDETH_VERSION);
 	strcpy(info->bus_info, pci_name(np->pci_dev));
+#else /* defined(__VMKLNX__) */
+	strlcpy(info->driver, DRV_NAME, sizeof(info->driver));
+	strlcpy(info->version, FORCEDETH_VERSION, sizeof(info->version));
+	strlcpy(info->bus_info, pci_name(np->pci_dev), sizeof(info->bus_info));
+#endif /* !defined(__VMKLNX__) */
 }
 
 static void nv_get_wol(struct net_device *dev, struct ethtool_wolinfo *wolinfo)
@@ -4819,6 +4867,15 @@ static int nv_set_wol(struct net_device *dev, struct ethtool_wolinfo *wolinfo)
 	struct fe_priv *np = netdev_priv(dev);
 	u8 __iomem *base = get_hwbase(dev);
 	u32 flags = 0;
+
+#if defined (__VMKLNX__)
+	spin_lock_irq(&np->lock);
+	if (unlikely(test_bit(NV_DO_SPECIAL_DEV_HANDLING, &np->special_dev_handling))) {
+		spin_unlock_irq(&np->lock);
+		return -EBUSY;
+	}
+	spin_unlock_irq(&np->lock);
+#endif /* (__VMKLNX__) */
 
 	if (wolinfo->wolopts == 0) {
 		np->wolenabled = 0;
@@ -4840,6 +4897,13 @@ static int nv_get_settings(struct net_device *dev, struct ethtool_cmd *ecmd)
 	int adv;
 
 	spin_lock_irq(&np->lock);
+#if defined (__VMKLNX__)
+	if (unlikely(test_bit(NV_DO_SPECIAL_DEV_HANDLING, &np->special_dev_handling))) {
+		spin_unlock_irq(&np->lock);
+		return -EBUSY;
+	}
+#endif /* (__VMKLNX__) */
+
 	ecmd->port = PORT_MII;
 	/* based on suggestion from Ayaz Abdulla <aabdulla@nvidia.com> */
 	/* remove calling nv_update_linkspeed here for PR625224 */
@@ -4934,6 +4998,15 @@ static int nv_set_settings(struct net_device *dev, struct ethtool_cmd *ecmd)
 	} else {
 		return -EINVAL;
 	}
+
+#if defined (__VMKLNX__)
+	spin_lock_irq(&np->lock);
+	if (unlikely(test_bit(NV_DO_SPECIAL_DEV_HANDLING, &np->special_dev_handling))) {
+		spin_unlock_irq(&np->lock);
+		return -EBUSY;
+	}
+	spin_unlock_irq(&np->lock);
+#endif /* (__VMKLNX__) */
 
 	netif_carrier_off(dev);
 	if (netif_running(dev)) {
@@ -5084,6 +5157,12 @@ static void nv_get_regs(struct net_device *dev, struct ethtool_regs *regs, void 
 
 	regs->version = FORCEDETH_REGS_VER;
 	spin_lock_irq(&np->lock);
+#if defined (__VMKLNX__)
+	if (unlikely(test_bit(NV_DO_SPECIAL_DEV_HANDLING, &np->special_dev_handling))) {
+		spin_unlock_irq(&np->lock);
+		return;
+	}
+#endif /* (__VMKLNX__) */
 	for (i = 0;i <= np->register_size/sizeof(u32); i++)
 		rbuf[i] = readl(base + i*sizeof(u32));
 	spin_unlock_irq(&np->lock);
@@ -5093,6 +5172,15 @@ static int nv_nway_reset(struct net_device *dev)
 {
 	struct fe_priv *np = netdev_priv(dev);
 	int ret;
+
+#if defined (__VMKLNX__)
+	spin_lock_irq(&np->lock);
+	if (unlikely(test_bit(NV_DO_SPECIAL_DEV_HANDLING, &np->special_dev_handling))) {
+		spin_unlock_irq(&np->lock);
+		return 0;
+	}
+	spin_unlock_irq(&np->lock);
+#endif /* (__VMKLNX__) */
 
 	if (np->autoneg) {
 		int bmcr;
@@ -5180,6 +5268,15 @@ static int nv_set_ringparam(struct net_device *dev, struct ethtool_ringparam* ri
 	      ring->tx_pending > RING_MAX_DESC_VER_2_3))) {
 		return -EINVAL;
 	}
+
+#if defined (__VMKLNX__)
+	spin_lock_irq(&np->lock);
+	if (unlikely(test_bit(NV_DO_SPECIAL_DEV_HANDLING, &np->special_dev_handling))) {
+		spin_unlock_irq(&np->lock);
+		return -EBUSY;
+	}
+	spin_unlock_irq(&np->lock);
+#endif /* (__VMKLNX__) */
 
 	/* allocate new rings */
 	if (!nv_optimized(np)) {
@@ -5314,6 +5411,15 @@ static int nv_set_pauseparam(struct net_device *dev, struct ethtool_pauseparam* 
 		return -EINVAL;
 	}
 
+#if defined (__VMKLNX__)
+	spin_lock_irq(&np->lock);
+	if (unlikely(test_bit(NV_DO_SPECIAL_DEV_HANDLING, &np->special_dev_handling))) {
+		spin_unlock_irq(&np->lock);
+		return -EBUSY;
+	}
+	spin_unlock_irq(&np->lock);
+#endif /* (__VMKLNX__) */
+
 	netif_carrier_off(dev);
 	if (netif_running(dev)) {
 		nv_disable_irq(dev);
@@ -5380,6 +5486,15 @@ static int nv_set_rx_csum(struct net_device *dev, u32 data)
 	struct fe_priv *np = netdev_priv(dev);
 	u8 __iomem *base = get_hwbase(dev);
 	int retcode = 0;
+
+#if defined (__VMKLNX__)
+	spin_lock_irq(&np->lock);
+	if (unlikely(test_bit(NV_DO_SPECIAL_DEV_HANDLING, &np->special_dev_handling))) {
+		spin_unlock_irq(&np->lock);
+		return -EBUSY;
+	}
+	spin_unlock_irq(&np->lock);
+#endif /* (__VMKLNX__) */
 
 	if (np->driver_data & DEV_HAS_CHECKSUM) {
 		if (data) {
@@ -5822,6 +5937,12 @@ static void nv_vlan_rx_register(struct net_device *dev, struct vlan_group *grp)
 	struct fe_priv *np = get_nvpriv(dev);
 
 	spin_lock_irq(&np->lock);
+#if defined (__VMKLNX__)
+	if (unlikely(test_bit(NV_DO_SPECIAL_DEV_HANDLING, &np->special_dev_handling))) {
+		spin_unlock_irq(&np->lock);
+		return;
+	}
+#endif /* (__VMKLNX__) */
 
 	/* save vlan group */
 	np->vlangrp = grp;
@@ -6048,6 +6169,9 @@ static int nv_close(struct net_device *dev)
 	spin_lock_irq(&np->lock);
 	np->in_shutdown = 1;
 	spin_unlock_irq(&np->lock);
+
+	cancel_work_sync(&np->special_dev_handling_task);
+
 #ifdef CONFIG_FORCEDETH_NAPI
 	nv_stop_rx(dev);
 	napi_disable(&np->napi);
@@ -6108,13 +6232,6 @@ static int __devinit nv_probe(struct pci_dev *pci_dev, const struct pci_device_i
 	int phyinitialized = 0;
 	DECLARE_MAC_BUF(mac);
 	static int printed_version;
-
-#if defined (__VMKLNX__)
-    /* This is needed mostly if system was coming off of
-     * pxe boot and if it hit bug 290182.
-     */
-	nv_hard_reset(pci_dev, 0);
-#endif /* defined (__VMKLNX__) */
 
 	if (!printed_version++)
 		printk(KERN_INFO "%s: Reverse Engineered nForce ethernet"
@@ -6316,6 +6433,14 @@ static int __devinit nv_probe(struct pci_dev *pci_dev, const struct pci_device_i
 
 	/* check the workaround bit for correct mac address order */
 	txreg = readl(base + NvRegTransmitPoll);
+
+#if defined (__VMKLNX__)
+    /* This is needed mostly if system was coming off of
+     * pxe boot and if it hit bug 290182.
+     */
+	nv_hard_reset(pci_dev, 0);
+#endif /* defined (__VMKLNX__) */
+
 	if (id->driver_data & DEV_HAS_CORRECT_MACADDR) {
 		/* mac address is already in correct order */
 		dev->dev_addr[0] = (np->orig_mac[0] >>  0) & 0xff;

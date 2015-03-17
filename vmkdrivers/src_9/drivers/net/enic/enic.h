@@ -16,7 +16,6 @@
  * SOFTWARE.
  *
  */
-#ident "$Id: enic.h 64346 2010-11-10 18:58:09Z umalhi $"
 
 #ifndef _ENIC_H_
 #define _ENIC_H_
@@ -34,13 +33,13 @@
 
 #define DRV_NAME		"enic"
 #define DRV_DESCRIPTION		"Cisco VIC Ethernet NIC Driver"
-#define DRV_VERSION		"1.4.2.15a"
-#define DRV_COPYRIGHT		"Copyright 2008-2009 Cisco Systems, Inc"
+#define DRV_VERSION		"2.1.2.38"
+#define DRV_COPYRIGHT		"Copyright 2008-2011 Cisco Systems, Inc"
 
 #define ENIC_BARS_MAX		6
 
-#define ENIC_WQ_MAX		8
-#define ENIC_RQ_MAX		8
+#define ENIC_WQ_MAX		16	
+#define ENIC_RQ_MAX		16
 #define ENIC_CQ_MAX		(ENIC_WQ_MAX + ENIC_RQ_MAX)
 #define ENIC_INTR_MAX		(ENIC_CQ_MAX + 2)
 
@@ -51,7 +50,12 @@ struct enic_msix_entry {
 	void *devid;
 };
 
-#define ENIC_SET_APPLIED		(1 << 0)
+/* priv_flags */
+#define ENIC_SRIOV_ENABLED		(1 << 0)
+#define ENIC_RESET_INPROGRESS		(1 << 1)
+
+/* enic port profile set flags */
+#define ENIC_PORT_REQUEST_APPLIED	(1 << 0)
 #define ENIC_SET_REQUEST		(1 << 1)
 #define ENIC_SET_NAME			(1 << 2)
 #define ENIC_SET_INSTANCE		(1 << 3)
@@ -63,6 +67,14 @@ struct enic_port_profile {
 	char name[PORT_PROFILE_MAX];
 	u8 instance_uuid[PORT_UUID_MAX];
 	u8 host_uuid[PORT_UUID_MAX];
+	u8 vf_mac[ETH_ALEN];
+	u8 mac_addr[ETH_ALEN];
+};
+
+enum ownership_type {
+	OWNER_NETDEV = 0,
+	OWNER_PTS = 1,
+	/* ... */
 };
 
 /* Per-instance private data structure */
@@ -80,15 +92,22 @@ struct enic {
 	struct enic_msix_entry msix[ENIC_INTR_MAX];
 	u32 msg_enable;
 	spinlock_t devcmd_lock;
+	atomic_t in_stop;
 	u8 mac_addr[ETH_ALEN];
 	u8 mc_addr[ENIC_MULTICAST_PERFECT_FILTERS][ETH_ALEN];
+	u8 uc_addr[ENIC_UNICAST_PERFECT_FILTERS][ETH_ALEN];
 	unsigned int flags;
+	unsigned int priv_flags;
 	unsigned int mc_count;
+	unsigned int uc_count;
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3, 0, 00))
 	int csum_rx_enabled;
+#endif
 	u32 port_mtu;
 	u32 rx_coalesce_usecs;
 	u32 tx_coalesce_usecs;
-	struct enic_port_profile pp;
+	struct enic_port_profile *pp;
+	enum ownership_type owner;
 	int upt_mode;
 	int upt_resources_alloced;
 	int upt_active;
@@ -98,19 +117,32 @@ struct enic {
 	dma_addr_t upt_oob_pa[ENIC_UPT_OOB_MAX];
 	vmk_NetVFTXQueueStats upt_stats_tx;
 	vmk_NetVFRXQueueStats upt_stats_rx;
+	VMK_ReturnStatus upt_tq_error_stress_status;
+	/* Mapped to VMK_STRESS_OPT_NET_IF_FAIL_HARD_TX */
+	vmk_StressOptionHandle upt_tq_error_stress_handle;
+	VMK_ReturnStatus upt_tq_silent_error_stress_status;
+	/* Mapped to VMK_STRESS_OPT_NET_IF_CORRUPT_TX */
+	vmk_StressOptionHandle upt_tq_silent_error_stress_handle;
+	VMK_ReturnStatus upt_rq_error_stress_status;
+	/* Mapped to VMK_STRESS_OPT_NET_IF_FAIL_RX */
+	vmk_StressOptionHandle upt_rq_error_stress_handle;
+	unsigned int upt_tq_error_stress_counter;
+	unsigned int upt_tq_silent_error_stress_counter;
+	unsigned int upt_rq_error_stress_counter;
 
 	/* work queue cache line section */
 	____cacheline_aligned struct vnic_wq wq[ENIC_WQ_MAX];
 	spinlock_t wq_lock[ENIC_WQ_MAX];
 	unsigned int wq_count;
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3, 1, 00))
 	struct vlan_group *vlan_group;
+#endif
 	u16 loop_enable;
 	u16 loop_tag;
 
 	/* receive queue cache line section */
 	____cacheline_aligned struct vnic_rq rq[ENIC_RQ_MAX];
 	unsigned int rq_count;
-	int (*rq_alloc_buf)(struct vnic_rq *rq);
 	u64 rq_truncated_pkts;
 	u64 rq_bad_fcs;
 	struct napi_struct napi[ENIC_RQ_MAX];
@@ -129,5 +161,57 @@ static inline struct device *enic_get_dev(struct enic *enic)
 {
 	return &(enic->pdev->dev);
 }
+
+static inline unsigned int enic_cq_rq(struct enic *enic, unsigned int rq)
+{
+	return rq;
+}
+
+static inline unsigned int enic_cq_wq(struct enic *enic, unsigned int wq)
+{
+	return enic->rq_count + wq;
+}
+
+static inline unsigned int enic_legacy_io_intr(void)
+{
+	return 0;
+}
+
+static inline unsigned int enic_legacy_err_intr(void)
+{
+	return 1;
+}
+
+static inline unsigned int enic_legacy_notify_intr(void)
+{
+	return 2;
+}
+
+static inline unsigned int enic_msix_rq_intr(struct enic *enic,
+	unsigned int rq)
+{
+	return enic->cq[enic_cq_rq(enic, rq)].interrupt_offset;
+}
+
+static inline unsigned int enic_msix_wq_intr(struct enic *enic,
+	unsigned int wq)
+{
+	return enic->cq[enic_cq_wq(enic, wq)].interrupt_offset;
+}
+
+static inline unsigned int enic_msix_err_intr(struct enic *enic)
+{
+	return enic->rq_count + enic->wq_count;
+}
+
+static inline unsigned int enic_msix_notify_intr(struct enic *enic)
+{
+	return enic->rq_count + enic->wq_count + 1;
+}
+
+void enic_reset_addr_lists(struct enic *enic);
+int enic_is_dynamic(struct enic *enic);
+int enic_sriov_enabled(struct enic *enic);
+int enic_is_valid_vf(struct enic *enic, int vf);
 
 #endif /* _ENIC_H_ */

@@ -14,13 +14,16 @@
  * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
+ * [Insert appropriate license here when releasing outside of Cisco]
+ * $Id: fnic_main.c 132955 2013-05-29 21:01:24Z hiralpat $
  */
 #include "fnic.h"
 #include "fnic_kcompat.h"
-#include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/mempool.h>
 #include <linux/string.h>
+#include <linux/slab.h>
+#include <linux/version.h>
 #include <linux/errno.h>
 #include <linux/init.h>
 #include <linux/pci.h>
@@ -41,6 +44,7 @@
 #include "vnic_intr.h"
 #include "vnic_stats.h"
 #include "fnic_io.h"
+#include "fnic_fip.h"
 #include "fnic_tag_map.h"
 
 #define PCI_DEVICE_ID_CISCO_FNIC	0x0045
@@ -66,16 +70,32 @@ MODULE_LICENSE("GPLv2");
 MODULE_VERSION(DRV_VERSION);
 MODULE_DEVICE_TABLE(pci, fnic_id_table);
 
-unsigned int fnic_log_level;
-module_param(fnic_log_level, int, S_IRUGO|S_IWUSR);
-MODULE_PARM_DESC(fnic_log_level, "bit mask of fnic logging levels");
+unsigned int fnic_log_level = 7;
 
+unsigned int fnic_trace_max_pages = 64;
+module_param(fnic_trace_max_pages, uint, S_IRUGO|S_IWUSR);
+MODULE_PARM_DESC(fnic_trace_max_pages, "Total allocated memory pages "
+					"for fnic trace buffer");
+
+unsigned int fnic_max_qdepth = FNIC_DFLT_QUEUE_DEPTH;
+module_param(fnic_max_qdepth, uint, S_IRUGO|S_IWUSR);
+MODULE_PARM_DESC(fnic_max_qdepth, "Queue depth to report for each LUN");
+
+static struct net_device fnic_dummy_netdev;
+
+static struct net_device *fnic_get_dummy_netdev(const struct fc_lport *lport)
+{
+	(void)lport;
+	memset(&fnic_dummy_netdev, 0, sizeof(struct net_device));
+	return &fnic_dummy_netdev;
+}
 
 static struct libfc_function_template fnic_transport_template = {
 	.frame_send = fnic_send,
 	.lport_set_port_id = fnic_set_port_id,
 	.fcp_abort_io = fnic_empty_scsi_cleanup,
 	.fcp_cleanup = fnic_empty_scsi_cleanup,
+	.get_cna_netdev = fnic_get_dummy_netdev,
 	.exch_mgr_reset = fnic_exch_mgr_reset
 };
 
@@ -91,10 +111,8 @@ static int fnic_slave_alloc(struct scsi_device *sdev)
 		return -ENXIO;
 
 	if (sdev->tagged_supported)
-		scsi_activate_tcq(sdev, FNIC_DFLT_QUEUE_DEPTH);
-
+		scsi_activate_tcq(sdev, fnic_max_qdepth);
 	rport->dev_loss_tmo = fnic->config.port_down_timeout / 1000;
-
 	return 0;
 }
 
@@ -120,7 +138,9 @@ static struct scsi_host_template fnic_host_template = {
 static void fnic_get_host_speed(struct Scsi_Host *shost);
 static struct scsi_transport_template *fnic_fc_transport;
 static struct fc_host_statistics *fnic_get_stats(struct Scsi_Host *);
-
+static void fnic_reset_host_stats(struct Scsi_Host *);
+int init_fnic_procfs(void);
+void teardown_fnic_procfs(void);
 static struct fc_function_template fnic_fc_functions = {
 
 	.show_host_node_name = 1,
@@ -133,6 +153,7 @@ static struct fc_function_template fnic_fc_functions = {
 	.show_host_supported_speeds = 1,
 	.get_host_speed = fnic_get_host_speed,
 	.show_host_speed = 1,
+        .get_host_port_type = fc_get_host_port_type,
 	.show_host_port_type = 1,
 	.get_host_port_state = fc_get_host_port_state,
 	.show_host_port_state = 1,
@@ -146,6 +167,7 @@ static struct fc_function_template fnic_fc_functions = {
 	.show_rport_dev_loss_tmo = 1,
 	.issue_fc_host_lip = fnic_reset,
 	.get_fc_host_stats = fnic_get_stats,
+	.reset_fc_host_stats = fnic_reset_host_stats,
 	.dd_fcrport_size = sizeof(struct fc_rport_libfc_priv),
 	.terminate_rport_io = fnic_terminate_rport_io,
 };
@@ -198,11 +220,113 @@ static struct fc_host_statistics *fnic_get_stats(struct Scsi_Host *host)
 	stats->error_frames = vs->tx.tx_errors + vs->rx.rx_errors;
 	stats->dumped_frames = vs->tx.tx_drops + vs->rx.rx_drop;
 	stats->invalid_crc_count = vs->rx.rx_crc_errors;
-	stats->seconds_since_last_reset = (jiffies - lp->boot_time) / HZ;
+	stats->seconds_since_last_reset = (jiffies - fnic->stats_reset_time) / HZ;
 	stats->fcp_input_megabytes = div_u64(fnic->fcp_input_bytes, 1000000);
 	stats->fcp_output_megabytes = div_u64(fnic->fcp_output_bytes, 1000000);
 
 	return stats;
+}
+
+/*
+ * fnic_dump_fchost_stats
+ * note : dumps fc_statistics into system logs
+ */
+void fnic_dump_fchost_stats(struct Scsi_Host *host,
+				struct fc_host_statistics *stats)
+{
+	FNIC_MAIN_NOTE(KERN_NOTICE, host,
+			"fnic: seconds since last reset = %llu\n",
+			stats->seconds_since_last_reset);
+	FNIC_MAIN_NOTE(KERN_NOTICE, host,
+			"fnic: tx frames 		= %llu\n",
+			stats->tx_frames);
+	FNIC_MAIN_NOTE(KERN_NOTICE, host,
+			"fnic: tx words 		= %llu\n",
+			stats->tx_words);
+	FNIC_MAIN_NOTE(KERN_NOTICE, host,
+			"fnic: rx frames 		= %llu\n",
+			stats->rx_frames);
+	FNIC_MAIN_NOTE(KERN_NOTICE, host,
+			"fnic: rx words 		= %llu\n",
+			stats->rx_words);
+	FNIC_MAIN_NOTE(KERN_NOTICE, host,
+			"fnic: lip count		= %llu\n",
+			stats->lip_count);
+	FNIC_MAIN_NOTE(KERN_NOTICE, host,
+			"fnic: nos count		= %llu\n",
+			stats->nos_count);
+	FNIC_MAIN_NOTE(KERN_NOTICE, host,
+			"fnic: error frames		= %llu\n",
+			stats->error_frames);
+	FNIC_MAIN_NOTE(KERN_NOTICE, host,
+			"fnic: dumped frames	= %llu\n",
+			stats->dumped_frames);
+	FNIC_MAIN_NOTE(KERN_NOTICE, host,
+			"fnic: link failure count	= %llu\n",
+			stats->link_failure_count);
+	FNIC_MAIN_NOTE(KERN_NOTICE, host,
+			"fnic: loss of sync count	= %llu\n",
+			stats->loss_of_sync_count);
+	FNIC_MAIN_NOTE(KERN_NOTICE, host,
+			"fnic: loss of signal count	= %llu\n",
+			stats->loss_of_signal_count);
+	FNIC_MAIN_NOTE(KERN_NOTICE, host,
+			"fnic: prim seq protocol err count = %llu\n",
+			stats->prim_seq_protocol_err_count);
+	FNIC_MAIN_NOTE(KERN_NOTICE, host,
+			"fnic: invalid tx word count= %llu\n",
+			stats->invalid_tx_word_count);
+	FNIC_MAIN_NOTE(KERN_NOTICE, host,
+			"fnic: invalid crc count	= %llu\n",
+			stats->invalid_crc_count);
+	FNIC_MAIN_NOTE(KERN_NOTICE, host,
+			"fnic: fcp input requests	= %llu\n",
+			stats->fcp_input_requests);
+	FNIC_MAIN_NOTE(KERN_NOTICE, host,
+			"fnic: fcp output requests	= %llu\n",
+			stats->fcp_output_requests);
+	FNIC_MAIN_NOTE(KERN_NOTICE, host,
+			"fnic: fcp control requests	= %llu\n",
+			stats->fcp_control_requests);
+	FNIC_MAIN_NOTE(KERN_NOTICE, host,
+			"fnic: fcp input megabytes 	= %llu\n",
+			stats->fcp_input_megabytes);
+	FNIC_MAIN_NOTE(KERN_NOTICE, host,
+			"fnic: fcp output megabytes	= %llu\n",
+			stats->fcp_output_megabytes);
+	return;
+}
+
+/*
+ * fnic_reset_host_stats : clears host stats
+ * note : called when reset_statistics set under sysfs dir
+ */
+static void fnic_reset_host_stats(struct Scsi_Host *host)
+{
+	int ret;
+	struct fc_lport *lp = shost_priv(host);
+	struct fnic *fnic = lport_priv(lp);
+	struct fc_host_statistics *stats;
+	unsigned long flags;
+
+	/* dump current stats, before clearing them */
+	stats = fnic_get_stats(host);
+	fnic_dump_fchost_stats(host, stats);
+
+	spin_lock_irqsave(&fnic->fnic_lock, flags);
+	ret = vnic_dev_stats_clear(fnic->vdev);
+	spin_unlock_irqrestore(&fnic->fnic_lock, flags);
+
+	if (ret) {
+		FNIC_MAIN_DBG(KERN_DEBUG, fnic->lport->host,
+				"fnic: Reset vnic stats failed"
+				" 0x%x", ret);
+		return;
+	}
+	fnic->stats_reset_time = jiffies;
+	memset(stats, 0, sizeof(*stats));
+
+	return;
 }
 
 void fnic_log_q_error(struct fnic *fnic)
@@ -283,6 +407,13 @@ static void fnic_notify_timer(unsigned long data)
 	fnic_handle_link_event(fnic);
 	mod_timer(&fnic->notify_timer,
 		  round_jiffies(jiffies + FNIC_NOTIFY_TIMER_PERIOD));
+}
+
+static void fnic_fip_notify_timer(unsigned long data)
+{
+	struct fnic *fnic = (struct fnic *)data;
+
+	fnic_handle_fip_timer(fnic);
 }
 
 static void fnic_notify_timer_start(struct fnic *fnic)
@@ -385,17 +516,6 @@ static void fnic_iounmap(struct fnic *fnic)
 		iounmap(fnic->bar0.vaddr);
 }
 
-/*
- * Allocate element for mempools requiring GFP_DMA flag.
- * Otherwise, checks in kmem_flagcheck() hit BUG_ON().
- */
-static void *fnic_alloc_slab_dma(gfp_t gfp_mask, void *pool_data)
-{
-	struct kmem_cache *mem = pool_data;
-
-	return kmem_cache_alloc(mem, gfp_mask | GFP_ATOMIC | GFP_DMA);
-}
-
 /**
  * fnic_get_mac() - get assigned data MAC address for FIP code.
  * @lport: 	local port.
@@ -405,6 +525,12 @@ static u8 *fnic_get_mac(struct fc_lport *lport)
 	struct fnic *fnic = lport_priv(lport);
 
 	return fnic->data_src_addr;
+}
+
+void fnic_set_vlan(struct fnic *fnic, u16 vlan_id)
+{
+	u16 old_vlan;
+	old_vlan = vnic_dev_set_default_vlan(fnic->vdev, vlan_id);
 }
 
 static int __devinit fnic_probe(struct pci_dev *pdev,
@@ -417,7 +543,6 @@ static int __devinit fnic_probe(struct pci_dev *pdev,
 	int err;
 	int i;
 	unsigned long flags;
-
 #if defined(__VMKLNX__)
 	unsigned int irq;
 	irq_handler_t handler;
@@ -434,6 +559,13 @@ static int __devinit fnic_probe(struct pci_dev *pdev,
 		goto err_out;
 	}
 	host = lp->host;
+#if defined(__VMKLNX__)
+        if (vmklnx_scsi_host_set_capabilities(host,
+                                            SHOST_CAP_SECONDLEVEL_ADDRESSING)) {
+                shost_printk(KERN_ERR, host, "Failed to set capability:0x%x for "
+                             "adapter\n", SHOST_CAP_SECONDLEVEL_ADDRESSING);
+        }
+#endif /* defined(__VMKLNX__) */
 	fnic = lport_priv(lp);
 	fnic->lport = lp;
 	fnic->ctlr.lp = lp;
@@ -442,13 +574,6 @@ static int __devinit fnic_probe(struct pci_dev *pdev,
 		 host->host_no);
 
 	host->transportt = fnic_fc_transport;
-
-	err = scsi_init_shared_tag_map(host, FNIC_MAX_IO_REQ);
-	if (err) {
-		shost_printk(KERN_ERR, fnic->lport->host,
-			     "Unable to alloc shared tag map\n");
-		goto err_out_free_hba;
-	}
 
 	/* Setup PCI resources */
 	pci_set_drvdata(pdev, fnic);
@@ -459,7 +584,7 @@ static int __devinit fnic_probe(struct pci_dev *pdev,
 	if (err) {
 		shost_printk(KERN_ERR, fnic->lport->host,
 			     "Cannot enable PCI device, aborting.\n");
-		goto err_out_free_tag_map;
+		goto err_out_free_hba;
 	}
 
 	err = pci_request_regions(pdev, DRV_NAME);
@@ -562,6 +687,23 @@ static int __devinit fnic_probe(struct pci_dev *pdev,
 			     "aborting.\n");
 		goto err_out_dev_close;
 	}
+
+	/* Configure Maximum Outstanding IO reqs*/
+	if (fnic->config.io_throttle_count != FNIC_UCSM_DFLT_THROTTLE_CNT_BLD) {
+		host->can_queue = min_t(u32, FNIC_MAX_IO_REQ,
+					max_t(u32, FNIC_MIN_IO_REQ,
+					fnic->config.io_throttle_count));
+	}
+	/* Increment max tag ids by 1, as fnic tag map starts from 1*/
+	fnic->fnic_max_tag_id = host->can_queue + 1;
+
+	err = scsi_init_shared_tag_map(host, fnic->fnic_max_tag_id);
+	if (err) {
+		shost_printk(KERN_ERR, fnic->lport->host,
+			  "Unable to alloc shared tag map\n");
+		goto err_out_dev_close;
+	}
+
 	host->max_lun = fnic->config.luns_per_tgt;
 	host->max_id = FNIC_MAX_FCP_TARGET;
 	host->max_cmd_len = FNIC_MAX_CMD_LEN;
@@ -573,7 +715,7 @@ static int __devinit fnic_probe(struct pci_dev *pdev,
 		shost_printk(KERN_ERR, fnic->lport->host,
 			     "Failed to set intr mode, "
 			     "aborting.\n");
-		goto err_out_dev_close;
+		goto err_out_free_tag_map;
 	}
 
 	err = fnic_alloc_vnic_resources(fnic);
@@ -606,14 +748,12 @@ static int __devinit fnic_probe(struct pci_dev *pdev,
 	if (!fnic->io_req_pool)
 		goto err_out_free_resources;
 
-	pool = mempool_create(2, fnic_alloc_slab_dma, mempool_free_slab,
-			      fnic_sgl_cache[FNIC_SGL_CACHE_DFLT]);
+	pool = mempool_create_slab_pool(2, fnic_sgl_cache[FNIC_SGL_CACHE_DFLT]);
 	if (!pool)
 		goto err_out_free_ioreq_pool;
 	fnic->io_sgl_pool[FNIC_SGL_CACHE_DFLT] = pool;
 
-	pool = mempool_create(2, fnic_alloc_slab_dma, mempool_free_slab,
-			      fnic_sgl_cache[FNIC_SGL_CACHE_MAX]);
+	pool = mempool_create_slab_pool(2, fnic_sgl_cache[FNIC_SGL_CACHE_MAX]);
 	if (!pool)
 		goto err_out_free_dflt_pool;
 	fnic->io_sgl_pool[FNIC_SGL_CACHE_MAX] = pool;
@@ -632,9 +772,8 @@ static int __devinit fnic_probe(struct pci_dev *pdev,
 	 * There's no need to ask libfcoe to send
 	 * out the FIP VLAN discovery frame.
 	 */
-        fnic->ctlr.vlan_id = FCOE_FIP_NO_VLAN_DISCOVERY;
+	fnic->ctlr.vlan_id = FCOE_FIP_NO_VLAN_DISCOVERY;
 #endif
-	fcoe_ctlr_init(&fnic->ctlr);
 	if (fnic->config.flags & VFCF_FIP_CAPABLE) {
 		shost_printk(KERN_INFO, fnic->lport->host,
 			     "firmware supports FIP\n");
@@ -642,12 +781,42 @@ static int __devinit fnic_probe(struct pci_dev *pdev,
 		vnic_dev_packet_filter(fnic->vdev, 1, 1, 0, 0, 0);
 		vnic_dev_add_addr(fnic->vdev, FIP_ALL_ENODE_MACS);
 		vnic_dev_add_addr(fnic->vdev, fnic->ctlr.ctl_src_addr);
+		fnic->set_vlan = fnic_set_vlan;
+		fcoe_ctlr_init(&fnic->ctlr);
+		fnic->ctlr.state = FIP_ST_AUTO;
+		fnic->ctlr.mode = FIP_ST_AUTO;
+		setup_timer(&fnic->fip_timer, fnic_fip_notify_timer,
+							(unsigned long)fnic);
+		spin_lock_init(&fnic->vlans_lock);
+		INIT_WORK(&fnic->fip_frame_work, fnic_handle_fip_frame);
+		INIT_WORK(&fnic->event_work, fnic_handle_event);
+		skb_queue_head_init(&fnic->fip_frame_queue);
+		spin_lock_irqsave(&fnic_list_lock, flags);
+		if (!fnic_fip_queue) {
+			fnic_fip_queue =
+				create_singlethread_workqueue("fnic_fip_q");
+			if (!fnic_fip_queue) {
+				spin_unlock_irqrestore(&fnic_list_lock, flags);
+				printk(KERN_ERR PFX "fnic FIP work queue "
+						 "create failed\n");
+				err = -ENOMEM;
+				goto err_out_free_max_pool;
+			}
+		}
+		spin_unlock_irqrestore(&fnic_list_lock, flags);
+		INIT_LIST_HEAD(&fnic->evlist);
+		INIT_LIST_HEAD(&fnic->vlans);
 	} else {
 		shost_printk(KERN_INFO, fnic->lport->host,
 			     "firmware uses non-FIP mode\n");
+		fcoe_ctlr_init(&fnic->ctlr);
+		fnic->ctlr.state = FIP_ST_NON_FIP;
 		fnic->ctlr.mode = FIP_ST_NON_FIP;
 	}
 	fnic->state = FNIC_IN_FC_MODE;
+
+	atomic_set(&fnic->in_flight, 0);
+	fnic->state_flags = FNIC_FLAGS_NONE;
 
 	/* Enable hardware stripping of vlan header on ingress */
 	fnic_set_nic_config(fnic, 0, 0, 0, 0, 0, 0, 1);
@@ -719,6 +888,7 @@ static int __devinit fnic_probe(struct pci_dev *pdev,
 	}
 
 	fc_lport_init_stats(lp);
+	fnic->stats_reset_time = jiffies;
 
 	fc_lport_config(lp);
 
@@ -764,8 +934,8 @@ static int __devinit fnic_probe(struct pci_dev *pdev,
 		vnic_intr_unmask(&fnic->intr[i]);
 
 	fnic_notify_timer_start(fnic);
-
 #if defined(__VMKLNX__)
+
 	irq = pdev->irq;
 	handler = fnic_isr_legacy;
 
@@ -776,6 +946,7 @@ static int __devinit fnic_probe(struct pci_dev *pdev,
 		handler = fnic_isr_msi;
 	}
 	vmklnx_scsi_register_poll_handler(lp->host, irq, handler, fnic);
+	vmklnx_iodm_enable_events(lp->host);
 #endif /* defined(__VMKLNX__) */
 
 	return 0;
@@ -799,6 +970,8 @@ err_out_free_resources:
 	fnic_free_vnic_resources(fnic);
 err_out_clear_intr:
 	fnic_clear_intr_mode(fnic);
+err_out_free_tag_map:
+	scsi_free_shared_tag_map(fnic->lport->host);
 err_out_dev_close:
 	vnic_dev_close(fnic->vdev);
 err_out_vnic_unregister:
@@ -809,8 +982,6 @@ err_out_release_regions:
 	pci_release_regions(pdev);
 err_out_disable_device:
 	pci_disable_device(pdev);
-err_out_free_tag_map:
-	scsi_free_shared_tag_map(fnic->lport->host);
 err_out_free_hba:
 	scsi_host_put(lp->host);
 err_out:
@@ -844,6 +1015,13 @@ static void __devexit fnic_remove(struct pci_dev *pdev)
 	skb_queue_purge(&fnic->frame_queue);
 	skb_queue_purge(&fnic->tx_queue);
 
+	if (fnic->config.flags & VFCF_FIP_CAPABLE) {
+		del_timer_sync(&fnic->fip_timer);
+		skb_queue_purge(&fnic->fip_frame_queue);
+		fnic_fcoe_reset_vlans(fnic);
+		fnic_fcoe_evlist_free(fnic);
+	}
+
 	/*
 	 * Log off the fabric. This stops all remote ports, dns port,
 	 * logs off the fabric. This flushes all rport, disc, lport work
@@ -857,7 +1035,6 @@ static void __devexit fnic_remove(struct pci_dev *pdev)
 
 	fcoe_ctlr_destroy(&fnic->ctlr);
 	fc_lport_destroy(lp);
-
 	/*
 	 * This stops the fnic device, masks all interrupts. Completed
 	 * CQ entries are drained. Posted WQ/RQ/Copy-WQ entries are
@@ -871,6 +1048,10 @@ static void __devexit fnic_remove(struct pci_dev *pdev)
 	spin_lock_irqsave(&fnic_list_lock, flags);
 	list_del(&fnic->list);
 	spin_unlock_irqrestore(&fnic_list_lock, flags);
+
+#if defined(__VMKLNX__)
+        vmklnx_iodm_disable_events(fnic->lport->host);
+#endif
 
 	fc_remove_host(fnic->lport->host);
 	scsi_remove_host(fnic->lport->host);
@@ -902,13 +1083,20 @@ static int __init fnic_init_module(void)
 
 	printk(KERN_INFO PFX "%s, ver %s\n", DRV_DESCRIPTION, DRV_VERSION);
 
+	/* Allocate memory for trace buffer */
+	err = fnic_trace_buf_init();
+	if (err < 0) {
+		printk(KERN_ERR PFX "Trace buffer initialization Failed "
+				  "Fnic Tracing utility is disabled\n");
+		fnic_trace_free();
+	}
+
 	/* Create a cache for allocation of default size sgls */
 	len = sizeof(struct fnic_dflt_sgl_list);
 	fnic_sgl_cache[FNIC_SGL_CACHE_DFLT] = (struct kmem_cache *)
 			kmem_cache_create("fnic_sgl_dflt" ,
 			len + FNIC_SG_DESC_ALIGN, 0,
 			SLAB_CACHE_DMA, NULL, NULL);
-
 	if (!fnic_sgl_cache[FNIC_SGL_CACHE_DFLT]) {
 		printk(KERN_ERR PFX "failed to create fnic dflt sgl slab\n");
 		err = -ENOMEM;
@@ -917,7 +1105,6 @@ static int __init fnic_init_module(void)
 
 	/* Create a cache for allocation of max size sgls*/
 	len = sizeof(struct fnic_sgl_list);
-
 	fnic_sgl_cache[FNIC_SGL_CACHE_MAX] = (struct kmem_cache *)
 			kmem_cache_create("fnic_sgl_max",
 			len + FNIC_SG_DESC_ALIGN, 0,
@@ -963,7 +1150,17 @@ static int __init fnic_init_module(void)
 		printk(KERN_ERR PFX "pci register error\n");
 		goto err_pci_register;
 	}
-	return err;
+
+        /* Setup procfs */
+        err = init_fnic_procfs();
+        if (err < 0) {
+                printk(KERN_ERR PFX "Failed to set up procfs\n");
+                goto err_init_fnic_procfs;
+        }
+        return err;
+err_init_fnic_procfs:
+        teardown_fnic_procfs();
+
 
 err_pci_register:
 	fc_release_transport(fnic_fc_transport);
@@ -976,17 +1173,24 @@ err_create_fnic_ioreq_slab:
 err_create_fnic_sgl_slab_max:
 	kmem_cache_destroy(fnic_sgl_cache[FNIC_SGL_CACHE_DFLT]);
 err_create_fnic_sgl_slab_dflt:
+	fnic_trace_free();
 	return err;
 }
 
 static void __exit fnic_cleanup_module(void)
 {
+        teardown_fnic_procfs();
 	pci_unregister_driver(&fnic_driver);
 	destroy_workqueue(fnic_event_queue);
+	if (fnic_fip_queue) {
+		flush_workqueue(fnic_fip_queue);
+		destroy_workqueue(fnic_fip_queue);
+	}
 	kmem_cache_destroy(fnic_sgl_cache[FNIC_SGL_CACHE_MAX]);
 	kmem_cache_destroy(fnic_sgl_cache[FNIC_SGL_CACHE_DFLT]);
 	kmem_cache_destroy(fnic_io_req_cache);
 	fc_release_transport(fnic_fc_transport);
+	fnic_trace_free();
 }
 
 module_init(fnic_init_module);

@@ -633,6 +633,14 @@ static int ql4_query_disc_iscsi_node(struct hba_ioctl *ql4im_ha,
 	strncpy(pdisc_node->NodeInfo.Alias, fw_ddb_entry->iscsi_alias,
 	    MIN(sizeof(pdisc_node->NodeInfo.Alias),
 	    sizeof(fw_ddb_entry->iscsi_alias)));
+#if defined(__VMKLNX__)
+	/* Make sure the buffer is null-terminated */
+	if (MIN(sizeof(pdisc_node->NodeInfo.Alias),
+	    sizeof(fw_ddb_entry->iscsi_alias)) > 0) {
+		pdisc_node->NodeInfo.Alias[MIN(sizeof(pdisc_node->NodeInfo.Alias),
+			sizeof(fw_ddb_entry->iscsi_alias)) - 1] = '\0';
+	}
+#endif
 	strncpy(pdisc_node->NodeInfo.iSCSIName, fw_ddb_entry->iscsi_name,
 	    MIN(sizeof(pdisc_node->NodeInfo.iSCSIName),
 	    sizeof(fw_ddb_entry->iscsi_name)));
@@ -742,6 +750,14 @@ static int ql4_query_disc_iscsi_portal(struct hba_ioctl *ql4im_ha,
 	strncpy(pdisc_portal->HostName, fw_ddb_entry->iscsi_name,
 	    MIN(sizeof(pdisc_portal->HostName),
 	    sizeof(fw_ddb_entry->iscsi_name)));
+#if defined(__VMKLNX__)
+	/* Make sure the buffer is null-terminated */
+	if (MIN(sizeof(pdisc_portal->HostName),
+	    sizeof(fw_ddb_entry->iscsi_name)) > 0) {
+		pdisc_portal->HostName[MIN(sizeof(pdisc_portal->HostName),
+			sizeof(fw_ddb_entry->iscsi_name)) - 1] = '\0';
+	}
+#endif
 
 	ioctl->Status = EXT_STATUS_OK;
 	if ((status = copy_to_user(Q64BIT_TO_PTR(ioctl->ResponseAdr,
@@ -2017,6 +2033,23 @@ static int ql4_set_device_entry_iscsi(struct hba_ioctl *ql4im_ha,
 	    cpu_to_le16(pdev_entry->DeviceInfo.MaxBurstSize);
 	pfw_ddb_entry->def_timeout =
 	    cpu_to_le16(pdev_entry->DeviceInfo.TaskMgmtTimeout);
+#if defined(__VMKLNX__)
+	/* Make sure the size of the copy doesn't excceed the size of
+	 * the destination buffer */
+	memcpy(pfw_ddb_entry->tgt_addr, pdev_entry->DeviceInfo.TargetAddr,
+	    MIN(sizeof(pfw_ddb_entry->tgt_addr),
+	        sizeof(pdev_entry->DeviceInfo.TargetAddr)));
+
+	memcpy(pfw_ddb_entry->ip_addr, pdev_entry->EntryInfo.IPAddr.IPAddress,
+	    MIN(sizeof(pfw_ddb_entry->ip_addr),
+	        sizeof(pdev_entry->EntryInfo.IPAddr.IPAddress)));
+	memcpy(pfw_ddb_entry->iscsi_name, pdev_entry->EntryInfo.iSCSIName,
+	    MIN(sizeof(pfw_ddb_entry->iscsi_name),
+	        sizeof(pdev_entry->EntryInfo.iSCSIName)));
+	memcpy(pfw_ddb_entry->iscsi_alias, pdev_entry->EntryInfo.Alias,
+	    MIN(sizeof(pfw_ddb_entry->iscsi_alias),
+	        sizeof(pdev_entry->EntryInfo.Alias)));
+#else
 	memcpy(pfw_ddb_entry->tgt_addr, pdev_entry->DeviceInfo.TargetAddr,
 	    sizeof(pdev_entry->DeviceInfo.TargetAddr));
 
@@ -2026,6 +2059,7 @@ static int ql4_set_device_entry_iscsi(struct hba_ioctl *ql4im_ha,
 	    sizeof(pdev_entry->EntryInfo.iSCSIName));
 	memcpy(pfw_ddb_entry->iscsi_alias, pdev_entry->EntryInfo.Alias,
 	    sizeof(pdev_entry->EntryInfo.Alias));
+#endif
 
 	/*
 	 * Make the IOCTL call

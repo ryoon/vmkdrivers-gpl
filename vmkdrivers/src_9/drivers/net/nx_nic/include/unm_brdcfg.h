@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2003 - 2009 NetXen, Inc.
+ * Copyright (C) 2009 - QLogic Corporation.
  * All rights reserved.
  * 
  * This program is free software; you can redistribute it and/or
@@ -20,11 +21,6 @@
  * The full GNU General Public License is included in this distribution
  * in the file called LICENSE.
  * 
- * Contact Information:
- * licensing@netxen.com
- * NetXen, Inc.
- * 18922 Forge Drive
- * Cupertino, CA 95014
  */
 /******************************************************************************
 *    unm_bdinfo.h - Phantom board information stored in flash.
@@ -39,17 +35,13 @@
 /* Magic number to let user know flash is programmed */
 #define   UNM_BDINFO_MAGIC 0x12345678
 
-#define P2_CHIP 2
 #define P3_CHIP 3
-#define NX_P2_C0		0x24
-#define NX_P2_C1		0x25
 #define NX_P3_A0		0x30
 #define NX_P3_A2		0x32
 #define NX_P3_B0		0x40
 #define NX_P3_B1		0x41
 #define NX_P3_B2		0x42
 
-#define	NX_IS_REVISION_P2(REVISION)	(REVISION <= NX_P2_C1)
 #define	NX_IS_REVISION_P3(REVISION)	(REVISION >= NX_P3_A0)
 
 /* MN */
@@ -581,6 +573,5 @@ typedef enum {
 #define LICENSE_SECTOR_SIZE		(LICENSE_LEN/sizeof(uint32_t))
 #define LICENSE_SECTOR			(LICENSE_START/FLASH_SECTOR_SIZE)
 
-#include "nx_vnic.h"
 
 #endif  // __UNM_BRDINFO_H

@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2003 - 2009 NetXen, Inc.
+ * Copyright (C) 2009 - QLogic Corporation.
  * All rights reserved.
  * 
  * This program is free software; you can redistribute it and/or
@@ -20,11 +21,6 @@
  * The full GNU General Public License is included in this distribution
  * in the file called LICENSE.
  * 
- * Contact Information:
- * licensing@netxen.com
- * NetXen, Inc.
- * 18922 Forge Drive
- * Cupertino, CA 95014
  */
  /********************************************************************
   * Host FW interface functions.
@@ -135,6 +131,7 @@ poll_rsp(nx_dev_handle_t drv_handle)
 	U32			old_alive_counter = NXRD32(adapter,
               			      UNM_PEG_ALIVE_COUNTER);
 	U32			new_alive_counter = old_alive_counter;
+	uint64_t cur_fn = (uint64_t)poll_rsp;
 
 	do {
 		U32 raw_rsp;
@@ -154,7 +151,6 @@ poll_rsp(nx_dev_handle_t drv_handle)
 		}
 #endif
 
-
 		nx_os_nic_reg_read_w1(drv_handle, NX_CDRP_CRB_OFFSET,
 				      &raw_rsp);
 
@@ -164,16 +160,19 @@ poll_rsp(nx_dev_handle_t drv_handle)
     		new_alive_counter = NXRD32(adapter,
               			      UNM_PEG_ALIVE_COUNTER);
 			if(old_alive_counter == new_alive_counter) {
+				NX_NIC_TRC_FN(adapter, cur_fn, NX_CDRP_RSP_TIMEOUT);
 				return NX_CDRP_RSP_TIMEOUT;
 			}
 		}
 
 		if(i > NX_OS_CRB_RETRY_COUNT) {
+			NX_NIC_TRC_FN(adapter, cur_fn, NX_CDRP_RSP_TIMEOUT);
 			return NX_CDRP_RSP_TIMEOUT;
 		}
 		rsp = NX_OS_LE32_TO_CPU(raw_rsp);
 	} while (!NX_CDRP_IS_RSP(rsp));
 
+	NX_NIC_TRC_FN(adapter, cur_fn, rsp);
 	return(rsp);
 }
 
@@ -181,16 +180,20 @@ U32
 issue_cmd(nx_dev_handle_t drv_handle,
 	  U32 pci_fn,
 	  U32 version,
-	  U32 arg1,
-	  U32 arg2,
-	  U32 arg3,
-	  U32 cmd)
+	  U32 input_arg1,
+	  U32 input_arg2,
+	  U32 input_arg3,
+	  U32 cmd,
+	  U32 *output_arg1,
+	  U32 *output_arg2,
+	  U32 *output_arg3)
 {
 	U32 rsp;
 	U32 signature = 0;
 	U32 rcode = NX_RCODE_SUCCESS;
 	int fw_reset_count = 0;
 	struct unm_adapter_s *adapter = (struct unm_adapter_s *)drv_handle;
+	uint64_t cur_fn = (uint64_t)issue_cmd;
 
 	api_lock(drv_handle);
 	fw_reset_count = NXRD32(adapter,UNM_FW_RESET);
@@ -204,6 +207,7 @@ issue_cmd(nx_dev_handle_t drv_handle,
 		 */
 		if (api_lock(drv_handle)) {
 			adapter->is_up = FW_DEAD;
+			NX_NIC_TRC_FN(adapter, cur_fn, NX_RCODE_TIMEOUT);
 			return NX_RCODE_TIMEOUT;
 		}
 
@@ -211,13 +215,13 @@ issue_cmd(nx_dev_handle_t drv_handle,
 				       NX_OS_CPU_TO_LE32(signature));
 
 		nx_os_nic_reg_write_w1(drv_handle, NX_ARG1_CRB_OFFSET,
-				       NX_OS_CPU_TO_LE32(arg1));
+				       NX_OS_CPU_TO_LE32(input_arg1));
 
 		nx_os_nic_reg_write_w1(drv_handle, NX_ARG2_CRB_OFFSET,
-				       NX_OS_CPU_TO_LE32(arg2));
+				       NX_OS_CPU_TO_LE32(input_arg2));
 
 		nx_os_nic_reg_write_w1(drv_handle, NX_ARG3_CRB_OFFSET,
-			    	   NX_OS_CPU_TO_LE32(arg3));
+			    	   NX_OS_CPU_TO_LE32(input_arg3));
 
 		nx_os_nic_reg_write_w1(drv_handle, NX_CDRP_CRB_OFFSET,
 				       NX_OS_CPU_TO_LE32(NX_CDRP_FORM_CMD(cmd)));
@@ -233,25 +237,40 @@ issue_cmd(nx_dev_handle_t drv_handle,
 			fw_reset_count = NXRD32(adapter,UNM_FW_RESET);
 			if(fw_reset_count != 1) {
 				NXWR32(adapter,UNM_FW_RESET,1);
+				NX_NIC_TRC_FN(adapter, cur_fn, fw_reset_count);
 			}
 
 			rcode = NX_RCODE_TIMEOUT;
+			NX_NIC_TRC_FN(adapter, cur_fn, rcode);
 		} else if (rsp == NX_CDRP_RSP_FAIL) {
 			nx_os_nic_reg_read_w1(drv_handle, NX_ARG1_CRB_OFFSET, &rsp);
 
 			rcode = (nx_rcode_t)(NX_OS_LE32_TO_CPU(rsp));
 			NX_DBGPRINTF(NX_DBG_ERROR,("%s:Fail card response. rcode:%x\n",
 					   __FUNCTION__, rcode));
+			NX_NIC_TRC_FN(adapter, cur_fn, rcode);
+
+		} else if (rsp == NX_CDRP_RSP_OK) {
+			if (output_arg1)
+				nx_os_nic_reg_read_w1(drv_handle, NX_ARG1_CRB_OFFSET, output_arg1);
+
+			if (output_arg2)
+				nx_os_nic_reg_read_w1(drv_handle, NX_ARG2_CRB_OFFSET, output_arg2);
+
+			if (output_arg3)
+				nx_os_nic_reg_read_w1(drv_handle, NX_ARG3_CRB_OFFSET, output_arg3);
 		}
 
         /* Release semaphore
          */
         api_unlock(drv_handle);
 
+		NX_NIC_TRC_FN(adapter, cur_fn, rcode);
 		return rcode;
 
 	} else {
 		/* Need to check if we need diff error code... */
+		NX_NIC_TRC_FN(adapter, cur_fn, NX_RCODE_TIMEOUT);
 		return NX_RCODE_TIMEOUT;	
 	}
 
@@ -385,17 +404,26 @@ nx_fw_cmd_create_rx_ctx_alloc(nx_host_nic_t* nx_dev,
 	U32 len = 0;
 	U32 index = 0;
 	I32 id = 0;
+	struct unm_adapter_s *adapter; 
+	uint64_t cur_fn = (uint64_t)nx_fw_cmd_create_rx_ctx_alloc;
+
 	if (nx_dev == NULL ||
 	    pprx_ctx == NULL) {
 		return NX_RCODE_INVALID_ARGS;
 	}
 	drv_handle = nx_dev->nx_drv_handle;
+	adapter = (struct unm_adapter_s *)drv_handle;
 
 #ifdef NX_USE_NEW_ALLOC
 	if ((id = find_open_rx_id(nx_dev)) < 0) {
+		NX_NIC_TRC_FN(adapter, cur_fn, NX_RCODE_MAX_EXCEEDED);
 		return NX_RCODE_MAX_EXCEEDED;
 	}
 #endif
+	if (id == 0) {
+		num_rules = MAX_SUPPORTED_FILTERS - adapter->num_rx_queues;
+	}
+
 	len = (sizeof(nx_host_rx_ctx_t) +
 	       (sizeof(nx_host_rds_ring_t) * num_rds_rings) +
 	       (sizeof(nx_host_sds_ring_t) * num_sds_rings) +
@@ -408,6 +436,7 @@ nx_fw_cmd_create_rx_ctx_alloc(nx_host_nic_t* nx_dev,
 				0);
 
 	if(rcode != NX_RCODE_SUCCESS){
+		NX_NIC_TRC_FN(adapter, cur_fn, NX_RCODE_NO_HOST_MEM);
 		return NX_RCODE_NO_HOST_MEM;
 	}
 
@@ -448,7 +477,10 @@ nx_fw_cmd_create_rx_ctx_alloc(nx_host_nic_t* nx_dev,
 	nx_dev->rx_ctxs[id] = prx_ctx;
 	nx_dev->active_rx_ctxs++;
 #endif
+	NX_NIC_TRC_FN(adapter, cur_fn, id);
+	NX_NIC_TRC_FN(adapter, cur_fn, nx_dev->active_rx_ctxs);
 
+	NX_NIC_TRC_FN(adapter, cur_fn, NX_RCODE_SUCCESS);
 	return NX_RCODE_SUCCESS;	
 }
 
@@ -457,13 +489,18 @@ nx_fw_cmd_create_rx_ctx_free(nx_host_nic_t* nx_dev,
 			     nx_host_rx_ctx_t *prx_ctx)
 {
 	nx_dev_handle_t drv_handle;
+	struct unm_adapter_s *adapter;
+	uint64_t cur_fn = (uint64_t) nx_fw_cmd_create_rx_ctx_free;
 
 	if (nx_dev == NULL) {
 		return NX_RCODE_INVALID_ARGS;
 	}
 	drv_handle = nx_dev->nx_drv_handle;
+	adapter = (struct unm_adapter_s *)drv_handle;
+	NX_NIC_TRC_FN(adapter, cur_fn, 0);
 	
 	if (prx_ctx == NULL) {
+		NX_NIC_TRC_FN(adapter, cur_fn, 0);
 		return NX_RCODE_SUCCESS;
 	}
 
@@ -471,17 +508,20 @@ nx_fw_cmd_create_rx_ctx_free(nx_host_nic_t* nx_dev,
 	if (nx_dev->rx_ctxs[prx_ctx->this_id] != prx_ctx ||
 	    nx_dev->active_rx_ctxs < 1) {
 		NX_ERR("fatal error\n");
+		NX_NIC_TRC_FN(adapter, cur_fn, NX_RCODE_CMD_FAILED);
 		return NX_RCODE_CMD_FAILED;
 	}
 
 	nx_dev->rx_ctxs[prx_ctx->this_id] = NULL;
 	nx_dev->active_rx_ctxs--;
+	NX_NIC_TRC_FN(adapter, cur_fn, nx_dev->active_rx_ctxs);
 #endif
 	nx_os_free_mem(drv_handle, 
 		       prx_ctx,
 		       prx_ctx->alloc_len,
 		       0);
 	prx_ctx = NULL;
+	NX_NIC_TRC_FN(adapter, cur_fn, NX_RCODE_SUCCESS);
 	return NX_RCODE_SUCCESS;	
 }
 
@@ -495,6 +535,8 @@ nx_fw_cmd_create_rx_ctx_alloc_dma(nx_host_nic_t* nx_dev,
 	nx_dev_handle_t drv_handle;
 	nx_rcode_t rcode = NX_RCODE_SUCCESS;
 	U32 memflags = 0;
+	struct unm_adapter_s *adapter;
+	uint64_t cur_fn = (uint64_t) nx_fw_cmd_create_rx_ctx_alloc_dma;
 
 	if (nx_dev == NULL ||
 	    hostrq == NULL ||
@@ -502,6 +544,7 @@ nx_fw_cmd_create_rx_ctx_alloc_dma(nx_host_nic_t* nx_dev,
 		return NX_RCODE_INVALID_ARGS;
 	}
 	drv_handle = nx_dev->nx_drv_handle;
+	adapter = (struct unm_adapter_s *)drv_handle;
 	
 	nx_os_zero_memory(hostrq, sizeof(struct nx_dma_alloc_s));
 	nx_os_zero_memory(hostrsp, sizeof(struct nx_dma_alloc_s));
@@ -517,6 +560,7 @@ nx_fw_cmd_create_rx_ctx_alloc_dma(nx_host_nic_t* nx_dev,
 				    memflags);
 
 	if(rcode != NX_RCODE_SUCCESS){
+		NX_NIC_TRC_FN(adapter, cur_fn, rcode);
 		return NX_RCODE_NO_HOST_MEM;
 	}
 
@@ -537,12 +581,14 @@ nx_fw_cmd_create_rx_ctx_alloc_dma(nx_host_nic_t* nx_dev,
 				   hostrq->size, 
 				   memflags);
 		nx_os_zero_memory(hostrq, sizeof(struct nx_dma_alloc_s));
+		NX_NIC_TRC_FN(adapter, cur_fn, rcode);
 		return NX_RCODE_NO_HOST_MEM;
 	}
 
 	nx_os_zero_memory(hostrq->ptr, hostrq->size);
 	nx_os_zero_memory(hostrsp->ptr, hostrsp->size);	
 
+	NX_NIC_TRC_FN(adapter, cur_fn, NX_RCODE_SUCCESS);
 	return NX_RCODE_SUCCESS;
 }
 
@@ -603,22 +649,26 @@ nx_fw_cmd_create_rx_ctx(nx_host_rx_ctx_t *prx_ctx,
 	nx_rcode_t rcode = NX_RCODE_SUCCESS;
 	I32 i = 0;
 	U32 temp = 0;
+	struct unm_adapter_s *adapter;
+	uint64_t cur_fn = (uint64_t) nx_fw_cmd_create_rx_ctx;
 
 	NX_DBGPRINTF(NX_DBG_INFO,("%s\n", __FUNCTION__));
 
 	if (prx_ctx == NULL ||
-	    hostrq == NULL ||
-	    hostrsp == NULL) {
+			hostrq == NULL ||
+			hostrsp == NULL) {
 		return NX_RCODE_INVALID_ARGS;
 	}
 	drv_handle = prx_ctx->nx_dev->nx_drv_handle;
+	adapter = (struct unm_adapter_s *)drv_handle;
 	prq_rx_ctx = (nx_hostrq_rx_ctx_t *)hostrq->ptr;
 	prsp_rx_ctx = (nx_cardrsp_rx_ctx_t *)hostrsp->ptr;
 
 	if (NX_HOST_CTX_STATE_ALLOCATED != prx_ctx->state){
 		NX_DBGPRINTF(NX_DBG_INFO,("%s:Invalid RX CTX state:%x\n",
 					__FUNCTION__, prx_ctx->state));
-		
+
+		NX_NIC_TRC_FN(adapter, cur_fn, NX_RCODE_INVALID_ARGS);
 		return (NX_RCODE_INVALID_ARGS);
 	}
 
@@ -626,8 +676,8 @@ nx_fw_cmd_create_rx_ctx(nx_host_rx_ctx_t *prx_ctx,
 		NX_OS_CPU_TO_LE64((nx_os_dma_addr_to_u64(hostrsp->phys)));
 
 	temp = (NX_CAP0_LEGACY_CONTEXT | 
-		NX_CAP0_LEGACY_MN |
-		NX_CAP0_LRO);
+			NX_CAP0_LEGACY_MN |
+			NX_CAP0_LRO);
 	if (prx_ctx->multi_context) {
 		temp |= NX_CAP0_MULTI_CONTEXT;
 	}
@@ -646,18 +696,17 @@ nx_fw_cmd_create_rx_ctx(nx_host_rx_ctx_t *prx_ctx,
 	prq_rx_ctx->rds_ring_offset = NX_OS_CPU_TO_LE32(0);
 	prq_rx_ctx->sds_ring_offset = 
 		NX_OS_CPU_TO_LE32(prq_rx_ctx->rds_ring_offset +
-				  (sizeof(nx_hostrq_rds_ring_t) *
-				   prq_rx_ctx->num_rds_rings));
-
+				(sizeof(nx_hostrq_rds_ring_t) *
+				 prq_rx_ctx->num_rds_rings));
 
 	prq_rds_ring = (nx_hostrq_rds_ring_t *)(prq_rx_ctx->data + 
-					prq_rx_ctx->rds_ring_offset);	
+			prq_rx_ctx->rds_ring_offset);	
 	prds_rings = prx_ctx->rds_rings;
 
 	for (i = 0; i < prx_ctx->num_rds_rings; i++) {
 		prq_rds_ring[i].host_phys_addr = 
 			NX_OS_CPU_TO_LE64(nx_os_dma_addr_to_u64
-					  (prds_rings[i].host_phys));
+					(prds_rings[i].host_phys));
 		prq_rds_ring[i].ring_size = 
 			NX_OS_CPU_TO_LE32(prds_rings[i].ring_size);
 		prq_rds_ring[i].ring_kind = 
@@ -667,13 +716,13 @@ nx_fw_cmd_create_rx_ctx(nx_host_rx_ctx_t *prx_ctx,
 	}
 
 	prq_sds_ring = (nx_hostrq_sds_ring_t*)(prq_rx_ctx->data + 
-					prq_rx_ctx->sds_ring_offset);	
+			prq_rx_ctx->sds_ring_offset);	
 	psds_rings 	= prx_ctx->sds_rings;
 
 	for (i = 0; i < prx_ctx->num_sds_rings; i++) {
 		prq_sds_ring[i].host_phys_addr = 
 			NX_OS_CPU_TO_LE64((nx_os_dma_addr_to_u64
-					   (psds_rings[i].host_phys)));
+						(psds_rings[i].host_phys)));
 		prq_sds_ring[i].ring_size = 
 			NX_OS_CPU_TO_LE32(psds_rings[i].ring_size);
 		prq_sds_ring[i].msi_index = 
@@ -683,20 +732,23 @@ nx_fw_cmd_create_rx_ctx(nx_host_rx_ctx_t *prx_ctx,
 	tmp_phys_addr = nx_os_dma_addr_to_u64(hostrq->phys);
 
 	rcode = issue_cmd(drv_handle,
-			  prx_ctx->pci_func,
-			  NXHAL_VERSION,
-              (U32)(tmp_phys_addr >> 32),
-			  ((U32)tmp_phys_addr),
-			  hostrq->size,
-			  NX_CDRP_CMD_CREATE_RX_CTX);
+			prx_ctx->pci_func,
+			NXHAL_VERSION,
+			(U32)(tmp_phys_addr >> 32),
+			((U32)tmp_phys_addr),
+			hostrq->size,
+			NX_CDRP_CMD_CREATE_RX_CTX,
+			NULL,
+			NULL,
+			NULL);
 
 	if (rcode != NX_RCODE_SUCCESS) {
+		NX_NIC_TRC_FN(adapter, cur_fn, rcode);
 		goto failure;
 	}
 
-
 	prsp_rds_ring = ((nx_cardrsp_rds_ring_t *)
-			 &prsp_rx_ctx->data[prsp_rx_ctx->rds_ring_offset]);
+			&prsp_rx_ctx->data[prsp_rx_ctx->rds_ring_offset]);
 	prds_rings = prx_ctx->rds_rings;
 
 	for (i = 0; i < NX_OS_LE32_TO_CPU(prsp_rx_ctx->num_rds_rings); i++){
@@ -707,12 +759,12 @@ nx_fw_cmd_create_rx_ctx(nx_host_rx_ctx_t *prx_ctx,
 	prsp_sds_ring =((nx_cardrsp_sds_ring_t *)
 			&prsp_rx_ctx->data[prsp_rx_ctx->sds_ring_offset]);
 	psds_rings = prx_ctx->sds_rings;
-	
+
 	for (i = 0; i < NX_OS_LE32_TO_CPU(prsp_rx_ctx->num_sds_rings); i++){
 		psds_rings[i].host_sds_consumer = 
 			NX_OS_LE32_TO_CPU(prsp_sds_ring[i].host_consumer_crb);
 		psds_rings[i].interrupt_crb =
-                        NX_OS_LE32_TO_CPU(prsp_sds_ring[i].interrupt_crb);
+			NX_OS_LE32_TO_CPU(prsp_sds_ring[i].interrupt_crb);
 #if 0
 		/* This should be used somewhere. It's the interrupt 
 		   mask crb */
@@ -720,21 +772,22 @@ nx_fw_cmd_create_rx_ctx(nx_host_rx_ctx_t *prx_ctx,
 			NX_OS_LE32_TO_CPU(prsp_sds_ring[i].interrupt_crb);
 #endif
 	}
-	
+
 	prx_ctx->state = NX_OS_LE32_TO_CPU(prsp_rx_ctx->host_ctx_state);	
 	prx_ctx->context_id = (U32)(NX_OS_LE16_TO_CPU(prsp_rx_ctx->context_id));
 	prx_ctx->port = (U32)(NX_OS_LE16_TO_CPU(prsp_rx_ctx->virt_port));
-    prx_ctx->num_fn_per_port = NX_OS_LE32_TO_CPU(prsp_rx_ctx->num_fn_per_port);
+	prx_ctx->num_fn_per_port = NX_OS_LE32_TO_CPU(prsp_rx_ctx->num_fn_per_port);
 
 #ifdef NX_USE_NEW_ALLOC
 	if (prx_ctx->nx_dev->default_rx_ctx == NULL) {
 		prx_ctx->nx_dev->default_rx_ctx = prx_ctx;
+		NX_NIC_TRC_FN(adapter, cur_fn, prx_ctx);
 	}
 #endif
- failure:
+failure:
 
+	NX_NIC_TRC_FN(adapter, cur_fn, rcode);
 	return(rcode);
-
 } 	/* end of create_rx_ctx */ 
 
 /*
@@ -746,38 +799,46 @@ nx_fw_cmd_destroy_rx_ctx(nx_host_rx_ctx_t *prx_ctx,
 {
 	nx_rcode_t rcode = NX_RCODE_SUCCESS;
 	nx_dev_handle_t drv_handle;
-	
-	NX_DBGPRINTF(NX_DBG_INFO,("%s\n", __FUNCTION__));
+	struct unm_adapter_s *adapter;
+	uint64_t cur_fn = (uint64_t) nx_fw_cmd_destroy_rx_ctx;
 
 	if (prx_ctx == NULL) {
 		return NX_RCODE_INVALID_ARGS;
 	}
 	drv_handle = prx_ctx->nx_dev->nx_drv_handle;
+	adapter = (struct unm_adapter_s *)drv_handle;
 
 	if (prx_ctx->state > NX_HOST_CTX_STATE_MAX){ 
 
 		NX_DBGPRINTF(NX_DBG_INFO,("%s:Invalid RX CTX state:%x\n",
 					__FUNCTION__, prx_ctx->state));
+		NX_NIC_TRC_FN(adapter, cur_fn, NX_RCODE_INVALID_STATE);
 		return (NX_RCODE_INVALID_STATE);
 	}
+
+	NX_NIC_TRC_FN(adapter, cur_fn, destroy_cmd);
 	if(destroy_cmd != NX_DESTROY_CTX_NO_FWCMD ) {
-	rcode = issue_cmd(drv_handle,
-			  prx_ctx->pci_func,
-			  NXHAL_VERSION,
-			  prx_ctx->context_id,
-			  destroy_cmd,
-			  0,
-			  NX_CDRP_CMD_DESTROY_RX_CTX);
+		rcode = issue_cmd(drv_handle,
+				prx_ctx->pci_func,
+				NXHAL_VERSION,
+				prx_ctx->context_id,
+				destroy_cmd,
+				0,
+				NX_CDRP_CMD_DESTROY_RX_CTX,
+				NULL,
+				NULL,
+				NULL);
 	}
 #ifdef NX_USE_NEW_ALLOC
 	if (prx_ctx->nx_dev->default_rx_ctx == prx_ctx) {
 		/* TBD: This needs to find another active Rx */
+		NX_NIC_TRC_FN(adapter, cur_fn, prx_ctx);
 		prx_ctx->nx_dev->default_rx_ctx = NULL;
 	}
 #endif
 
+	NX_NIC_TRC_FN(adapter, cur_fn, rcode);
 	return(rcode);
-
 }	/* end destroy_rx_ctx */  
 
 
@@ -845,13 +906,17 @@ nx_fw_cmd_create_tx_ctx_free(nx_host_nic_t* nx_dev,
 			     nx_host_tx_ctx_t *ptx_ctx)
 {
 	nx_dev_handle_t drv_handle;
+	struct unm_adapter_s *adapter;
+	uint64_t cur_fn = (uint64_t) nx_fw_cmd_create_tx_ctx_free;
 
 	if (nx_dev == NULL) {
 		return NX_RCODE_INVALID_ARGS;
 	}
 	drv_handle = nx_dev->nx_drv_handle;
+	adapter = (struct unm_adapter_s *) drv_handle;
 
 	if (ptx_ctx == NULL) {
+		NX_NIC_TRC_FN(adapter, cur_fn, NX_RCODE_SUCCESS);
 		return NX_RCODE_SUCCESS;
 	}
 
@@ -859,6 +924,9 @@ nx_fw_cmd_create_tx_ctx_free(nx_host_nic_t* nx_dev,
 	if (nx_dev->tx_ctxs[ptx_ctx->this_id] != ptx_ctx ||
 	    nx_dev->active_tx_ctxs < 1) {
 		NX_ERR("fatal error\n");
+		NX_NIC_TRC_FN(adapter, cur_fn, nx_dev->tx_ctxs[ptx_ctx->this_id]);
+		NX_NIC_TRC_FN(adapter, cur_fn, nx_dev->active_tx_ctxs);
+		NX_NIC_TRC_FN(adapter, cur_fn, NX_RCODE_CMD_FAILED);
 		return NX_RCODE_CMD_FAILED;
 	}
 
@@ -870,6 +938,7 @@ nx_fw_cmd_create_tx_ctx_free(nx_host_nic_t* nx_dev,
 		       ptx_ctx->alloc_len,
 		       0);
 
+	NX_NIC_TRC_FN(adapter, cur_fn, NX_RCODE_SUCCESS);
 	return NX_RCODE_SUCCESS;	
 }
 
@@ -882,6 +951,8 @@ nx_fw_cmd_create_tx_ctx_alloc_dma(nx_host_nic_t* nx_dev,
 	nx_dev_handle_t drv_handle;
 	nx_rcode_t rcode = NX_RCODE_SUCCESS;
 	U32 memflags = 0;
+	struct unm_adapter_s *adapter;
+	uint64_t cur_fn = (uint64_t) nx_fw_cmd_create_tx_ctx_alloc_dma;
 
 	if (nx_dev == NULL ||
 	    hostrq == NULL ||
@@ -889,6 +960,7 @@ nx_fw_cmd_create_tx_ctx_alloc_dma(nx_host_nic_t* nx_dev,
 		return NX_RCODE_INVALID_ARGS;
 	}
 	drv_handle = nx_dev->nx_drv_handle;
+	adapter = (struct unm_adapter_s *) drv_handle;
 
 	nx_os_zero_memory(hostrq, sizeof(struct nx_dma_alloc_s));
 	nx_os_zero_memory(hostrsp, sizeof(struct nx_dma_alloc_s));
@@ -902,9 +974,9 @@ nx_fw_cmd_create_tx_ctx_alloc_dma(nx_host_nic_t* nx_dev,
 				    memflags);
 
 	if(rcode != NX_RCODE_SUCCESS){
+		NX_NIC_TRC_FN(adapter, cur_fn, NX_RCODE_NO_HOST_MEM);
 		return NX_RCODE_NO_HOST_MEM;
 	}
-
 
 	hostrsp->size = SIZEOF_CARDRSP_TX(nx_cardrsp_tx_ctx_t);
 
@@ -921,12 +993,14 @@ nx_fw_cmd_create_tx_ctx_alloc_dma(nx_host_nic_t* nx_dev,
 				   hostrq->size, 
 				   memflags);
 		nx_os_zero_memory(hostrq, sizeof(struct nx_dma_alloc_s));
+		NX_NIC_TRC_FN(adapter, cur_fn, NX_RCODE_NO_HOST_MEM);
 		return NX_RCODE_NO_HOST_MEM;
 	}
 
 	nx_os_zero_memory(hostrq->ptr, hostrq->size);
 	nx_os_zero_memory(hostrsp->ptr, hostrsp->size);	
 	
+	NX_NIC_TRC_FN(adapter, cur_fn, NX_RCODE_SUCCESS);
 	return NX_RCODE_SUCCESS;
 }
 
@@ -936,11 +1010,16 @@ nx_fw_cmd_create_tx_ctx_free_dma(nx_host_nic_t* nx_dev,
 				 struct nx_dma_alloc_s *hostrsp)
 {
 	nx_dev_handle_t drv_handle;
+	struct unm_adapter_s *adapter;
+	uint64_t cur_fn = (uint64_t) nx_fw_cmd_create_tx_ctx_free_dma;
+
 
 	if (nx_dev == NULL) {
 		return NX_RCODE_INVALID_ARGS;
 	}
 	drv_handle = nx_dev->nx_drv_handle;
+	adapter = (struct unm_adapter_s *) drv_handle;
+	NX_NIC_TRC_FN(adapter, cur_fn, 0);
 
 	if (hostrq) {
 		nx_os_free_dma_mem(drv_handle, 
@@ -962,6 +1041,7 @@ nx_fw_cmd_create_tx_ctx_free_dma(nx_host_nic_t* nx_dev,
 				  sizeof(struct nx_dma_alloc_s));
 	}
 
+	NX_NIC_TRC_FN(adapter, cur_fn, NX_RCODE_SUCCESS);
 	return NX_RCODE_SUCCESS;
 }
 
@@ -987,15 +1067,20 @@ nx_fw_cmd_create_tx_ctx(nx_host_tx_ctx_t *ptx_ctx,
 	U64 tmp_phys_addr = 0;
 	nx_rcode_t rcode = NX_RCODE_SUCCESS;
 	U32 temp = 0;
+	struct unm_adapter_s *adapter;
+	uint64_t cur_fn = (uint64_t) nx_fw_cmd_create_tx_ctx;
 
 	NX_DBGPRINTF(NX_DBG_INFO,("%s\n", __FUNCTION__));
 
+
 	if (ptx_ctx == NULL ||
-	    hostrq == NULL ||
-	    hostrsp == NULL) {
+			hostrq == NULL ||
+			hostrsp == NULL) {
 		return NX_RCODE_INVALID_ARGS;
 	}
 	drv_handle = ptx_ctx->nx_dev->nx_drv_handle;
+	adapter = (struct unm_adapter_s *) drv_handle;
+	NX_NIC_TRC_FN(adapter, cur_fn, 0);
 	prq_tx_ctx = (nx_hostrq_tx_ctx_t *)hostrq->ptr;
 	prsp_tx_ctx = (nx_cardrsp_tx_ctx_t *)hostrsp->ptr;
 
@@ -1005,6 +1090,7 @@ nx_fw_cmd_create_tx_ctx(nx_host_tx_ctx_t *ptx_ctx,
 		NX_DBGPRINTF(NX_DBG_ERROR,("%s:Invalid TX CTX state:%x\n", 
 					__FUNCTION__, ptx_ctx->state));
 
+		NX_NIC_TRC_FN(adapter, cur_fn, NX_RCODE_INVALID_ARGS);
 		return (NX_RCODE_INVALID_ARGS);
 	}
 
@@ -1012,14 +1098,10 @@ nx_fw_cmd_create_tx_ctx(nx_host_tx_ctx_t *ptx_ctx,
 		NX_OS_CPU_TO_LE64(nx_os_dma_addr_to_u64(hostrsp->phys));
 
 	temp = (NX_CAP0_LEGACY_CONTEXT | 
-		NX_CAP0_LEGACY_MN |
-		NX_CAP0_LSO);
-        if (ptx_ctx->use_pexq == 1) {
-                temp |= NX_CAP0_PEXQ;
-        }
+			NX_CAP0_LEGACY_MN |
+			NX_CAP0_LSO);
 
 	prq_tx_ctx->capabilities[0] |= NX_OS_CPU_TO_LE32(temp);
-
 
 	prq_tx_ctx->host_int_crb_mode = 
 		NX_OS_CPU_TO_LE32(NX_HOST_INT_CRB_MODE_SHARED);
@@ -1029,10 +1111,10 @@ nx_fw_cmd_create_tx_ctx(nx_host_tx_ctx_t *ptx_ctx,
 
 	prq_tx_ctx->dummy_dma_addr = 
 		NX_OS_CPU_TO_LE64(nx_os_dma_addr_to_u64
-				  (ptx_ctx->dummy_dma_addr));
+				(ptx_ctx->dummy_dma_addr));
 	prq_tx_ctx->cmd_cons_dma_addr = 
 		NX_OS_CPU_TO_LE64(nx_os_dma_addr_to_u64
-				  (ptx_ctx->cmd_cons_dma_addr));
+				(ptx_ctx->cmd_cons_dma_addr));
 
 	prq_cds_ring = &prq_tx_ctx->cds_ring;
 	pcds_rings = ptx_ctx->cds_ring;
@@ -1040,46 +1122,37 @@ nx_fw_cmd_create_tx_ctx(nx_host_tx_ctx_t *ptx_ctx,
 		NX_OS_CPU_TO_LE64(nx_os_dma_addr_to_u64(pcds_rings->host_phys));
 	prq_cds_ring->ring_size = NX_OS_CPU_TO_LE32(pcds_rings->ring_size);
 
-        if (ptx_ctx->use_pexq == 1) {
-                prq_tx_ctx->pexq_req.host_pexq_ring_address =    
-	            NX_OS_CPU_TO_LE64(ptx_ctx->pexq_req.host_pexq_ring_address);
-        }
-
 	tmp_phys_addr = nx_os_dma_addr_to_u64(hostrq->phys);
 
-
 	rcode = issue_cmd(drv_handle,
-			  ptx_ctx->pci_func,
-			  NXHAL_VERSION,
-              (U32)(tmp_phys_addr >> 32),
-			  ((U32)tmp_phys_addr),
-			  hostrq->size,
-			  NX_CDRP_CMD_CREATE_TX_CTX);
+			ptx_ctx->pci_func,
+			NXHAL_VERSION,
+			(U32)(tmp_phys_addr >> 32),
+			((U32)tmp_phys_addr),
+			hostrq->size,
+			NX_CDRP_CMD_CREATE_TX_CTX,
+			NULL,
+			NULL,
+			NULL);
 
 	if (rcode != NX_RCODE_SUCCESS) {
+		NX_NIC_TRC_FN(adapter, cur_fn, rcode);
 		goto failure;
 	}
 
 	ptx_ctx->cds_ring->host_tx_producer	= (nx_reg_addr_t)
-			(NX_OS_LE32_TO_CPU(prsp_tx_ctx->cds_ring.host_producer_crb));
+		(NX_OS_LE32_TO_CPU(prsp_tx_ctx->cds_ring.host_producer_crb));
 	ptx_ctx->state = NX_OS_LE32_TO_CPU(prsp_tx_ctx->host_ctx_state);	
 	ptx_ctx->context_id = (U32)(NX_OS_LE16_TO_CPU(prsp_tx_ctx->context_id));
 #ifdef NX_USE_NEW_ALLOC
 	if (ptx_ctx->nx_dev->default_tx_ctx == NULL) {
 		ptx_ctx->nx_dev->default_tx_ctx = ptx_ctx;
+		NX_NIC_TRC_FN(adapter, cur_fn, ptx_ctx);
 	}
+	NX_NIC_TRC_FN(adapter, cur_fn, ptx_ctx->context_id);
 #endif
-        if (ptx_ctx->use_pexq == 1) {
-                ptx_ctx->pexq_rsp.pexq_card_fc_q = 
-                    NX_OS_LE64_TO_CPU(prsp_tx_ctx->pexq_rsp.pexq_card_fc_q); 
-                ptx_ctx->pexq_rsp.pexq_card_fc_address = NX_OS_LE64_TO_CPU(
-                    prsp_tx_ctx->pexq_rsp.pexq_card_fc_address);
-                ptx_ctx->pexq_rsp.pexq_dbell_number =    
-	            NX_OS_LE32_TO_CPU(prsp_tx_ctx->pexq_rsp.pexq_dbell_number);
-                ptx_ctx->pexq_rsp.pexq_reflection_offset = 
-	            NX_OS_LE32_TO_CPU(prsp_tx_ctx->pexq_rsp.pexq_reflection_offset);
-        }
- failure:
+failure:
+	NX_NIC_TRC_FN(adapter, cur_fn, rcode);
 	return(rcode);
 }	/* end of create_tx_ctx */	
 
@@ -1093,38 +1166,50 @@ nx_fw_cmd_destroy_tx_ctx(nx_host_tx_ctx_t *ptx_ctx,
 {
 	nx_rcode_t 		rcode = NX_RCODE_SUCCESS;
 	nx_dev_handle_t 	drv_handle;
+	struct unm_adapter_s *adapter;	
+	uint64_t cur_fn = (uint64_t) nx_fw_cmd_destroy_tx_ctx;
 	
 	NX_DBGPRINTF(NX_DBG_INFO,("%s\n", __FUNCTION__));
+
 
 	if (ptx_ctx == NULL) {
 		return NX_RCODE_INVALID_ARGS;
 	}
 	drv_handle = ptx_ctx->nx_dev->nx_drv_handle;
+	adapter = (struct unm_adapter_s *)drv_handle;
+	NX_NIC_TRC_FN(adapter, cur_fn, 0);
 
 	if (ptx_ctx->state > NX_HOST_CTX_STATE_MAX) { 
 
 		NX_DBGPRINTF(NX_DBG_ERROR,("%s:Invalid TX CTX state:%x\n", 
 					__FUNCTION__, ptx_ctx->state));
+		NX_NIC_TRC_FN(adapter, cur_fn, NX_RCODE_INVALID_STATE);
 		return (NX_RCODE_INVALID_STATE);
 	}
 	
+	NX_NIC_TRC_FN(adapter, cur_fn, destroy_cmd);
 	if(destroy_cmd != NX_DESTROY_CTX_NO_FWCMD) {
-	rcode = issue_cmd(drv_handle,
-			  ptx_ctx->pci_func,
-			  NXHAL_VERSION,
-			  ptx_ctx->context_id,
-			  destroy_cmd,
-			  0,
-			  NX_CDRP_CMD_DESTROY_TX_CTX);
+		rcode = issue_cmd(drv_handle,
+				ptx_ctx->pci_func,
+				NXHAL_VERSION,
+				ptx_ctx->context_id,
+				destroy_cmd,
+				0,
+				NX_CDRP_CMD_DESTROY_TX_CTX,
+				NULL,
+				NULL,
+				NULL);
 	}
 
 #ifdef NX_USE_NEW_ALLOC
 	if (ptx_ctx->nx_dev->default_tx_ctx == ptx_ctx) {
 		/* TBD: This needs to find another active Tx */
+		NX_NIC_TRC_FN(adapter, cur_fn, ptx_ctx);
 		ptx_ctx->nx_dev->default_tx_ctx = NULL;
 	}
 #endif
 
+	NX_NIC_TRC_FN(adapter, cur_fn, rcode);
 	return(rcode);
 } 	/* end of destroy_tx_ctx */ 
 
@@ -1138,7 +1223,6 @@ nx_fw_cmd_submit_capabilities(nx_host_nic_t* nx_dev,
 			      U32 *in, 
 			      U32 *out)
 {
-	U32 *cap;
 	nx_rcode_t 	rcode = NX_RCODE_SUCCESS;
 	nx_dev_handle_t drv_handle = nx_dev->nx_drv_handle;
 
@@ -1150,63 +1234,19 @@ nx_fw_cmd_submit_capabilities(nx_host_nic_t* nx_dev,
 			  in[0],
 			  in[1],
 			  in[2],
-			  NX_CDRP_CMD_SUBMIT_CAPABILITIES);
+			  NX_CDRP_CMD_SUBMIT_CAPABILITIES,
+			  &out[0],
+			  &out[1],
+			  &out[2]);
 
 	if (rcode != NX_RCODE_SUCCESS) {
 		goto submit_fail;
 	}
-	
-	/* 
-	 * Supported capabilities returned if fail so upper level can take 
-	 * appropriate action; otherwise, set capabilities returned.
-	 */
-	cap = out;
-	nx_os_nic_reg_read_w1(drv_handle,
-			      NX_ARG1_CRB_OFFSET,
-			      cap++);
-	nx_os_nic_reg_read_w1(drv_handle,
-			      NX_ARG2_CRB_OFFSET,
-			      cap++);
-	nx_os_nic_reg_read_w1(drv_handle,
-			      NX_ARG3_CRB_OFFSET,
-			      cap++);
 
  submit_fail:
 	return(rcode);
 
 }	/* end of submit_capabilities */  
-
-/*
- * This function will get chimney license capability from fw.
- */
-nx_rcode_t 
-nx_fw_cmd_get_toe_license(nx_host_nic_t* nx_dev, 
-			      U32 pci_func, 
-			      U32 *out)
-{
-	nx_rcode_t 	rcode = NX_RCODE_SUCCESS;
-	nx_dev_handle_t drv_handle = nx_dev->nx_drv_handle;
-
-	NX_DBGPRINTF(NX_DBG_INFO,("%s\n", __FUNCTION__));
-
-	rcode = issue_cmd(drv_handle,
-			  pci_func,
-			  NXHAL_VERSION,
-			  0, 0, 0,
-			  NX_CDRP_CMD_GET_LIC_CAPABILITIES);
-
-	if (rcode != NX_RCODE_SUCCESS) {
-		goto submit_fail;
-	}
-	
-	nx_os_nic_reg_read_w1(drv_handle,
-			      NX_ARG2_CRB_OFFSET,
-			      out);
-
- submit_fail:
-	return(rcode);
-
-}	/* end of nx_fw_cmd_get_toe_license */  
 
 /* 
  * This function query for value of a phy register
@@ -1218,8 +1258,11 @@ nx_fw_cmd_query_phy(nx_dev_handle_t drv_handle,
 		    U32 *pval)
 {
 	nx_rcode_t 	rcode = NX_RCODE_SUCCESS;
+	struct unm_adapter_s *adapter = (struct unm_adapter_s *)drv_handle;	
+	uint64_t cur_fn = (uint64_t) nx_fw_cmd_query_phy;
 
-	NX_DBGPRINTF(NX_DBG_INFO,("%s\n", __FUNCTION__));
+	NX_NIC_TRC_FN(adapter, cur_fn, pci_func);
+	NX_NIC_TRC_FN(adapter, cur_fn, reg);
 
 	rcode = issue_cmd(drv_handle,
 			  pci_func,
@@ -1227,15 +1270,18 @@ nx_fw_cmd_query_phy(nx_dev_handle_t drv_handle,
 			  reg,
 			  0,
 			  0,
-			  NX_CDRP_CMD_READ_PHY);
+			  NX_CDRP_CMD_READ_PHY,
+			  pval,
+			  NULL,
+			  NULL);
 
 	if (rcode != NX_RCODE_SUCCESS) {
+		NX_NIC_TRC_FN(adapter, cur_fn, rcode);
 		return rcode;
 	}
 
-	nx_os_nic_reg_read_w1(drv_handle,
-			      NX_ARG1_CRB_OFFSET,
-			      pval);
+	NX_NIC_TRC_FN(adapter, cur_fn, rcode);
+	NX_NIC_TRC_FN(adapter, cur_fn, *pval);
 	return rcode;
 }
 nx_rcode_t 
@@ -1254,7 +1300,10 @@ nx_fw_cmd_set_phy(nx_dev_handle_t drv_handle,
 			  reg,
 			  val,
 			  0,
-			  NX_CDRP_CMD_WRITE_PHY);
+			  NX_CDRP_CMD_WRITE_PHY,
+			  NULL,
+			  NULL,
+			  NULL);
 
 	return rcode;
 }
@@ -1279,15 +1328,15 @@ nx_fw_cmd_query_hw_reg(nx_dev_handle_t drv_handle,
 			  reg,
 			  offset_unit,
 			  0,
-			  NX_CDRP_CMD_READ_HW_REG);
+			  NX_CDRP_CMD_READ_HW_REG,
+			  pval,
+			  NULL,
+			  NULL);
 
 	if (rcode != NX_RCODE_SUCCESS) {
 		return rcode;
 	}
 
-	nx_os_nic_reg_read_w1(drv_handle,
-			      NX_ARG1_CRB_OFFSET,
-			      pval);
 	return rcode;
 }
 
@@ -1311,15 +1360,15 @@ nx_fw_cmd_get_flow_ctl(nx_dev_handle_t drv_handle,
 			  is_tx,
 			  0,
 			  0,
-			  NX_CDRP_CMD_GET_FLOW_CTL);
+			  NX_CDRP_CMD_GET_FLOW_CTL,
+			  &raw_rsp,
+			  NULL,
+			  NULL);
 
 	if (rcode != NX_RCODE_SUCCESS) {
 		return rcode;
 	}
 
-	nx_os_nic_reg_read_w1(drv_handle,
-			      NX_ARG1_CRB_OFFSET,
-			      &raw_rsp);
 	*pval = NX_OS_LE32_TO_CPU(raw_rsp);
 	return rcode;
 }
@@ -1343,7 +1392,10 @@ nx_fw_cmd_set_flow_ctl(nx_dev_handle_t drv_handle,
 			  is_tx,
 			  val,
 			  0,
-			  NX_CDRP_CMD_SET_FLOW_CTL);
+			  NX_CDRP_CMD_SET_FLOW_CTL,
+			  NULL,
+			  NULL,
+			  NULL);
 
 	return rcode;
 }
@@ -1367,7 +1419,10 @@ nx_fw_cmd_query_max_rds_per_ctx(nx_host_nic_t* nx_dev,
 			  0,
 			  0,
 			  0,
-			  NX_CDRP_CMD_READ_MAX_RDS_PER_CTX);
+			  NX_CDRP_CMD_READ_MAX_RDS_PER_CTX,
+			  NULL,
+			  NULL,
+			  NULL);
 
 	/* TBD -  update response data */
 
@@ -1392,7 +1447,10 @@ nx_fw_cmd_query_max_sds_per_ctx(nx_host_nic_t* nx_dev,
 			  0,
 			  0,
 			  0,
-			  NX_CDRP_CMD_READ_MAX_SDS_PER_CTX);
+			  NX_CDRP_CMD_READ_MAX_SDS_PER_CTX,
+			  NULL,
+			  NULL,
+			  NULL);
 
 	/* TBD -  update response data */
 	
@@ -1408,8 +1466,10 @@ nx_fw_cmd_query_max_rules_per_ctx(nx_host_nic_t* nx_dev,
 {
 	nx_rcode_t 	rcode = NX_RCODE_SUCCESS;
 	nx_dev_handle_t drv_handle = nx_dev->nx_drv_handle;
+	struct unm_adapter_s *adapter = (struct unm_adapter_s *)drv_handle;	
+	uint64_t cur_fn = (uint64_t) nx_fw_cmd_query_max_rules_per_ctx;
 	
-	NX_DBGPRINTF(NX_DBG_INFO,("%s\n", __FUNCTION__));
+	NX_NIC_TRC_FN(adapter, cur_fn, pci_func);
 
 	rcode = issue_cmd(drv_handle,
 			  pci_func,
@@ -1417,11 +1477,15 @@ nx_fw_cmd_query_max_rules_per_ctx(nx_host_nic_t* nx_dev,
 			  0,
 			  0,
 			  0,
-			  NX_CDRP_CMD_READ_MAX_RULES_PER_CTX);
+			  NX_CDRP_CMD_READ_MAX_RULES_PER_CTX,
+			  max,
+			  NULL,
+			  NULL);
 
-	nx_os_nic_reg_read_w1(drv_handle, NX_ARG1_CRB_OFFSET, max);
 	/* TBD -  update response data for rules */
 
+	NX_NIC_TRC_FN(adapter, cur_fn, *max);
+	NX_NIC_TRC_FN(adapter, cur_fn, rcode);
 	return(rcode);
 
 }	/* end of nx_fw_cmd_query_max_rules_per_ctx() */  
@@ -1443,9 +1507,11 @@ nx_fw_cmd_query_max_rx_ctx(nx_host_nic_t* nx_dev,
 			  0,
 			  0,
 			  0,
-			  NX_CDRP_CMD_READ_MAX_RX_CTX);
+			  NX_CDRP_CMD_READ_MAX_RX_CTX,
+			  max,
+			  NULL,
+			  NULL);
 
-	nx_os_nic_reg_read_w1(drv_handle, NX_ARG1_CRB_OFFSET, max);
 	/* TBD -  update response data for max ctx */
 
 	return(rcode);
@@ -1467,9 +1533,11 @@ nx_fw_cmd_query_max_tx_ctx(nx_host_nic_t* nx_dev,
 			  0,
 			  0,
 			  0,
-			  NX_CDRP_CMD_READ_MAX_TX_CTX);
+			  NX_CDRP_CMD_READ_MAX_TX_CTX,
+			  max,
+			  NULL,
+			  NULL);
 	
-	nx_os_nic_reg_read_w1(drv_handle, NX_ARG1_CRB_OFFSET, max);
 	/* TBD -  update response data max tx ctx */
 
 	return(rcode);
@@ -1484,9 +1552,7 @@ nx_rcode_t nx_fw_cmd_query_max_mtu(nx_host_nic_t *nx_dev, U32 pci_func,
 	NX_DBGPRINTF(NX_DBG_INFO,("%s\n", __FUNCTION__));
 
 	rcode = issue_cmd(drv_handle, pci_func, NXHAL_VERSION,
-			  0, 0, 0, NX_CDRP_CMD_READ_MAX_MTU);
-
-	nx_os_nic_reg_read_w1(drv_handle, NX_ARG1_CRB_OFFSET, max);
+			  0, 0, 0, NX_CDRP_CMD_READ_MAX_MTU, max, NULL, NULL);
 
 	return (rcode);
 }
@@ -1500,9 +1566,7 @@ nx_rcode_t nx_fw_cmd_query_max_lro(nx_host_nic_t *nx_dev, U32 pci_func,
 	NX_DBGPRINTF(NX_DBG_INFO,("%s\n", __FUNCTION__));
 
 	rcode = issue_cmd(drv_handle, pci_func, NXHAL_VERSION,
-			  0, 0, 0, NX_CDRP_CMD_READ_MAX_LRO);
-
-	nx_os_nic_reg_read_w1(drv_handle, NX_ARG1_CRB_OFFSET, max);
+			  0, 0, 0, NX_CDRP_CMD_READ_MAX_LRO, max, NULL, NULL);
 
 	return (rcode);
 }
@@ -1516,9 +1580,8 @@ nx_rcode_t nx_fw_cmd_query_max_lro_per_board(nx_host_nic_t *nx_dev, U32 pci_func
         NX_DBGPRINTF(NX_DBG_INFO,("%s\n", __FUNCTION__));
 
         rcode = issue_cmd(drv_handle, pci_func, NXHAL_VERSION,
-                          0, 0, 0, NX_CDRP_CMD_READ_MAX_LRO_PER_BOARD);
-
-        nx_os_nic_reg_read_w1(drv_handle, NX_ARG1_CRB_OFFSET, max);
+                          0, 0, 0, NX_CDRP_CMD_READ_MAX_LRO_PER_BOARD,
+                          max, NULL, NULL);
 
         return (rcode);
 }
@@ -1535,7 +1598,10 @@ nx_fw_cmd_set_gbe_port(nx_dev_handle_t drv_handle,
 			  speed,
 			  duplex,
 			  autoneg,
-			  NX_CDRP_CMD_CONFIG_GBE_PORT);
+			  NX_CDRP_CMD_CONFIG_GBE_PORT,
+			  NULL,
+			  NULL,
+			  NULL);
 
 	return(rcode);
 }
@@ -1547,6 +1613,8 @@ nx_fw_cmd_set_mtu(nx_host_rx_ctx_t *prx_ctx,
 {
 	nx_rcode_t 	rcode = NX_RCODE_SUCCESS;
 	nx_dev_handle_t drv_handle;
+	struct unm_adapter_s *adapter;	
+	uint64_t cur_fn = (uint64_t) nx_fw_cmd_set_mtu;
 
 	if (prx_ctx == NULL ||
 	    prx_ctx->nx_dev == NULL) {
@@ -1554,6 +1622,9 @@ nx_fw_cmd_set_mtu(nx_host_rx_ctx_t *prx_ctx,
 	}
 
 	drv_handle = prx_ctx->nx_dev->nx_drv_handle;
+	adapter = (struct unm_adapter_s *)drv_handle;	
+	NX_NIC_TRC_FN(adapter, cur_fn, pci_func);
+	NX_NIC_TRC_FN(adapter, cur_fn, mtu);
 
 	rcode = issue_cmd(drv_handle,
 			  pci_func,
@@ -1561,60 +1632,12 @@ nx_fw_cmd_set_mtu(nx_host_rx_ctx_t *prx_ctx,
 			  prx_ctx->context_id,
 			  mtu,
 			  0,
-			  NX_CDRP_CMD_SET_MTU);
+			  NX_CDRP_CMD_SET_MTU,
+			  NULL,
+			  NULL,
+			  NULL);
 
-	return(rcode);
-}
-
-nx_rcode_t 
-nx_fw_cmd_configure_toe(nx_host_rx_ctx_t *prx_ctx,
-		        U32 pci_func, 
-                        U32 op_code)
-{
-	nx_rcode_t	rcode;
-	nx_dev_handle_t	drv_handle;
-
-	if (prx_ctx == NULL || prx_ctx->nx_dev == NULL) {
-		return NX_RCODE_INVALID_ARGS;
-	}
-
-	drv_handle = prx_ctx->nx_dev->nx_drv_handle;
-
-	NX_DBGPRINTF(NX_DBG_INFO,("%s\n", __FUNCTION__));
-
-	rcode = issue_cmd(drv_handle,
-			  pci_func,
-			  NXHAL_VERSION,
-			  prx_ctx->context_id,
-			  op_code,
-			  0,
-			  NX_CDRP_CMD_CONFIGURE_TOE);
-
-	return (rcode);
-}
-
-nx_rcode_t 
-nx_fw_cmd_query_pexq(nx_host_nic_t* nx_dev, 
-		        U32 pci_func, 
-                        U32 *pexq_length,
-                        U32 *pexq_fc_array_size)
-{
-	nx_rcode_t 	rcode = NX_RCODE_SUCCESS;
-	nx_dev_handle_t drv_handle = nx_dev->nx_drv_handle;
-	
-	NX_DBGPRINTF(NX_DBG_INFO,("%s\n", __FUNCTION__));
-
-	rcode = issue_cmd(drv_handle,
-			  pci_func,
-			  NXHAL_VERSION,
-			  0,
-			  0,
-			  0,
-			  NX_CDRP_CMD_READ_PEXQ_PARAMETERS);
-	nx_os_nic_reg_read_w1(drv_handle, NX_ARG1_CRB_OFFSET, pexq_length);
-	nx_os_nic_reg_read_w1(drv_handle, NX_ARG2_CRB_OFFSET, 
-            pexq_fc_array_size);
-
+	NX_NIC_TRC_FN(adapter, cur_fn, rcode);
 	return(rcode);
 }
 
@@ -1639,7 +1662,8 @@ nx_fw_cmd_func_attrib(nx_host_nic_t *nx_dev, U32 pci_func,
 	taddr = nx_os_dma_addr_to_u64(rarea.phys);
 
 	rcode = issue_cmd(drv_handle, pci_func, NXHAL_VERSION,
-	    (U32)(taddr >> 32), (U32)taddr, 0, NX_CDRP_CMD_FUNC_ATTRIB);
+	    (U32)(taddr >> 32), (U32)taddr, 0, NX_CDRP_CMD_FUNC_ATTRIB,
+        NULL, NULL, NULL);
 
 	*attribs = *(struct nx_cardrsp_func_attrib *)rarea.ptr;
 	attribs->fenable = NX_OS_LE64_TO_CPU(attribs->fenable);
@@ -1651,6 +1675,88 @@ nx_fw_cmd_func_attrib(nx_host_nic_t *nx_dev, U32 pci_func,
 	nx_os_free_dma_mem(drv_handle, rarea.ptr, rarea.phys, rarea.size, 0);
 
 	return rcode;
+}
+
+nx_rcode_t
+unm_nic_get_minidump_template_size(struct unm_adapter_s *adapter)
+{
+    nx_rcode_t rcode = NX_RCODE_SUCCESS;
+	uint64_t cur_fn = (uint64_t)unm_nic_get_minidump_template_size;
+
+    rcode = issue_cmd((nx_dev_handle_t)adapter,
+            adapter->ahw.pci_func,
+            NXHAL_VERSION,
+            0,
+            0,
+            0,
+            NX_CDRP_CMD_MINIDUMP_TEMPLATE_SIZE,
+            NULL,
+            &(adapter->mdump.md_template_size),
+            &(adapter->mdump.md_template_ver));
+
+    if (rcode != NX_RCODE_SUCCESS) {
+        adapter->mdump.md_template_size = 0;
+        nx_nic_print3(NULL, "Failed to get minidump template size, err_code : %d\n", rcode);
+		NX_NIC_TRC_FN(adapter, cur_fn, rcode);
+    }
+
+    return rcode;
+}
+
+nx_rcode_t
+unm_nic_get_minidump_template(struct unm_adapter_s *adapter)
+{
+    nx_rcode_t rcode = NX_RCODE_SUCCESS;
+    dma_addr_t md_template_addr;
+    void *addr;
+	u32 template_size = 0;
+    u32 arg3 = 0;
+    u32 size, offset = 0;
+	uint64_t cur_fn = (uint64_t)unm_nic_get_minidump_template;
+
+    size = adapter->mdump.md_template_size;
+	if(size == 0) {
+        nx_nic_print3(NULL, "Can not capture minidump template: Invalid size.\n");
+		return NX_RCODE_INVALID_ARGS;
+	}
+
+    addr = pci_alloc_consistent(adapter->pdev,
+            size, &md_template_addr);
+    if (!addr) {
+        nx_nic_print3(NULL, "Unable to allocate dmable memory for template.\n");
+		NX_NIC_TRC_FN(adapter, cur_fn, -ENOMEM);
+        return -ENOMEM;
+    }
+
+    memset(addr, 0, size);
+
+    arg3 |= (size & 0xffff);
+    arg3 |= ((offset & 0xffff) << 16); 
+
+    rcode = issue_cmd((nx_dev_handle_t)adapter,
+            adapter->ahw.pci_func,
+            NXHAL_VERSION,
+            (u32)(md_template_addr & 0xffffffff),
+            (u32)(md_template_addr >> 32),
+            arg3,
+            NX_CDRP_CMD_MINIDUMP_GET_TEMPLATE, 
+            NULL,
+            &template_size,
+            NULL);
+
+    if ((rcode == NX_RCODE_SUCCESS) && (size == template_size)) {
+        memcpy(adapter->mdump.md_template, addr, size);
+    } else {
+        nx_nic_print3(NULL, "Failed to get minidump template, err_code : %d, " 
+				"requested_size : %d, actual_size : %d\n", rcode, size, template_size);
+		NX_NIC_TRC_FN(adapter, cur_fn, rcode);
+		NX_NIC_TRC_FN(adapter, cur_fn, size);
+		NX_NIC_TRC_FN(adapter, cur_fn, template_size);
+    }
+
+    pci_free_consistent(adapter->pdev, size, addr, md_template_addr);
+
+    return rcode;
 }
 
 #ifdef NX_USE_NEW_ALLOC
@@ -1672,10 +1778,15 @@ nx_os_send_nic_request(nx_host_tx_ctx_t *ptx_ctx,
                        U32 is_sync,
                        U64 *rspword)
 {
-        nic_request_t req;
-        int rv = NX_RCODE_SUCCESS;
-        nx_os_wait_event_t wait;
+	nic_request_t req;
+	int rv = NX_RCODE_SUCCESS;
+	nx_os_wait_event_t wait;
 	U64 dummy_rspword;
+	struct unm_adapter_s *adapter = (struct unm_adapter_s *)ptx_ctx->nx_dev->nx_drv_handle;	
+	uint64_t cur_fn = (uint64_t) nx_os_send_nic_request;
+
+	NX_NIC_TRC_FN(adapter, cur_fn, opcode);
+	NX_NIC_TRC_FN(adapter, cur_fn, is_sync);
 
 	if (opcode == NX_NIC_H2C_OPCODE_CONFIG_L2_MAC) {
 		/* This is a special case to maintain compatibility
@@ -1693,41 +1804,37 @@ nx_os_send_nic_request(nx_host_tx_ctx_t *ptx_ctx,
 		rspword = &dummy_rspword;
 	}
 
-        if (size > 0) {
-                nx_os_copy_memory(&req.body.cmn.words[0], &rqbody[0], size);
-        }
-        
-        if (is_sync) {
-                if (nx_os_event_wait_setup(ptx_ctx->nx_dev->nx_drv_handle,
-                                           &req, rspword, &wait)
-                    != NX_RCODE_SUCCESS) {
-                        return NX_RCODE_CMD_FAILED;
-                }
-        }
+	if (size > 0) {
+		nx_os_copy_memory(&req.body.cmn.words[0], &rqbody[0], size);
+	}
 
-        if (nx_os_send_cmd_descs(ptx_ctx, &req, 1)) {
-                return NX_RCODE_CMD_FAILED;
-        }
+	if (is_sync) {
+		if (nx_os_event_wait_setup(ptx_ctx->nx_dev->nx_drv_handle,
+					&req, rspword, &wait)
+				!= NX_RCODE_SUCCESS) {
+			NX_NIC_TRC_FN(adapter, cur_fn, NX_RCODE_CMD_FAILED);
+			return NX_RCODE_CMD_FAILED;
+		}
+	}
 
-        if (is_sync) {
-                nx_os_event_wait(ptx_ctx->nx_dev->nx_drv_handle, &wait, 
-                                 (NX_OS_CRB_RETRY_COUNT * 
-                                  NX_OS_CRB_UDELAY_VALUE));
-        }
-        return (rv);
+	if (nx_os_send_cmd_descs(ptx_ctx, &req, 1)) {
+		NX_NIC_TRC_FN(adapter, cur_fn, NX_RCODE_CMD_FAILED);
+		return NX_RCODE_CMD_FAILED;
+	}
+
+	if (is_sync) {
+		nx_os_event_wait(ptx_ctx->nx_dev->nx_drv_handle, &wait, 
+				(NX_OS_CRB_RETRY_COUNT * 
+				 NX_OS_CRB_UDELAY_VALUE));
+	}
+	NX_NIC_TRC_FN(adapter, cur_fn, rv);
+	return (rv);
 }
-
-void
-nx_os_handle_nic_response(nx_dev_handle_t drv_handle,
-                          nic_response_t *rsp)
-{
-        nx_os_event_wakeup_on_response(drv_handle, rsp);
-}
-
 #endif /* NX_USE_NEW_ALLOC */
 
 static nx_rcode_t
-validate_dev_for_cmd(nx_host_nic_t *nx_dev) {
+validate_dev_for_cmd(nx_host_nic_t *nx_dev) 
+{
 	if (nx_dev == NULL ||
 	    nx_dev->active_rx_ctxs <= 0 || 
 	    nx_dev->active_tx_ctxs <= 0 ||
@@ -1745,6 +1852,8 @@ nx_os_pf_add_l2_mac(nx_host_nic_t *nx_dev, nx_host_rx_ctx_t *rx_ctx,
 {
 	nx_rcode_t rv;
 	mac_request_t mac_req;
+	struct unm_adapter_s *adapter;	
+	uint64_t cur_fn = (uint64_t) nx_os_pf_add_l2_mac;
 
 	rv = validate_dev_for_cmd(nx_dev);
 
@@ -1752,10 +1861,15 @@ nx_os_pf_add_l2_mac(nx_host_nic_t *nx_dev, nx_host_rx_ctx_t *rx_ctx,
 		return rv;
 	}
 
+	adapter = (struct unm_adapter_s *)nx_dev->nx_drv_handle;	
+	NX_NIC_TRC_FN(adapter, cur_fn, rv);
+
 	nx_os_zero_memory(&mac_req, sizeof(mac_request_t));
 	
 	mac_req.op = UNM_MAC_ADD;
 	nx_os_copy_memory(mac_req.mac_addr, mac, 6);
+
+	NX_NIC_TRC_FN(adapter, cur_fn, UNM_MAC_ADD);
 
 	rv = nx_os_send_nic_request(nx_dev->default_tx_ctx,
 				    rx_ctx, 
@@ -1764,6 +1878,7 @@ nx_os_pf_add_l2_mac(nx_host_nic_t *nx_dev, nx_host_rx_ctx_t *rx_ctx,
 				    sizeof(mac_request_t),
 				    0, NULL);
 	
+	NX_NIC_TRC_FN(adapter, cur_fn, rv);
 	return rv;
 }
 
@@ -1773,18 +1888,23 @@ nx_os_pf_remove_l2_mac(nx_host_nic_t *nx_dev, nx_host_rx_ctx_t *rx_ctx,
 {
 	nx_rcode_t rv;
 	mac_request_t mac_req;
+	struct unm_adapter_s *adapter;	
+	uint64_t cur_fn = (uint64_t) nx_os_pf_remove_l2_mac;
 
 	rv = validate_dev_for_cmd(nx_dev);
 
 	if(rv != NX_RCODE_SUCCESS) {
 		return rv;
 	}
+	adapter = (struct unm_adapter_s *)nx_dev->nx_drv_handle;	
+	NX_NIC_TRC_FN(adapter, cur_fn, rv);
 
 	nx_os_zero_memory(&mac_req, sizeof(mac_request_t));
 	
 	mac_req.op = UNM_MAC_DEL;
 	nx_os_copy_memory(mac_req.mac_addr, mac, 6);
 
+	NX_NIC_TRC_FN(adapter, cur_fn, UNM_MAC_DEL);
 	rv = nx_os_send_nic_request(nx_dev->default_tx_ctx,
 				    rx_ctx, 
 				    NX_NIC_H2C_OPCODE_CONFIG_L2_MAC,
@@ -1792,6 +1912,7 @@ nx_os_pf_remove_l2_mac(nx_host_nic_t *nx_dev, nx_host_rx_ctx_t *rx_ctx,
 				    sizeof(mac_request_t),
 				    0, NULL);
 	
+	NX_NIC_TRC_FN(adapter, cur_fn, rv);
 	return rv;
 }
 #endif
@@ -1907,7 +2028,10 @@ nx_os_pf_enable_port(nx_host_nic_t *nx_dev,
 		     U8 is_sync)
 {
 	nx_rcode_t rv;
+	struct unm_adapter_s *adapter = (struct unm_adapter_s *)nx_dev->nx_drv_handle;	
+
 	rv = validate_dev_for_cmd(nx_dev);
+
 	if (rv != NX_RCODE_SUCCESS) {
 		return rv;
 	}
@@ -1925,6 +2049,7 @@ nx_os_pf_disable_port(nx_host_nic_t *nx_dev,
 		      U8 is_sync)
 {
 	nx_rcode_t rv;
+	struct unm_adapter_s *adapter = (struct unm_adapter_s *)nx_dev->nx_drv_handle;	
 	rv = validate_dev_for_cmd(nx_dev);
 	if (rv != NX_RCODE_SUCCESS) {
 		return rv;

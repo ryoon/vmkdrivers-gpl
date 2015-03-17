@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2003 - 2009 NetXen, Inc.
+ * Copyright (C) 2009 - QLogic Corporation.
  * All rights reserved.
  * 
  * This program is free software; you can redistribute it and/or
@@ -20,11 +21,6 @@
  * The full GNU General Public License is included in this distribution
  * in the file called LICENSE.
  * 
- * Contact Information:
- * licensing@netxen.com
- * NetXen, Inc.
- * 18922 Forge Drive
- * Cupertino, CA 95014
  */
 #ifndef __KERNEL_COMPATIBILITY_H__
 #define __KERNEL_COMPATIBILITY_H__
@@ -32,17 +28,8 @@
 #include <linux/version.h>
 #include <net/sock.h>
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,27)
-#include <../net/8021q/vlan.h>
-#endif
-
 #if (defined(__VMKERNEL_MODULE__) || defined(__VMKLNX__) || defined (__CONFIG_VMNIX__))
 #define ESX
-#if (defined(__VMKERNEL_MODULE__) && defined(__VMKLNX__))
-#define ESX_4X 
-#elif (defined(__VMKERNEL_MODULE__) && !defined(__VMKLNX__)) 
-#define ESX_3X
-#endif
 #endif
 
 
@@ -128,7 +115,6 @@
 	 (TAGGED && (((struct vlan_ethhdr *) \
 		      ((SKB)->data))->h_vlan_encapsulated_proto == __constant_htons(ETH_P_IP))))
 
-#if ((LINUX_VERSION_CODE > KERNEL_VERSION(2,6,26)) || defined(ESX))
 #define NW_HDR_LEN(SKB, TAGGED)  \
 	        (NW_HDR_SIZE(SKB))
 
@@ -141,32 +127,6 @@
 #define PROTO_IS_UDP(SKB, TAGGED) \
 	        (((struct iphdr *)IP_HDR((SKB)))->protocol == IPPROTO_UDP)
 
-#else
-
-#define NW_HDR_LEN(SKB, TAGGED)  \
-	        (NW_HDR_SIZE(SKB) - ((TAGGED) * VLAN_HLEN)) 
-
-#define NW_HDR_OFFSET(SKB, TAGGED)  \
-	        (IP_HDR_OFFSET(SKB) + ((TAGGED) * VLAN_HLEN)) 
-
-#define PROTO_IS_TCP(SKB, TAGGED) \
-	        (((struct iphdr *)(IP_HDR((SKB)) + ((TAGGED) * VLAN_HLEN)))->protocol \
-		          == IPPROTO_TCP)
-
-#define PROTO_IS_UDP(SKB, TAGGED) \
-	        (((struct iphdr *)(IP_HDR((SKB)) + ((TAGGED) * VLAN_HLEN)))->protocol \
-		          == IPPROTO_UDP)
-
-#endif
-
-#if ((defined(ESX_3X) || defined(ESX_3X_COS)))
-
-#define PROTO_IS_IPV6(SKB, TAGGED) 0
-#define PROTO_IS_TCPV6(SKB, TAGGED) 0
-#define PROTO_IS_UDPV6(SKB, TAGGED) 0
-
-#elif ((LINUX_VERSION_CODE > KERNEL_VERSION(2,6,26)) || defined(ESX_4X))
-
 #define PROTO_IS_IPV6(SKB, TAGGED) \
 	(((SKB)->protocol == __constant_htons(ETH_P_IPV6)) || \
 	 (TAGGED && (((struct vlan_ethhdr *) \
@@ -178,41 +138,9 @@
 #define PROTO_IS_UDPV6(SKB, TAGGED) \
 	        (((struct ipv6hdr *)IPV6_HDR((SKB)))->nexthdr == IPPROTO_UDP)
 
-#else
-#define PROTO_IS_IPV6(SKB, TAGGED) \
-	(((SKB)->protocol == __constant_htons(ETH_P_IPV6)) || \
-	 (TAGGED && (((struct vlan_ethhdr *) \
-		      ((SKB)->data))->h_vlan_encapsulated_proto == __constant_htons(ETH_P_IPV6))))
-
-#define PROTO_IS_TCPV6(SKB, TAGGED) \
-	        (((struct ipv6hdr *)(IPV6_HDR((SKB)) + ((TAGGED) * VLAN_HLEN)))->nexthdr \
-		          == IPPROTO_TCP)
-
-#define PROTO_IS_UDPV6(SKB, TAGGED) \
-	        (((struct ipv6hdr *)(IPV6_HDR((SKB)) + ((TAGGED) * VLAN_HLEN)))->nexthdr \
-		          == IPPROTO_UDP)
-
-#endif
-
-
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,10)
-#define PCI_MODULE_INIT(drv)    pci_module_init(drv)
-#else
 #define PCI_MODULE_INIT(drv)    pci_register_driver(drv)
-#endif
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,7)
-#define	NX_KC_ROUTE_DEVICE(RT)	((RT)->u.dst.dev)
-#else
 #define	NX_KC_ROUTE_DEVICE(RT)	(((RT)->idev)->dev)
-#endif
-
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,9)
-extern kmem_cache_t *nx_sk_cachep;
-#endif
-
-/* 2.4 - 2.6 compatibility macros*/
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,0)
 
 #define SK_ERR 		sk_err
 #define SK_ERR_SOFT     sk_err_soft
@@ -240,36 +168,6 @@ extern kmem_cache_t *nx_sk_cachep;
 #define SK_INET(s)      (inet_sk(s))
 #define NX_SOCKOPT_TASK	nx_sockopt_thread
 
-#else   /* LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,0) */
-
-#define SK_ERR 		err
-#define SK_ERR_SOFT     err_soft
-#define SK_STATE_CHANGE state_change
-#define SK_PROT		prot
-#define SK_PROTOCOL	protocol
-#define SK_PROTINFO	user_data
-#define SK_DESTRUCT	destruct
-#define SK_FAMILY	family
-#define SK_FLAGS	dead
-#define SK_DATA_READY   data_ready
-#define SK_RCVTIMEO     rcvtimeo
-#define SK_SNDTIMEO     sndtimeo
-#define SK_STATE        state
-#define SK_SHUTDOWN	shutdown
-#define SK_SLEEP        sleep
-#define SPORT(s)	s->num
-#define SK_LINGER_FLAG(SK)      ((SK)->linger)
-#define SK_OOBINLINE_FLAG(SK)   ((SK)->urginline)
-#define SK_KEEPALIVE_FLAG(SK)   ((SK)->keepopen)
-#define SK_LINGERTIME   lingertime
-#define SK_REUSE	reuse
-#define SK_SOCKET       socket
-#define SK_RCVBUF      rcvbuf
-#define SK_INET(s)      s
-#define NX_SOCKOPT_TASK	nx_sockopt_task
-
-#endif  /* LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,0) */
-
 #define NOFC 0
 #define FC1  1
 #define FC2  2
@@ -280,56 +178,19 @@ extern kmem_cache_t *nx_sk_cachep;
 /*
  * sk_alloc - varieties taken care here.
  */
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,12)) || ((LINUX_VERSION_CODE == KERNEL_VERSION(2,6,11)) && (FEDORA == FC4)) || defined(RDMA_MODULE)
-
 #define	SK_ALLOC(FAMILY, PRIORITY, PROTO, ZERO_IT)		\
 	sk_alloc((FAMILY), (PRIORITY), (PROTO), (ZERO_IT))
 
-#elif LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,9)
-
-#define	SK_ALLOC(FAMILY, PRIORITY, PROTO, ZERO_IT)			\
-	sk_alloc((FAMILY), (PRIORITY),					\
-		 ((ZERO_IT) > 1) ? (PROTO)->slab_obj_size : (ZERO_IT),	\
-		 (PROTO)->slab)
-
-#else
-
-#define	SK_ALLOC(FAMILY, PRIORITY, PROTO, ZERO_IT)	\
- 	sk_alloc((FAMILY), (PRIORITY), sizeof(struct tcp_sock), nx_sk_cachep)
-
-#endif
-
-#if LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,10)
-
-#define USER_MSS        user_mss
-#define TCP_SOCK  	struct tcp_opt
-#define PINET6(SK)	((struct tcp6_sock *)(SK))->pinet6
-#else
 #define USER_MSS        rx_opt.user_mss
 #define TCP_SOCK  	struct tcp_sock
 #define PINET6(SK)	SK_INET(SK)->pinet6
-#endif
 
-#if LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,12)
-#define MSS_CACHE	mss_cache_std
-#else
 #define MSS_CACHE       mss_cache
-#endif
 
-
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,14)
-
-#define BIND_HASH(SK)   tcp_sk(SK)->bind_hash
-#define QUICKACK	ack.pingpong
-#define DEFER_ACCEPT	defer_accept
-#define SYN_RETRIES	syn_retries
-#else
 #define BIND_HASH(SK)   inet_csk(SK)->icsk_bind_hash
 #define QUICKACK        inet_conn.icsk_ack.pingpong
 #define DEFER_ACCEPT	inet_conn.icsk_accept_queue.rskq_defer_accept
 #define SYN_RETRIES	inet_conn.icsk_syn_retries
-
-#endif
 
 #if defined(CONFIG_X86_64)
 #define PAGE_KERNEL_FLAG  PAGE_KERNEL_EXEC
@@ -337,18 +198,10 @@ extern kmem_cache_t *nx_sk_cachep;
 #define PAGE_KERNEL_FLAG  PAGE_KERNEL
 #endif
 
-
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,12)) || ((LINUX_VERSION_CODE == KERNEL_VERSION(2,6,11)) && (FEDORA == FC4))
 #define	NX_KC_DST_MTU(DST)	dst_mtu((DST))
-#else
-#define	NX_KC_DST_MTU(DST)	dst_pmtu((DST))
-#endif
-
-
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,0)
 
 typedef struct work_struct	nx_kc_work_queue_t;
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,20)) || (defined(RDMA_MODULE))
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,20))
 #define	NX_KC_INIT_WORK(TASK, CB_FUNC, OBJ)	INIT_WORK((TASK), (CB_FUNC))
 #else
 #define	NX_KC_INIT_WORK(TASK, CB_FUNC, OBJ)	\
@@ -358,52 +211,12 @@ typedef struct work_struct	nx_kc_work_queue_t;
 #define	NX_KC_SCHEDULE_DELAYED_WORK(TASK, DELAY)	\
 	schedule_delayed_work((TASK), (DELAY))
 
-#else
-
-typedef struct tq_struct	nx_kc_work_queue_t;
-#define	NX_KC_INIT_WORK(TASK, CB_FUNC, OBJ)	\
-	INIT_TQUEUE((TASK), (CB_FUNC), (OBJ))
-#define	NX_KC_SCHEDULE_WORK(TASK)	schedule_task((TASK))
-
-#endif
-
-
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,11)
 #define PM_MESSAGE_T pm_message_t
-#else
-#define PM_MESSAGE_T u32
-#endif
 
 #ifndef module_param
 #define module_param(v,t,p) MODULE_PARM(v, "i");
 #endif
 
-#if LINUX_VERSION_CODE == KERNEL_VERSION(2,6,25)
-#define dev_net(dev)   dev->nd_net
-#endif
-
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,25)	
-#define VLAN_DEV_INFO(DEV)	vlan_dev_info(DEV)
-#endif
-
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,9)
-static inline 
-void list_replace_rcu(struct list_head *old, struct list_head *new) {
-	new->next = old->next;
-	new->prev = old->prev;
-	smp_wmb();
-	new->next->prev = new;
-	new->prev->next = new;
-}
-#endif
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,18)	
-static inline void list_replace_init(struct list_head *old,
-		struct list_head *new)
-{
-	list_replace_rcu(old, new);
-	INIT_LIST_HEAD(old);
-}
-#endif
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)	&& !defined(__VMKLNX__)
 static inline void ___list_splice(const struct list_head *list,
 				 struct list_head *prev,
@@ -447,7 +260,7 @@ static inline void list_splice_tail_init(struct list_head *list,
 		INIT_LIST_HEAD(list);
 	}
 }
-#endif
+#endif // LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27) && !defined(__VMKLNX__)
 
 #ifndef NETDEV_TX_OK 
 #define NETDEV_TX_OK 0
@@ -456,8 +269,6 @@ static inline void list_splice_tail_init(struct list_head *list,
 #ifndef NETDEV_TX_BUSY 
 #define NETDEV_TX_BUSY 1
 #endif
-
-
 
 #define NX_NETIF_F_SG           NETIF_F_SG
 #define NX_NETIF_F_HW_CSUM      NETIF_F_HW_CSUM
@@ -476,18 +287,6 @@ static inline void list_splice_tail_init(struct list_head *list,
 #endif
 #define NX_NETIF_F_HIGHDMA      NETIF_F_HIGHDMA
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,26)
-#define NX_SET_VLAN_DEV_FEATURES(DEV, VDEV)     \
-	do {                                    \
-		if((VDEV) == NULL) {            \
-			(DEV)->vlan_features |= \
-			((DEV)->features & (NX_NETIF_F_SG | NX_NETIF_F_HW_CSUM | \
-				NX_NETIF_F_TSO | NX_NETIF_F_TSO6 | \
-				NX_NETIF_F_HIGHDMA));\
-		}                               \
-	}while (0)
-
-#else
 #define NX_SET_VLAN_DEV_FEATURES(DEV, VDEV)     \
 	do {                                    \
 		if((VDEV) && ((VDEV) != (DEV))) {               \
@@ -498,27 +297,11 @@ static inline void list_splice_tail_init(struct list_head *list,
 		}                               \
 	}while (0)
 
-#endif
-
-/* pci_dma_mapping_error() changed in 2.6.27 */
-#if LINUX_VERSION_CODE > KERNEL_VERSION(2,6,26)
-#define nx_pci_dma_mapping_error(dev, addr) pci_dma_mapping_error(dev, addr)
-#elif LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,5)
 #define nx_pci_dma_mapping_error(dev, addr) pci_dma_mapping_error(addr)
-#else 
-#define nx_pci_dma_mapping_error(dev, addr) 0
-#endif
 
-#if ((LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,9)) )
 #define MSLEEP_INTERRUPTIBLE(_MSEC_)       msleep_interruptible(_MSEC_);
-#else
-#define MSLEEP_INTERRUPTIBLE(_MSEC_) {\
-                        set_current_state(TASK_INTERRUPTIBLE); \
-                        schedule_timeout(_MSEC_); \
-        }
-#endif
 
-#if defined(ESX_3X_COS) || defined(__VMKERNEL_MODULE__)
+#if defined(__VMKERNEL_MODULE__)
 #ifndef __HAVE_ARCH_CMPXCHG
 #define __HAVE_ARCH_CMPXCHG 1
 static inline unsigned long __cmpxchg(volatile void *ptr, unsigned long old,
@@ -552,6 +335,6 @@ static inline unsigned long __cmpxchg(volatile void *ptr, unsigned long old,
         ((__typeof__(*(ptr)))__cmpxchg((ptr),(unsigned long)(o),\
                                         (unsigned long)(n),sizeof(*(ptr))))
 #endif /* __HAVE_ARCH_CMPXCHG */
-#endif /* defined(ESX_3X_COS) || defined(__VMKERNEL_MODULE__) */
+#endif /* defined(__VMKERNEL_MODULE__) */
 
 #endif  /* __KERNEL_COMPATIBILITY_H__ */

@@ -356,6 +356,7 @@ vmkplxr_RegisterChardev(int *major,   // IN/OUT -- requested/assigned major
    vmkplxr_ChardevHandles *vmkDevicePrivate;
    vmk_AddrCookie vmkCookie;
 
+   VMK_ASSERT(vmk_PreemptionIsEnabled() == VMK_FALSE);
    heap = vmk_ModuleGetHeapID(modID);
    VMK_ASSERT(heap != VMK_INVALID_HEAP_ID);
 
@@ -482,6 +483,8 @@ vmkplxr_UnregisterChardev(int major,
    vmk_CharDev handle;
    int i;
 
+   VMK_ASSERT(vmk_PreemptionIsEnabled() == VMK_FALSE);
+
    /*
     * Sanity check with allocation bitmap
     */
@@ -567,6 +570,8 @@ vmkplxr_ChardevsInit(void)
    VMK_ReturnStatus status;
    vmk_uint32 bitNum, bitSetIndex, bit;
    VmkplxrMinorInfo *miscMinorInfo;
+
+   VMK_ASSERT(vmk_PreemptionIsEnabled() == VMK_FALSE);
 
    status = vmk_SemaCreate(&chardevRegSem,
                            vmkplxr_module_id,

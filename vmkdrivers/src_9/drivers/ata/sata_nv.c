@@ -49,7 +49,7 @@
 #include <linux/libata.h>
 
 #define DRV_NAME			"sata_nv"
-#define DRV_VERSION			"3.5-3vmw"
+#define DRV_VERSION			"3.5-4vmw"
 
 #define NV_ADMA_DMA_BOUNDARY		0xffffffffUL
 
@@ -2609,7 +2609,14 @@ static void __exit nv_exit(void)
 module_init(nv_init);
 module_exit(nv_exit);
 module_param_named(adma, adma_enabled, bool, 0444);
+#if defined(__VMKLNX__)
+MODULE_PARM_DESC(adma, "Enable use of ADMA (Default: false)");
+#else /* !defined(__VMKLNX__) */
 MODULE_PARM_DESC(adma, "Enable use of ADMA (Default: true)");
+#endif
 module_param_named(swncq, swncq_enabled, bool, 0444);
+#if defined(__VMKLNX__)
+MODULE_PARM_DESC(swncq, "Enable use of SWNCQ (Default: true)");
+#else /* !defined(__VMKLNX__) */
 MODULE_PARM_DESC(swncq, "Enable use of SWNCQ (Default: false)");
-
+#endif

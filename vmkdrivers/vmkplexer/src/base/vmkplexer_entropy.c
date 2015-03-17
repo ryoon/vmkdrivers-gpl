@@ -47,8 +47,7 @@ vmkplxr_EntropyInit(void)
 
 /*
  * Note that registration and unregistration must work and provide
- * no synchronization -- only one random driver is supported, and
- * races are not supported.
+ * no synchronization -- only one random driver is supported
  */
 VMK_ReturnStatus
 vmkplxr_RegisterRandomDriver(const VmkplxrRandomDriver *driver)
@@ -255,6 +254,7 @@ void
 vmkplxr_AddKeyboardEntropy(int code)
 {
    if (randomDriver.addKeyboardEntropy) {
+      VMK_ASSERT(vmk_PreemptionIsEnabled() == VMK_FALSE);
       VMKAPI_MODULE_CALL_VOID(randomDriver.modID,
                               randomDriver.addKeyboardEntropy, 
                               code);
@@ -266,6 +266,7 @@ void
 vmkplxr_AddMouseEntropy(int code)
 {
    if (randomDriver.addMouseEntropy) {
+      VMK_ASSERT(vmk_PreemptionIsEnabled() == VMK_FALSE);
       VMKAPI_MODULE_CALL_VOID(randomDriver.modID,
                               randomDriver.addMouseEntropy,
                               code);
@@ -277,6 +278,7 @@ void
 vmkplxr_AddStorageEntropy(int diskNum)
 {
    if (randomDriver.addStorageEntropy) {
+      VMK_ASSERT(vmk_PreemptionIsEnabled() == VMK_FALSE);
       VMKAPI_MODULE_CALL_VOID(randomDriver.modID,
                               randomDriver.addStorageEntropy,
                               diskNum);
@@ -294,21 +296,23 @@ vmkplxr_GetRandomBytes(void *buf, int nbytes, int *bytesReturned)
    VMK_ReturnStatus status;
    vmkplxr_GetEntropyFunction getDriverEntropy;
 
-   if (randomDriver.modID != VMK_INVALID_MODULE_ID) {
-      if (randomDriver.getHwrngRandomBytes != NULL) {
-         /* The driver has a hwrng.  Use it. */
-         getDriverEntropy = randomDriver.getHwrngRandomBytes;
-      }
-      else {
-         getDriverEntropy = randomDriver.getSwRandomBytes;
-      }
+   VMK_ASSERT(vmk_PreemptionIsEnabled() == VMK_FALSE);
+
+   getDriverEntropy = randomDriver.getHwrngRandomBytes;
+
+   if (getDriverEntropy == NULL) {
+      getDriverEntropy = randomDriver.getSwRandomBytes;
+   }
+
+   if(getDriverEntropy) {
       VMKAPI_MODULE_CALL(randomDriver.modID, status,
                          getDriverEntropy,
                          buf, nbytes, bytesReturned);
-   }
+   } 
    else {
       status = vmkplxr_GetSwEntropy(buf, nbytes, bytesReturned);
    }
+
    return status;
 }
 VMK_MODULE_EXPORT_SYMBOL(vmkplxr_GetRandomBytes);

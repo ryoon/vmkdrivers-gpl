@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2003 - 2009 NetXen, Inc.
+ * Copyright (C) 2009 - QLogic Corporation.
  * All rights reserved.
  * 
  * This program is free software; you can redistribute it and/or
@@ -20,11 +21,6 @@
  * The full GNU General Public License is included in this distribution
  * in the file called LICENSE.
  * 
- * Contact Information:
- * licensing@netxen.com
- * NetXen, Inc.
- * 18922 Forge Drive
- * Cupertino, CA 95014
  */
 /******************************************************************************
 *
@@ -52,38 +48,25 @@
 #define GPIO_LO 0
 #define GPIO_HI 1
 
-#define NX_P2_C0                0x24
-#define NX_P2_C1                0x25
 #define NX_P3_A0                0x30
 #define NX_P3_A2                0x32
 #define NX_P3_B0                0x40
 #define NX_P3_B1		0x41
 #define NX_P3_B2		0x42
 
-#define NX_IS_REVISION_P2(REVISION)     (REVISION <= NX_P2_C1)
 #define NX_IS_REVISION_P3(REVISION)     (REVISION >= NX_P3_A0)
 
 /* Set MDC high or low for clocking data */
 static inline void MDC_LOW(struct unm_adapter_s *adapter)		
 {			
-	long MDC_GPIO = 0;
-	
-	if (NX_IS_REVISION_P3(adapter->ahw.revision_id))
-		MDC_GPIO = 16; 
-	else
-		MDC_GPIO = 7; 
+	long MDC_GPIO = 16;
 	
 	NXWR32(adapter, UNM_ROMUSB_GPIO(MDC_GPIO), (GPIO_OE | GPIO_LO));
 }
 
 static inline void MDC_HI(struct unm_adapter_s *adapter)
 {
-	long MDC_GPIO = 0;
-	
-	if (NX_IS_REVISION_P3(adapter->ahw.revision_id)) 
-		MDC_GPIO = 16; 
-	else
-		MDC_GPIO = 7;
+	long MDC_GPIO = 16;
 	
 	NXWR32(adapter, UNM_ROMUSB_GPIO(MDC_GPIO), (GPIO_OE | GPIO_HI));
 }
@@ -91,25 +74,15 @@ static inline void MDC_HI(struct unm_adapter_s *adapter)
 /* set the data bit */
 static inline void SET_MDIO(struct unm_adapter_s *adapter,long BIT)
 {
-	long MDIO_GPIO = 0;
-	
-	if (NX_IS_REVISION_P3(adapter->ahw.revision_id)) 
-		MDIO_GPIO = 17; 
-	else
-		MDIO_GPIO = 8;
+	long MDIO_GPIO = 17;
 	
 	NXWR32(adapter, UNM_ROMUSB_GPIO(MDIO_GPIO), (GPIO_OE | (BIT)));
 }
 static inline int GET_BIT(struct unm_adapter_s *adapter)
 {
-	long MDIO_GPIO = 0;
+	long MDIO_GPIO = 17;
 	u32 temp;
 	
-	if (NX_IS_REVISION_P3(adapter->ahw.revision_id)) 
-		MDIO_GPIO = 17; 
-	else
-		MDIO_GPIO = 8;
-
 	temp = NXRD32(adapter, UNM_ROMUSB_GLB_PAD_GPIO_I);
 	return (((temp >> MDIO_GPIO) & 1));
 }
@@ -150,13 +123,8 @@ long CLOCK_OUT_BITS(struct unm_adapter_s *adapter)
 {
 	long	i;
 	long	result = 0;
-	long MDIO_GPIO = 0;
+	long MDIO_GPIO = 17;
 	
-	if (NX_IS_REVISION_P3(adapter->ahw.revision_id)) 
-		MDIO_GPIO = 17; 
-	else
-		MDIO_GPIO = 8;
-
 	/* Don't drive MDIO output */
 	NXWR32(adapter, UNM_ROMUSB_GPIO(MDIO_GPIO), 0x0);
 
@@ -174,18 +142,10 @@ long CLOCK_OUT_BITS(struct unm_adapter_s *adapter)
 /* Turn off Output Enable on the GPIO */
 static inline void HI_Z(struct unm_adapter_s *adapter)				
 {
-	long MDIO_GPIO = 0;
-	long MDC_GPIO = 0;
-	if (NX_IS_REVISION_P3(adapter->ahw.revision_id)) {
-		MDIO_GPIO = 17;
-		MDC_GPIO = 16;
-	}
-	else {
-		MDIO_GPIO = 8;
-		MDC_GPIO =  7;
-	}
-        NXWR32(adapter, UNM_ROMUSB_GPIO(MDC_GPIO), 0x0);
-        NXWR32(adapter, UNM_ROMUSB_GPIO(MDIO_GPIO), 0x0);
+	long MDIO_GPIO = 17;
+	long MDC_GPIO = 16;
+	NXWR32(adapter, UNM_ROMUSB_GPIO(MDC_GPIO), 0x0);
+	NXWR32(adapter, UNM_ROMUSB_GPIO(MDIO_GPIO), 0x0);
 } 
 
 
@@ -400,9 +360,6 @@ int xge_loopback(struct unm_adapter_s *adapter, int on)
 {
 	int rv = 0;
 
-	if (NX_IS_REVISION_P3(adapter->ahw.revision_id))
-		rv = do_xge_loopback_p3(adapter, on);
-	else
-		rv = do_xge_loopback (adapter, on);
+	rv = do_xge_loopback_p3(adapter, on);
 	return rv;
 }

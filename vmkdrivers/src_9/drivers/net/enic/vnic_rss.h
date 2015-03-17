@@ -15,7 +15,6 @@
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
-#ident "$Id: vnic_rss.h 64224 2010-11-09 19:43:13Z vkolluri $"
 
 #ifndef _VNIC_RSS_H_
 #define _VNIC_RSS_H_

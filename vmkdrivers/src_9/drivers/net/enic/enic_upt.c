@@ -15,13 +15,13 @@
  * SOFTWARE.
  *
  */
-#ident "$Id$"
 
 #include <linux/pci.h>
 
 #include "kcompat.h"
 #include "enic_res.h"
 #include "enic.h"
+#include "enic_dev.h"
 #include "enic_upt.h"
 
 #define ENIC_UPT_FEATURES_SUPPORTED \
@@ -48,9 +48,8 @@ struct pass_thru_page {
 	} rxprod2[64];	/* 0x0a00 + 8 * n */
 };
 
-extern void enic_dev_deinit(struct enic *enic);
 extern int enic_dev_init(struct enic *enic);
-extern int enic_dev_set_ig_vlan_rewrite_mode(struct enic *enic);
+extern void enic_dev_deinit(struct enic *enic);
 
 void *enic_upt_alloc_bounce_buf(struct enic *enic, size_t size,
 	dma_addr_t *dma_handle)
@@ -192,11 +191,98 @@ static void enic_upt_record_queue_stats(struct enic *enic)
 		&enic->upt_stats_tx, &enic->upt_stats_rx);
 }
 
-static int enic_upt_get_queue_status(struct net_device *netdev,
+static VMK_ReturnStatus enic_upt_get_queue_status(struct net_device *netdev,
 	vmk_NetPTOPVFGetQueueStatusArgs *param)
 {
-	// XXX: what goes here?
-	return 0;
+	struct enic *enic = netdev_priv(netdev);
+	unsigned int i, error = 0, error_hits = 0;
+	vmk_uint32 tq_error_value, tq_silent_error_value, rq_error_value;
+#define SIMULATED_ERROR 31
+
+	if (param->numTxQueues != enic->wq_count) {
+		netdev_err(netdev, "TxQueues Count Discrepancy - "
+			"VMKernel: %u Enic: %u\n", param->numTxQueues,
+			enic->wq_count);
+		return VMK_BAD_PARAM;
+	}
+
+	if (param->numRxQueues != enic->rq_count) {
+		netdev_err(netdev, "RxQueues Count Discrepancy - "
+			"VMKernel: %u Enic: %u\n", param->numRxQueues,
+			enic->rq_count);
+		return VMK_BAD_PARAM;
+	}
+
+	for (i = 0; i < enic->wq_count; i++) {
+		memset(&param->tqStatus[i], 0, sizeof(param->tqStatus[i]));
+		error = vnic_wq_error_status(&enic->wq[i]);
+		if (!error &&
+			enic->upt_tq_error_stress_status == VMK_OK && 
+			vmk_StressOptionValue(enic->upt_tq_error_stress_handle,
+			&tq_error_value) == VMK_OK && tq_error_value != 0 &&
+			enic->upt_tq_error_stress_counter++ % 
+			tq_error_value == 0) {
+			netdev_err(enic->netdev,
+				"WQ[%u] error induced by stress options\n",
+				i);
+			vnic_wq_error_out(&enic->wq[i], SIMULATED_ERROR);
+			vnic_wq_disable(&enic->wq[i]);
+			error = vnic_wq_error_status(&enic->wq[i]);
+		}
+		
+		if (error) {
+			error_hits++;
+			param->tqStatus[i].stopped = VMK_TRUE;
+			param->tqStatus[i].error = error;
+			netdev_err(enic->netdev, "WQ[%u] error %u\n",
+						i, error);
+		}
+	}
+
+	for (i = 0; i < enic->rq_count; i++) {
+		memset(&param->rqStatus[i], 0, sizeof(param->rqStatus[i]));
+		error = vnic_rq_error_status(&enic->rq[i]);
+		if (!error && 
+			enic->upt_rq_error_stress_status == VMK_OK &&
+			vmk_StressOptionValue(enic->upt_rq_error_stress_handle,
+			&rq_error_value) == VMK_OK && rq_error_value != 0 &&
+			enic->upt_rq_error_stress_counter++ % 
+			rq_error_value == 0) {
+			netdev_err(enic->netdev,
+				"RQ[%u] error induced by stress options\n",
+				i);
+			vnic_rq_error_out(&enic->rq[i], SIMULATED_ERROR);
+			vnic_rq_disable(&enic->rq[i]);
+			error = vnic_rq_error_status(&enic->rq[i]);
+		}
+
+		if (error) {
+			error_hits++;
+			param->rqStatus[i].stopped = VMK_TRUE;
+			param->rqStatus[i].error = error;
+			netdev_err(enic->netdev, "RQ[%u] error %u\n",
+				i, error);
+		}
+	}
+
+	/* Stop a WQ w/o telling vmkernel to trigger a watchdog in guest */
+	for (i = 0; !error_hits && (i < enic->wq_count); i++) {
+		if (enic->upt_tq_silent_error_stress_status == VMK_OK && 
+			vmk_StressOptionValue(
+			enic->upt_tq_silent_error_stress_handle,
+			&tq_silent_error_value) == VMK_OK && 
+			tq_silent_error_value != 0 &&
+			enic->upt_tq_silent_error_stress_counter++ % 
+			tq_silent_error_value == 0) {
+			netdev_err(enic->netdev,
+				"Slient stop of WQ[%u] "
+				"induced by stress options\n",
+				i);
+			vnic_wq_disable(&enic->wq[i]);
+		}
+	}
+
+	return VMK_OK;
 }
 
 static int enic_upt_set_nic_cfg(struct enic *enic, vmk_NetVFParameters *vs)
@@ -509,7 +595,7 @@ static int enic_upt_init_vnic_resources(struct enic *enic,
 		intr->masked = vs->u.upt.intr.vectors[i].imr;
 		vnic_intr_init(intr,
 			// XXX interrupt moderation levels
-			INTR_COALESCE_USEC_TO_HW(enic->config.intr_timer_usec),
+			enic->config.intr_timer_usec,
 			enic->config.intr_timer_type,
 			mask_on_assertion);
 		if (vs->u.upt.intr.vectors[i].pending)
@@ -531,6 +617,28 @@ static int enic_upt_restore_state(struct net_device *netdev,
 {
 	struct enic *enic = netdev_priv(netdev);
 	int err;
+
+	/* 
+ 	 * PTS is suppose to kill the Emu2PT transistion if enic doesn't have
+ 	 * sufficient resources.  Recheck here anyways.
+ 	 */
+
+	enic_get_res_counts(enic);
+
+	if (enic->wq_count < vs->numTxQueues ||
+	    enic->rq_count < vs->numRxQueues ||
+	    enic->cq_count < vs->numTxQueues + vs->numRxQueues ||
+	    enic->intr_count < vs->numIntrs) {
+		netdev_err(netdev, "Insufficent Resources - "
+			"Requested: WQ %u RQ %u CQ %u INTR %u - "
+			"Available: WQ %u RQ %u CQ %u INTR %u\n",
+			 vs->numTxQueues, vs->numRxQueues, 
+			vs->numTxQueues + vs->numRxQueues,
+			vs->numIntrs,
+			enic->wq_count, enic->rq_count, 
+			enic->cq_count, enic->intr_count);
+		return -EINVAL;
+	}
 
 	enic->rq_count = vs->numRxQueues;
 	enic->wq_count = vs->numTxQueues;
@@ -672,9 +780,7 @@ static int enic_upt_resume(struct net_device *netdev)
 		if (!enic->intr[i].masked)
 			vnic_intr_unmask(&enic->intr[i]);
 
-	spin_lock(&enic->devcmd_lock);
-	vnic_dev_enable_wait(enic->vdev);
-	spin_unlock(&enic->devcmd_lock);
+	enic_dev_enable(enic);
 
 	err = enic_upt_notify_set(enic);
 	if (err) {
@@ -690,6 +796,44 @@ static int enic_upt_resume(struct net_device *netdev)
 
 	enic->upt_active = 1;
 
+	enic->upt_tq_error_stress_status = vmk_StressOptionOpen(
+					VMK_STRESS_OPT_NET_IF_FAIL_HARD_TX,
+					&enic->upt_tq_error_stress_handle);
+
+	if (enic->upt_tq_error_stress_status != VMK_OK) {
+		netdev_err(netdev,
+			"Failed to open %s stress option with status %s",
+			VMK_STRESS_OPT_NET_IF_FAIL_HARD_TX,
+			vmk_StatusToString(enic->upt_tq_error_stress_status));
+	}
+
+	/* 
+	 * The stress option *_CORRUPT_TX is used to silently trigger 
+ 	 * watchdogs instead of corrupting tx traffic.
+ 	 */
+
+	enic->upt_tq_silent_error_stress_status = vmk_StressOptionOpen(
+				VMK_STRESS_OPT_NET_IF_CORRUPT_TX,
+				&enic->upt_tq_silent_error_stress_handle);
+
+	if (enic->upt_tq_silent_error_stress_status != VMK_OK) {
+		netdev_err(netdev,
+			"Failed to open %s stress option with status %s",
+			VMK_STRESS_OPT_NET_IF_CORRUPT_TX,
+			vmk_StatusToString(
+			enic->upt_tq_silent_error_stress_status));
+	}
+
+	enic->upt_rq_error_stress_status = vmk_StressOptionOpen(
+				VMK_STRESS_OPT_NET_IF_FAIL_RX,
+				&enic->upt_rq_error_stress_handle);
+	if (enic->upt_rq_error_stress_status != VMK_OK) {
+		netdev_err(netdev,
+			"Failed to open %s stress option with status %s",
+			VMK_STRESS_OPT_NET_IF_FAIL_RX,
+			vmk_StatusToString(enic->upt_rq_error_stress_status));
+	}
+
 	netdev_err(netdev, "resumed\n");
 
 	return 0;
@@ -700,12 +844,45 @@ static int enic_upt_quiesce(struct net_device *netdev)
 	struct enic *enic = netdev_priv(netdev);
 	unsigned int i;
 	int err;
+	VMK_ReturnStatus status;
+
+	if (enic->upt_rq_error_stress_status == VMK_OK) {
+		status = vmk_StressOptionClose(
+				enic->upt_rq_error_stress_handle);
+		if (status != VMK_OK) {
+			netdev_err(netdev,
+				"Failed to close %s stress handle with "
+				"status %s", VMK_STRESS_OPT_NET_IF_FAIL_RX,
+				vmk_StatusToString(status));
+		}
+		enic->upt_rq_error_stress_status = VMK_INVALID_HANDLE;
+	}
+	
+	if (enic->upt_tq_silent_error_stress_status == VMK_OK) {
+		status = vmk_StressOptionClose(
+			enic->upt_tq_silent_error_stress_handle);
+		if (status != VMK_OK) {
+			netdev_err(netdev,
+			"Failed to close %s stress handle with "
+			"status %s", VMK_STRESS_OPT_NET_IF_CORRUPT_TX,
+			vmk_StatusToString(status));
+		}
+		enic->upt_tq_silent_error_stress_status = VMK_INVALID_HANDLE;
+	}
+
+	if (enic->upt_tq_error_stress_status == VMK_OK) {
+		status = vmk_StressOptionClose(enic->upt_tq_error_stress_handle);
+		if (status != VMK_OK) {
+			netdev_err(netdev,
+				"Failed to close %s stress handle with "
+				"status %s", VMK_STRESS_OPT_NET_IF_FAIL_HARD_TX,
+				vmk_StatusToString(status));
+		}
+		enic->upt_tq_error_stress_status = VMK_INVALID_HANDLE;
+	}
 
 	del_timer_sync(&enic->upt_notify_timer);
-
-	spin_lock(&enic->devcmd_lock);
-	vnic_dev_disable(enic->vdev);
-	spin_unlock(&enic->devcmd_lock);
+	enic_dev_disable(enic);
 
 	for (i = 0; i < enic->wq_count; i++) {
 		err = vnic_wq_disable(&enic->wq[i]);
@@ -826,12 +1003,39 @@ void enic_upt_link_down(struct enic *enic)
 
 void enic_upt_prepare_for(struct enic *enic)
 {
+	
+	if (enic->priv_flags & ENIC_RESET_INPROGRESS) {
+		if (enic->upt_active || enic->upt_resources_alloced) {
+			netdev_err(enic->netdev, 
+				"Unexpected reset while "
+				"upt_resource_allocated: [%d]"
+				"and upt_active is [%d].\n",
+				enic->upt_resources_alloced,
+				enic->upt_active);
+		}
+		return; 
+	}
+		
 	if (enic->upt_mode)
 		enic_dev_deinit(enic);
 }
 
 int enic_upt_recover_from(struct enic *enic)
 {
+	int err;
+
+	if (enic->priv_flags & ENIC_RESET_INPROGRESS) {
+		if (enic->upt_active || enic->upt_resources_alloced) {
+			netdev_err(enic->netdev, 
+				"Unexpected reset while "
+				"upt_resource_allocated: [%d]" 
+				"and upt_active is [%d].\n", 
+				enic->upt_resources_alloced, 
+				enic->upt_active);
+		}				 
+		return 0; 
+	}
+	
 	/* Switch off UPT notify timer if needed */
 	if (enic->upt_active) {
 		del_timer_sync(&enic->upt_notify_timer);
@@ -856,6 +1060,13 @@ int enic_upt_recover_from(struct enic *enic)
 
 	if (enic->upt_mode) {
 		enic->upt_mode = 0;
+	        err = enic_dev_set_ig_vlan_rewrite_mode(enic);
+        	if (err) {
+                	dev_err(enic_get_dev(enic),
+                        	"Failed to set ingress vlan rewrite mode, "
+				"aborting.\n");
+                	return err;
+        	}
 		return enic_dev_init(enic);
 	}
 

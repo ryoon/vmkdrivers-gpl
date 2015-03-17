@@ -16,7 +16,6 @@
  * SOFTWARE.
  *
  */
-#ident "$Id: kcompat.h 56483 2010-08-17 12:21:35Z dwang2 $"
 
 #ifndef _KCOMPAT_H_
 #define _KCOMPAT_H_
@@ -78,10 +77,6 @@
 #define NETIF_F_TSO_ECN 0
 #endif
 
-#ifndef NETIF_F_GRO
-#define NETIF_F_GRO 0
-#endif
-
 #ifndef CHECKSUM_PARTIAL
 #define CHECKSUM_PARTIAL CHECKSUM_HW
 #define CHECKSUM_COMPLETE CHECKSUM_HW
@@ -110,6 +105,10 @@
 #define netdev_tx_t int
 #endif
 
+#ifndef __packed
+#define __packed __attribute__ ((packed))
+#endif
+
 #ifndef RHEL_RELEASE_CODE
 #define RHEL_RELEASE_CODE 0
 #endif
@@ -117,6 +116,11 @@
 #define RHEL_RELEASE_VERSION(a, b) 0
 #endif
 
+/* Non-kernel version-specific definitions */
+#define PORT_PROFILE_MAX 40
+#define PORT_UUID_MAX  16
+
+/* Kernel version-specific definitions */
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 14))
 static inline signed long schedule_timeout_uninterruptible(signed long timeout)
 {
@@ -149,17 +153,34 @@ static inline int kcompat_skb_linearize(struct sk_buff *skb, int gfp)
 #define csum_offset csum
 #endif
 
-#ifndef __packed
-#define __packed __attribute__ ((packed))
-#endif
-
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 22))
+
+#define skb_checksum_start_offset(skb) skb_transport_offset(skb)
+#if ((!RHEL_RELEASE_CODE) || \
+	(RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(5, 4)))
 #define ip_hdr(skb) (skb->nh.iph)
 #define ipv6_hdr(skb) (skb->nh.ipv6h)
 #define tcp_hdr(skb) (skb->h.th)
 #define tcp_hdrlen(skb) (skb->h.th->doff << 2)
 #define skb_transport_offset(skb) (skb->h.raw - skb->data)
 #endif
+
+#elif (LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 38)) && \
+    ((!RHEL_RELEASE_CODE) || (RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(6, 4)))
+
+static inline int skb_checksum_start_offset(const struct sk_buff *skb)
+{
+	return skb->csum_start - skb_headroom(skb);
+}
+
+#endif /* LINUX_VERSION_CODE < 2.6.22 */
+
+
+#define for_each_sg(start, var, count, index) \
+		for ((var) = (start), (index) = 0; (index) < (count); \
+			(var) = sg_next(var), (index)++)
+#define kmem_cache kmem_cache_s
+
 
 #if ((LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 29)) && \
      (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 24))) || \
@@ -174,13 +195,14 @@ static inline int kcompat_skb_linearize(struct sk_buff *skb, int gfp)
 
 #elif (LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 24))
 
-#if (RHEL_RELEASE_CODE <= RHEL_RELEASE_VERSION(5, 3))
+#if ((!RHEL_RELEASE_CODE) || \
+	(RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(5, 4)))
 struct napi_struct {
 	struct net_device *dev;
 	int (*poll)(struct napi_struct *, int);
 };
-#endif
 #define napi_complete(napi) netif_rx_complete((napi)->dev)
+#endif
 #define napi_schedule_prep(napi) netif_rx_schedule_prep((napi)->dev)
 #define napi_schedule(napi) netif_rx_schedule((napi)->dev)
 #define __napi_schedule(napi) __netif_rx_schedule((napi)->dev)
@@ -197,39 +219,60 @@ struct napi_struct {
 	} while (0)
 #define netif_napi_del(napi) do { } while (0)
 
-#endif
-
+#endif /* (2.6.24 <= LINUX_VERSION_CODE < 2.6.29) || __VMKLNX__ */
 
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 25))
+
+#if ((!RHEL_RELEASE_CODE) || \
+	(RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(5, 4)))
+#define pci_enable_device_mem pci_enable_device
+#endif
+
+#if ((!RHEL_RELEASE_CODE) || \
+	(RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(5, 6)))
 #define DEFINE_PCI_DEVICE_TABLE(_table) \
 	const struct pci_device_id _table[]
 #endif
 
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 25))
-#define pci_enable_device_mem pci_enable_device
-#endif
+#endif /* LINUX_VERSION_CODE < 2.6.25 */
+
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 27))
+
+#define ethtool_cmd_speed_set(_ecmd, _speed)	\
+	do {					\
+		_ecmd->speed = _speed;		\
+	} while (0)
+
+#endif /* LINUX_VERSION_CODE < 2.6.27 */
 
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 28))
+
+#if ((!RHEL_RELEASE_CODE) || \
+	(RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(5, 6)))
 #undef pr_err
 #define pr_err(fmt, ...) \
 	printk(KERN_ERR pr_fmt(fmt), ##__VA_ARGS__)
+#undef pr_warning
+#define pr_warning(fmt, ...) \
+	printk(KERN_WARNING pr_fmt(fmt), ##__VA_ARGS__)
 #undef pr_info
 #define pr_info(fmt, ...) \
 	printk(KERN_INFO pr_fmt(fmt), ##__VA_ARGS__)
 #endif
 
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 29))
+#endif /* LINUX_VERSION_CODE < 2.6.28 */
+
+/*
+ * We want this to be dependent on NETIF_F_GRO instead of kernel version, 
+ * because of past bugs we have seen.
+ */
+#ifndef NETIF_F_GRO
+#define NETIF_F_GRO 0
 #define vlan_gro_receive(napi, vlan_group, vlan_tci, skb) \
 	vlan_hwaccel_receive_skb(skb, vlan_group, vlan_tci)
 #define napi_gro_receive(napi, skb) \
 	netif_receive_skb(skb)
 #endif
-
-#define for_each_sg(start, var, count, index) \
-		for ((var) = (start), (index) = 0; (index) < (count); \
-			(var) = sg_next(var), (index)++)
-
-#define kmem_cache kmem_cache_s
 
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 33))
 static inline struct sk_buff *kcompat_netdev_alloc_skb_ip_align(
@@ -244,15 +287,20 @@ static inline struct sk_buff *kcompat_netdev_alloc_skb_ip_align(
 #undef netdev_alloc_skb_ip_align
 #define netdev_alloc_skb_ip_align(netdev, len) \
 	kcompat_netdev_alloc_skb_ip_align(netdev, len)
-#endif
+#endif /* LINUX_VERSION_CODE < 2.6.33 */
 
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 34))
+
+#if ((!RHEL_RELEASE_CODE) || \
+	(RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(5, 6)) || \
+	(RHEL_RELEASE_CODE == RHEL_RELEASE_VERSION(6,0)))
 #define netdev_for_each_mc_addr(mclist, dev) \
 	for (mclist = dev->mc_list; mclist; mclist = mclist->next)
+#endif
 #define netdev_mc_count(dev) ((dev)->mc_count)
 
 #if ((!RHEL_RELEASE_CODE) || \
-       (RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(6, 0)))
+	(RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(5, 6)))
 static inline const char *netdev_name(const struct net_device *dev)
 {
 	if (dev->reg_state != NETREG_REGISTERED)
@@ -261,11 +309,25 @@ static inline const char *netdev_name(const struct net_device *dev)
 }
 #endif
 
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 23))
+#define netdev_uc_count(dev) 0
+#elif (LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 31))
+#define netdev_for_each_uc_addr(uclist, dev) \
+	for (uclist = dev->uc_list; uclist; uclist = uclist->next)
+#define netdev_uc_count(dev) ((dev)->uc_count)
+#elif (LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 34))
+#define netdev_for_each_uc_addr(ha, dev) \
+	list_for_each_entry(ha, &dev->uc.list, list)
+#define netdev_uc_count(dev) ((dev)->uc.count)
+#endif
+
 #define netdev_printk(level, netdev, format, args...) \
 	dev_printk(level, &((netdev)->pdev->dev), \
 		"%s: " format, \
 		netdev_name(netdev), ##args)
 
+#if ((!RHEL_RELEASE_CODE) || \
+	(RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(5, 6)))
 #define netdev_err(dev, format, args...) \
 	netdev_printk(KERN_ERR, dev, format, ##args)
 #define netdev_warn(dev, format, args...) \
@@ -274,9 +336,15 @@ static inline const char *netdev_name(const struct net_device *dev)
 	netdev_printk(KERN_INFO, dev, format, ##args)
 #endif
 
-#define PORT_PROFILE_MAX 40
-#define PORT_UUID_MAX  16
+#endif /* LINUX_VERSION_CODE < 2.6.34 */
 
+#if (LINUX_VERSION_CODE <= KERNEL_VERSION(3, 1, 00))
+#define skb_frag_dma_map(_dev, _frag, _offset, _size, _dir) \
+	dma_map_page(_dev, _frag->page, _frag->page_offset + _offset, \
+		_size, _dir)
+#endif /* LINUX_VERSION_CODE <= 3.1.0 */
+
+/* Don't forget about MIPS, include it last */
 
 
 #endif /* _KCOMPAT_H_ */

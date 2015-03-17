@@ -14,22 +14,25 @@
  * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
+ * [Insert appropriate license here when releasing outside of Cisco]
+ * $Id: fnic_io.h 120749 2013-01-08 02:02:53Z hiralpat $
  */
 #ifndef _FNIC_IO_H_
 #define _FNIC_IO_H_
 
 #include <scsi/fc/fc_fcp.h>
 
+
 /*
  * Host SG descriptor
  */
-#define PALO_MAX_SG_DESC_CNT	1024     // Maximum descriptors per sgl
-#define PALO_SG_DESC_ALIGN	16      // Descriptor address alignment
+#define PALO_MAX_SG_DESC_CNT   256	/* Maximum descriptors per sgl */
+#define PALO_SG_DESC_ALIGN     16	/* Descriptor address alignment */
 
 struct host_sg_desc {
-    u_int64_t addr;
-    u_int32_t len;
-    u_int32_t _resvd;
+     u_int64_t addr;
+     u_int32_t len;
+     u_int32_t _resvd;
 };
 
 /*
@@ -37,12 +40,12 @@ struct host_sg_desc {
  */
 #ifdef SCSI_SENSE_BUFFERSIZE
 #define FNIC_SENSE_SGES \
-                DIV_ROUND_UP(SCSI_SENSE_BUFFERSIZE, sizeof(struct host_sg_desc))
+		DIV_ROUND_UP(SCSI_SENSE_BUFFERSIZE, sizeof(struct host_sg_desc))
 
-#define FNIC_DFLT_SG_DESC_CNT   (32 - FNIC_SENSE_SGES)
-#define FNIC_MAX_SG_DESC_CNT    (PALO_MAX_SG_DESC_CNT - FNIC_SENSE_SGES)
+#define	FNIC_DFLT_SG_DESC_CNT	(32 - FNIC_SENSE_SGES)
+#define	FNIC_MAX_SG_DESC_CNT	(PALO_MAX_SG_DESC_CNT - FNIC_SENSE_SGES)
 
-#define FNIC_SG_DESC_ALIGN	16      /* Descriptor address alignment */
+#define	FNIC_SG_DESC_ALIGN	16	/* Descriptor address alignment */
 
 struct fnic_dflt_sgl_list {
 	struct host_sg_desc sg_desc[FNIC_DFLT_SG_DESC_CNT];
@@ -54,7 +57,7 @@ struct fnic_sgl_list {
 	u8 sg_sense_pad[SCSI_SENSE_BUFFERSIZE];
 };
 
-#endif /* SCSI_SENSE_BUFFERSIZE */
+#endif	/* SCSI_SENSE_BUFFERSIZE */
 
 enum fnic_sgl_list_type {
 	FNIC_SGL_CACHE_DFLT = 0,  /* cache with default size sgl */
@@ -63,7 +66,8 @@ enum fnic_sgl_list_type {
 };
 
 enum fnic_ioreq_state {
-	FNIC_IOREQ_CMD_PENDING = 0,
+	FNIC_IOREQ_NOT_INITED = 0,
+	FNIC_IOREQ_CMD_PENDING,
 	FNIC_IOREQ_ABTS_PENDING,
 	FNIC_IOREQ_ABTS_COMPLETE,
 	FNIC_IOREQ_CMD_COMPLETE,
@@ -78,6 +82,7 @@ struct fnic_io_req {
 	u8 sgl_type; /* device DMA descriptor list type */
 	u8 io_completed:1; /* set to 1 when fw completes IO */
 	u32 port_id; /* remote port DID */
+	unsigned long start_time; /* in jiffies */
 	struct completion *abts_done; /* completion for abts */
 	struct completion *dr_done; /* completion for device reset */
 };

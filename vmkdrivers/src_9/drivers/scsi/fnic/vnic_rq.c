@@ -14,12 +14,15 @@
  * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
+ * [Insert appropriate license here when releasing outside of Cisco]
+ * $Id: vnic_rq.c 120749 2013-01-08 02:02:53Z hiralpat $
  */
 
 #include <linux/errno.h>
 #include <linux/types.h>
 #include <linux/pci.h>
 #include <linux/delay.h>
+#include <linux/slab.h>
 #include "vnic_dev.h"
 #include "vnic_rq.h"
 

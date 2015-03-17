@@ -1,6 +1,6 @@
-/* bnx2i_ioctl.h: Broadcom NetXtreme II iSCSI driver.
- *
- * Copyright (c) 2006 - 2009 Broadcom Corporation
+/*
+ * QLogic NetXtreme II iSCSI offload driver.
+ * Copyright (c)   2003-2014 QLogic Corporation
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by

@@ -38,7 +38,7 @@
 
 #if defined(__VMKLNX__)
 /*
- * TODO: reddys - adjust this once we get more appropriate value from Adaptec.
+ * reddys - adjust this once we get more appropriate value from Adaptec.
  * ServeRAID 8k/8k-l8 adapters advertise queue depth of 246, but under heavy load
  * the adpater's firmware gets overloaded and becomes unresponsive.
  * Hence pick conservative queue depth - like half of what originally advertised.
@@ -558,10 +558,10 @@ struct adapter_ops
 	/* Transport operations */
 	int  (*adapter_ioremap)(struct aac_dev * dev, u32 size);
 #if defined(__VMKLNX__)
-	irq_handler_t adapter_intr;
-#else /* !defined(__VMKLNX__) */
+	irqreturn_t (*adapter_intr)(int irq, void *dev_id);
+#else
 	irqreturn_t (*adapter_intr)(int irq, void *dev_id, struct pt_regs *regs);
-#endif /* defined(__VMKLNX__) */
+#endif
 	/* Packet operations */
 	int  (*adapter_deliver)(struct fib * fib);
 	int  (*adapter_bounds)(struct aac_dev * dev, struct scsi_cmnd * cmd, u64 lba);
@@ -1263,6 +1263,14 @@ struct aac_dev
 
 #define aac_adapter_comm(dev,comm) \
 	(dev)->a_ops.adapter_comm(dev, comm)
+
+#if defined(__VMKLNX__)
+#define aac_adapter_intr(dev) \
+	(dev)->a_ops.adapter_intr(dev->scsi_host_ptr->irq, (void *)dev)
+#else
+#define aac_adapter_intr(dev) \
+	(dev)->a_ops.adapter_intr(dev->scsi_host_ptr->irq, (void *)dev, (struct pt_regs *)NULL)
+#endif
 
 #define FIB_CONTEXT_FLAG_TIMED_OUT		(0x00000001)
 #define FIB_CONTEXT_FLAG			(0x00000002)

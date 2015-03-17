@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2003 - 2009 NetXen, Inc.
+ * Copyright (C) 2009 - QLogic Corporation.
  * All rights reserved.
  * 
  * This program is free software; you can redistribute it and/or
@@ -20,11 +21,6 @@
  * The full GNU General Public License is included in this distribution
  * in the file called LICENSE.
  * 
- * Contact Information:
- * licensing@netxen.com
- * NetXen, Inc.
- * 18922 Forge Drive
- * Cupertino, CA 95014
  */
 #ifndef __PEGNET_MSGTYPES_H_
 #define __PEGNET_MSGTYPES_H_
@@ -517,6 +513,9 @@ do {								\
 
 /* This is the major queue number that type 1 queues hide behind */
 #define UNM_MSGQ_SQM_TYPE1   12
+#define NX_QM_TYPE1_MAJQ UNM_MSGQ_SQM_TYPE1  /* the type 1 queue is behind maj q 12 */
+#define NX_SQM_SEGNUM(A)           ((A) >> 16) /* 64K per segment */
+
 
 /* Flow queues reserved for Non-LSA flows*/
 #define PEGOS_MAX_OBJECTS 64

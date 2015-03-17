@@ -1,6 +1,6 @@
 /*
  *    Disk Array driver for HP Smart Array SAS controllers
- *    Copyright 2000, 2010 Hewlett-Packard Development Company, L.P.
+ *    Copyright 2000-2012 Hewlett-Packard Development Company, L.P.
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
@@ -46,6 +46,9 @@
 #ifndef PCI_DEVICE_ID_HP_HPSAG
 #define PCI_DEVICE_ID_HP_HPSAG 0x323B
 #endif
+#ifndef PCI_DEVICE_ID_HP_HPSAH
+#define PCI_DEVICE_ID_HP_HPSAH 0x323C
+#endif
 
 /* define the PCI info for the cards we can control */
 static const struct pci_device_id hpsa_pci_device_id[] = {
@@ -58,6 +61,20 @@ static const struct pci_device_id hpsa_pci_device_id[] = {
 	{PCI_VENDOR_ID_HP,	PCI_DEVICE_ID_HP_HPSAE,	0x103C,0x3249},
 	{PCI_VENDOR_ID_HP,	PCI_DEVICE_ID_HP_HPSAE,	0x103C,0x324a},
 	{PCI_VENDOR_ID_HP,	PCI_DEVICE_ID_HP_HPSAE,	0x103C,0x324b},
+	{PCI_VENDOR_ID_HP,	PCI_DEVICE_ID_HP_HPSAG,	0x103C,0x3350},
+	{PCI_VENDOR_ID_HP,	PCI_DEVICE_ID_HP_HPSAG,	0x103C,0x3351},
+	{PCI_VENDOR_ID_HP,	PCI_DEVICE_ID_HP_HPSAG,	0x103C,0x3352},
+	{PCI_VENDOR_ID_HP,	PCI_DEVICE_ID_HP_HPSAG,	0x103C,0x3353},
+	{PCI_VENDOR_ID_HP,	PCI_DEVICE_ID_HP_HPSAG,	0x103C,0x3354},
+	{PCI_VENDOR_ID_HP,	PCI_DEVICE_ID_HP_HPSAG,	0x103C,0x3355},
+	{PCI_VENDOR_ID_HP,	PCI_DEVICE_ID_HP_HPSAG,	0x103C,0x3356},
+        {PCI_VENDOR_ID_HP,      PCI_DEVICE_ID_HP_HPSAH, 0x103C,0x1920},
+        {PCI_VENDOR_ID_HP,      PCI_DEVICE_ID_HP_HPSAH, 0x103C,0x1921},
+        {PCI_VENDOR_ID_HP,      PCI_DEVICE_ID_HP_HPSAH, 0x103C,0x1922},
+        {PCI_VENDOR_ID_HP,      PCI_DEVICE_ID_HP_HPSAH, 0x103C,0x1923},
+        {PCI_VENDOR_ID_HP,      PCI_DEVICE_ID_HP_HPSAH, 0x103C,0x1924},
+        {PCI_VENDOR_ID_HP,      PCI_DEVICE_ID_HP_HPSAH, 0x103C,0x1926},
+        {PCI_VENDOR_ID_HP,      PCI_DEVICE_ID_HP_HPSAH, 0x103C,0x1928},
 	{0,}
 #else // LINUX
 	{PCI_VENDOR_ID_HP,	PCI_DEVICE_ID_HP_HPSAE,	0x103C,0x3241},
@@ -89,6 +106,20 @@ static struct board_type products[] = {
 	{0x3249103C,	"Smart Array P812",	&SA5_access},
 	{0x324a103C,	"Smart Array P712m",	&SA5_access},
 	{0x324b103C,	"Smart Array P711m",	&SA5_access},
+	{0x3350103C,	"Smart Array P222",	&SA5_access},
+	{0x3351103C,	"Smart Array P420",	&SA5_access},
+	{0x3352103C,	"Smart Array P421",	&SA5_access},
+	{0x3353103C,	"Smart Array",		&SA5_access},
+	{0x3354103C,	"Smart Array P420i",	&SA5_access},
+	{0x3355103C,	"Smart Array P220i",	&SA5_access},
+	{0x3356103C,	"Smart Array",		&SA5_access},
+	{0x1920103C,	"Smart Array P430i",	&SA5_access},
+	{0x1921103C,	"Smart Array P830i",	&SA5_access},
+	{0x1922103C,	"Smart Array P430",	&SA5_access},
+	{0x1923103C,	"Smart Array P431",	&SA5_access},
+	{0x1924103C,	"Smart Array P830",	&SA5_access},
+	{0x1926103C,	"Smart Array P731m",	&SA5_access},
+	{0x1928103C,	"Smart Array P230i",	&SA5_access},
 #else // LINUX
 	{0x3241103C,	"Smart Array P212",	&SA5_access},
 	{0x3243103C,	"Smart Array P410",	&SA5_access},

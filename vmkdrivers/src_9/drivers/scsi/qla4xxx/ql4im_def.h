@@ -14,7 +14,11 @@
 #include "ql4im_dbg.h"
 
 #define QL4IM_VERSION   "v2.01.00b9"
-#define QL_TMP_BUF_SIZE		PAGE_SIZE
+#if defined(__VMKLNX__)
+#define QL_TMP_BUF_SIZE		(PAGE_SIZE * 2)
+#else
+#define QL_TMP_BUF_SIZE    PAGE_SIZE
+#endif
 
 /* 
  * INT_DEF_FLASH_BLK_SIZE is which is the maximum flash transfer that can

@@ -16,7 +16,6 @@
  * SOFTWARE.
  *
  */
-#ident "$Id: vnic_cq.c 64224 2010-11-09 19:43:13Z vkolluri $"
 
 #include <linux/kernel.h>
 #include <linux/errno.h>
@@ -76,6 +75,8 @@ void vnic_cq_init(struct vnic_cq *cq, unsigned int flow_control_enable,
 	iowrite32(cq_message_enable, &cq->ctrl->cq_message_enable);
 	iowrite32(interrupt_offset, &cq->ctrl->interrupt_offset);
 	writeq(cq_message_addr, &cq->ctrl->cq_message_addr);
+
+	cq->interrupt_offset = interrupt_offset;
 }
 
 void vnic_cq_clean(struct vnic_cq *cq)

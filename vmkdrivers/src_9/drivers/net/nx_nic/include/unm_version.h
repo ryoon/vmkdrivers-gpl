@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2003 - 2009 NetXen, Inc.
+ * Copyright (C) 2009 - QLogic Corporation.
  * All rights reserved.
  * 
  * This program is free software; you can redistribute it and/or
@@ -20,11 +21,6 @@
  * The full GNU General Public License is included in this distribution
  * in the file called LICENSE.
  * 
- * Contact Information:
- * licensing@netxen.com
- * NetXen, Inc.
- * 18922 Forge Drive
- * Cupertino, CA 95014
  */
 #define _UNM_NIC_BUILD_NO 6
 #define UNM_NIC_BUILD_NO "6"
@@ -33,10 +29,10 @@
 #define UNM_NIC_FW_VERSION_SUB 404
 #define UNM_NIC_FW_BUILD_NUMBER 4294967295
 #define UNM_NIC_FW_VERSIONID "4.0.404"
-#define UNM_NIC_LINUX_VERSIONID "4.0.557"
-#define _UNM_NIC_LINUX_MAJOR 4
+#define UNM_NIC_LINUX_VERSIONID "5.0.621"
+#define _UNM_NIC_LINUX_MAJOR 5
 #define _UNM_NIC_LINUX_MINOR 0
-#define _UNM_NIC_LINUX_SUBVERSION 557 
+#define _UNM_NIC_LINUX_SUBVERSION 621
 #define _UNM_NIC_WINDOWS_MAJOR 4
 #define UNM_NIC_WINDOWS_MAJOR "4"
 #define _UNM_NIC_WINDOWS_MINOR 0

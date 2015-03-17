@@ -1,6 +1,6 @@
-/* 57xx_iscsi_constants.h: Broadcom NetXtreme II iSCSI driver.
- *
- * Copyright (c) 2006 - 2010 Broadcom Corporation
+/*
+ * QLogic NetXtreme II iSCSI offload driver.
+ * Copyright (c)   2003-2014 QLogic Corporation
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -122,7 +122,7 @@
 
 /* SQ/RQ/CQ DB structure sizes */
 #define ISCSI_SQ_DB_SIZE    (16)
-#define ISCSI_RQ_DB_SIZE    (16)
+#define ISCSI_RQ_DB_SIZE    (64)
 #define ISCSI_CQ_DB_SIZE    (80)
 
 #define ISCSI_SQN_TO_NOTIFY_NOT_VALID					0xFFFF

@@ -16,7 +16,6 @@
  * SOFTWARE.
  *
  */
-#ident "$Id: enic_main.c 64768 2010-11-15 23:04:29Z vkolluri $"
 
 #include <linux/module.h>
 #include <linux/kernel.h>
@@ -24,18 +23,20 @@
 #include <linux/errno.h>
 #include <linux/types.h>
 #include <linux/init.h>
+#include <linux/interrupt.h>
 #include <linux/workqueue.h>
 #include <linux/pci.h>
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
+#include <linux/if.h>
 #include <linux/if_ether.h>
 #include <linux/if_vlan.h>
-#include <linux/ethtool.h>
 #include <linux/in.h>
 #include <linux/ip.h>
 #include <linux/ipv6.h>
 #include <linux/tcp.h>
 #include <linux/rtnetlink.h>
+#include <linux/prefetch.h>
 #include <net/ip6_checksum.h>
 
 #include "kcompat.h"
@@ -46,6 +47,8 @@
 #include "vnic_vic.h"
 #include "enic_res.h"
 #include "enic.h"
+#include "enic_dev.h"
+#include "enic_ethtool.h"
 
 #define ENIC_NOTIFY_TIMER_PERIOD	(2 * HZ)
 #define WQ_ENET_MAX_DESC_LEN		(1 << WQ_ENET_LEN_BITS)
@@ -54,394 +57,41 @@
 
 #define PCI_DEVICE_ID_CISCO_VIC_ENET         0x0043  /* ethernet vnic */
 #define PCI_DEVICE_ID_CISCO_VIC_ENET_DYN     0x0044  /* enet dynamic vnic */
+#define PCI_DEVICE_ID_CISCO_VIC_ENET_VF      0x0071  /* enet SRIOV VF */
 
 /* Supported devices */
 static DEFINE_PCI_DEVICE_TABLE(enic_id_table) = {
 	{ PCI_VDEVICE(CISCO, PCI_DEVICE_ID_CISCO_VIC_ENET) },
 	{ PCI_VDEVICE(CISCO, PCI_DEVICE_ID_CISCO_VIC_ENET_DYN) },
+	{ PCI_VDEVICE(CISCO, PCI_DEVICE_ID_CISCO_VIC_ENET_VF) },
 	{ 0, }	/* end of table */
 };
 
 MODULE_DESCRIPTION(DRV_DESCRIPTION);
 MODULE_AUTHOR("Scott Feldman <scofeldm@cisco.com>");
-MODULE_LICENSE("GPL");
+MODULE_LICENSE("GPL v2");
 MODULE_VERSION(DRV_VERSION);
 MODULE_DEVICE_TABLE(pci, enic_id_table);
 
-struct enic_stat {
-	char name[ETH_GSTRING_LEN];
-	unsigned int offset;
-};
-
-#define ENIC_TX_STAT(stat)	\
-	{ .name = #stat, .offset = offsetof(struct vnic_tx_stats, stat) / 8 }
-#define ENIC_RX_STAT(stat)	\
-	{ .name = #stat, .offset = offsetof(struct vnic_rx_stats, stat) / 8 }
-
-static const struct enic_stat enic_tx_stats[] = {
-	ENIC_TX_STAT(tx_frames_ok),
-	ENIC_TX_STAT(tx_unicast_frames_ok),
-	ENIC_TX_STAT(tx_multicast_frames_ok),
-	ENIC_TX_STAT(tx_broadcast_frames_ok),
-	ENIC_TX_STAT(tx_bytes_ok),
-	ENIC_TX_STAT(tx_unicast_bytes_ok),
-	ENIC_TX_STAT(tx_multicast_bytes_ok),
-	ENIC_TX_STAT(tx_broadcast_bytes_ok),
-	ENIC_TX_STAT(tx_drops),
-	ENIC_TX_STAT(tx_errors),
-	ENIC_TX_STAT(tx_tso),
-};
-
-static const struct enic_stat enic_rx_stats[] = {
-	ENIC_RX_STAT(rx_frames_ok),
-	ENIC_RX_STAT(rx_frames_total),
-	ENIC_RX_STAT(rx_unicast_frames_ok),
-	ENIC_RX_STAT(rx_multicast_frames_ok),
-	ENIC_RX_STAT(rx_broadcast_frames_ok),
-	ENIC_RX_STAT(rx_bytes_ok),
-	ENIC_RX_STAT(rx_unicast_bytes_ok),
-	ENIC_RX_STAT(rx_multicast_bytes_ok),
-	ENIC_RX_STAT(rx_broadcast_bytes_ok),
-	ENIC_RX_STAT(rx_drop),
-	ENIC_RX_STAT(rx_no_bufs),
-	ENIC_RX_STAT(rx_errors),
-	ENIC_RX_STAT(rx_rss),
-	ENIC_RX_STAT(rx_crc_errors),
-	ENIC_RX_STAT(rx_frames_64),
-	ENIC_RX_STAT(rx_frames_127),
-	ENIC_RX_STAT(rx_frames_255),
-	ENIC_RX_STAT(rx_frames_511),
-	ENIC_RX_STAT(rx_frames_1023),
-	ENIC_RX_STAT(rx_frames_1518),
-	ENIC_RX_STAT(rx_frames_to_max),
-};
-
-static const unsigned int enic_n_tx_stats = ARRAY_SIZE(enic_tx_stats);
-static const unsigned int enic_n_rx_stats = ARRAY_SIZE(enic_rx_stats);
-
-static int enic_is_dynamic(struct enic *enic)
+int enic_is_dynamic(struct enic *enic)
 {
 	return enic->pdev->device == PCI_DEVICE_ID_CISCO_VIC_ENET_DYN;
 }
 
-static inline unsigned int enic_cq_rq(struct enic *enic, unsigned int rq)
+int enic_sriov_enabled(struct enic *enic)
 {
-	return rq;
+	return (enic->priv_flags & ENIC_SRIOV_ENABLED) ? 1 : 0;
 }
 
-static inline unsigned int enic_cq_wq(struct enic *enic, unsigned int wq)
+static int enic_is_sriov_vf(struct enic *enic)
 {
-	return enic->rq_count + wq;
+	return enic->pdev->device == PCI_DEVICE_ID_CISCO_VIC_ENET_VF;
 }
 
-static inline unsigned int enic_legacy_io_intr(void)
+int enic_is_valid_vf(struct enic *enic, int vf)
 {
 	return 0;
 }
-
-static inline unsigned int enic_legacy_err_intr(void)
-{
-	return 1;
-}
-
-static inline unsigned int enic_legacy_notify_intr(void)
-{
-	return 2;
-}
-
-static inline unsigned int enic_msix_rq_intr(struct enic *enic, unsigned int rq)
-{
-	return rq;
-}
-
-static inline unsigned int enic_msix_wq_intr(struct enic *enic, unsigned int wq)
-{
-	return enic->rq_count + wq;
-}
-
-static inline unsigned int enic_msix_err_intr(struct enic *enic)
-{
-	return enic->rq_count + enic->wq_count;
-}
-
-static inline unsigned int enic_msix_notify_intr(struct enic *enic)
-{
-	return enic->rq_count + enic->wq_count + 1;
-}
-
-static int enic_get_settings(struct net_device *netdev,
-	struct ethtool_cmd *ecmd)
-{
-	struct enic *enic = netdev_priv(netdev);
-
-	ecmd->supported = (SUPPORTED_10000baseT_Full | SUPPORTED_FIBRE);
-	ecmd->advertising = (ADVERTISED_10000baseT_Full | ADVERTISED_FIBRE);
-	ecmd->port = PORT_FIBRE;
-	ecmd->transceiver = XCVR_EXTERNAL;
-
-	if (netif_carrier_ok(netdev)) {
-		ecmd->speed = vnic_dev_port_speed(enic->vdev);
-		ecmd->duplex = DUPLEX_FULL;
-	} else {
-		ecmd->speed = -1;
-		ecmd->duplex = -1;
-	}
-
-	ecmd->autoneg = AUTONEG_DISABLE;
-
-	return 0;
-}
-
-static int enic_dev_fw_info(struct enic *enic,
-	struct vnic_devcmd_fw_info **fw_info)
-{
-	int err;
-
-	spin_lock(&enic->devcmd_lock);
-	err = vnic_dev_fw_info(enic->vdev, fw_info);
-	spin_unlock(&enic->devcmd_lock);
-
-	return err;
-}
-
-static void enic_get_drvinfo(struct net_device *netdev,
-	struct ethtool_drvinfo *drvinfo)
-{
-	struct enic *enic = netdev_priv(netdev);
-	struct vnic_devcmd_fw_info *fw_info;
-
-	enic_dev_fw_info(enic, &fw_info);
-
-	strncpy(drvinfo->driver, DRV_NAME, sizeof(drvinfo->driver));
-	strncpy(drvinfo->version, DRV_VERSION, sizeof(drvinfo->version));
-	strncpy(drvinfo->fw_version, fw_info->fw_version,
-		sizeof(drvinfo->fw_version));
-	strncpy(drvinfo->bus_info, pci_name(enic->pdev),
-		sizeof(drvinfo->bus_info));
-}
-
-static void enic_get_strings(struct net_device *netdev, u32 stringset, u8 *data)
-{
-	unsigned int i;
-
-	switch (stringset) {
-	case ETH_SS_STATS:
-		for (i = 0; i < enic_n_tx_stats; i++) {
-			memcpy(data, enic_tx_stats[i].name, ETH_GSTRING_LEN);
-			data += ETH_GSTRING_LEN;
-		}
-		for (i = 0; i < enic_n_rx_stats; i++) {
-			memcpy(data, enic_rx_stats[i].name, ETH_GSTRING_LEN);
-			data += ETH_GSTRING_LEN;
-		}
-		break;
-	}
-}
-
-#if (LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 24))
-static int enic_get_stats_count(struct net_device *netdev)
-{
-	return enic_n_tx_stats + enic_n_rx_stats;
-}
-
-#else
-static int enic_get_sset_count(struct net_device *netdev, int sset)
-{
-	switch (sset) {
-	case ETH_SS_STATS:
-		return enic_n_tx_stats + enic_n_rx_stats;
-	default:
-		return -EOPNOTSUPP;
-	}
-}
-
-#endif
-static int enic_dev_stats_dump(struct enic *enic, struct vnic_stats **vstats)
-{
-	int err;
-
-	spin_lock(&enic->devcmd_lock);
-	err = vnic_dev_stats_dump(enic->vdev, vstats);
-	spin_unlock(&enic->devcmd_lock);
-
-	return err;
-}
-
-static void enic_get_ethtool_stats(struct net_device *netdev,
-	struct ethtool_stats *stats, u64 *data)
-{
-	struct enic *enic = netdev_priv(netdev);
-	struct vnic_stats *vstats;
-	unsigned int i;
-
-	enic_dev_stats_dump(enic, &vstats);
-
-	for (i = 0; i < enic_n_tx_stats; i++)
-		*(data++) = ((u64 *)&vstats->tx)[enic_tx_stats[i].offset];
-	for (i = 0; i < enic_n_rx_stats; i++)
-		*(data++) = ((u64 *)&vstats->rx)[enic_rx_stats[i].offset];
-}
-
-static u32 enic_get_rx_csum(struct net_device *netdev)
-{
-	struct enic *enic = netdev_priv(netdev);
-	return enic->csum_rx_enabled;
-}
-
-static int enic_set_rx_csum(struct net_device *netdev, u32 data)
-{
-	struct enic *enic = netdev_priv(netdev);
-
-	if (data && !ENIC_SETTING(enic, RXCSUM))
-		return -EINVAL;
-
-	enic->csum_rx_enabled = !!data;
-
-	return 0;
-}
-
-static int enic_set_tx_csum(struct net_device *netdev, u32 data)
-{
-	struct enic *enic = netdev_priv(netdev);
-
-	if (data && !ENIC_SETTING(enic, TXCSUM))
-		return -EINVAL;
-
-	if (data)
-		netdev->features |= NETIF_F_HW_CSUM;
-	else
-		netdev->features &= ~NETIF_F_HW_CSUM;
-
-	return 0;
-}
-
-static int enic_set_tso(struct net_device *netdev, u32 data)
-{
-	struct enic *enic = netdev_priv(netdev);
-
-	if (data && !ENIC_SETTING(enic, TSO))
-		return -EINVAL;
-
-	if (data)
-		netdev->features |=
-			NETIF_F_TSO | NETIF_F_TSO6 | NETIF_F_TSO_ECN;
-	else
-		netdev->features &=
-			~(NETIF_F_TSO | NETIF_F_TSO6 | NETIF_F_TSO_ECN);
-
-	return 0;
-}
-
-static u32 enic_get_msglevel(struct net_device *netdev)
-{
-	struct enic *enic = netdev_priv(netdev);
-	return enic->msg_enable;
-}
-
-static void enic_set_msglevel(struct net_device *netdev, u32 value)
-{
-	struct enic *enic = netdev_priv(netdev);
-	enic->msg_enable = value;
-}
-
-static int enic_get_coalesce(struct net_device *netdev,
-	struct ethtool_coalesce *ecmd)
-{
-	struct enic *enic = netdev_priv(netdev);
-
-	ecmd->tx_coalesce_usecs = enic->tx_coalesce_usecs;
-	ecmd->rx_coalesce_usecs = enic->rx_coalesce_usecs;
-
-	return 0;
-}
-
-static int enic_set_coalesce(struct net_device *netdev,
-	struct ethtool_coalesce *ecmd)
-{
-	struct enic *enic = netdev_priv(netdev);
-	u32 tx_coalesce_usecs;
-	u32 rx_coalesce_usecs;
-	unsigned int i, intr;
-
-	tx_coalesce_usecs = min_t(u32,
-		INTR_COALESCE_HW_TO_USEC(VNIC_INTR_TIMER_MAX),
-		ecmd->tx_coalesce_usecs);
-	rx_coalesce_usecs = min_t(u32,
-		INTR_COALESCE_HW_TO_USEC(VNIC_INTR_TIMER_MAX),
-		ecmd->rx_coalesce_usecs);
-
-	switch (vnic_dev_get_intr_mode(enic->vdev)) {
-	case VNIC_DEV_INTR_MODE_INTX:
-		if (tx_coalesce_usecs != rx_coalesce_usecs)
-			return -EINVAL;
-
-		intr = enic_legacy_io_intr();
-		vnic_intr_coalescing_timer_set(&enic->intr[intr],
-			INTR_COALESCE_USEC_TO_HW(tx_coalesce_usecs));
-		break;
-	case VNIC_DEV_INTR_MODE_MSI:
-		if (tx_coalesce_usecs != rx_coalesce_usecs)
-			return -EINVAL;
-
-		vnic_intr_coalescing_timer_set(&enic->intr[0],
-			INTR_COALESCE_USEC_TO_HW(tx_coalesce_usecs));
-		break;
-	case VNIC_DEV_INTR_MODE_MSIX:
-		for (i = 0; i < enic->wq_count; i++) {
-			intr = enic_msix_wq_intr(enic, i);
-			vnic_intr_coalescing_timer_set(&enic->intr[intr],
-				INTR_COALESCE_USEC_TO_HW(tx_coalesce_usecs));
-		}
-
-		for (i = 0; i < enic->rq_count; i++) {
-			intr = enic_msix_rq_intr(enic, i);
-			vnic_intr_coalescing_timer_set(&enic->intr[intr],
-				INTR_COALESCE_USEC_TO_HW(rx_coalesce_usecs));
-		}
-
-		break;
-	default:
-		break;
-	}
-
-	enic->tx_coalesce_usecs = tx_coalesce_usecs;
-	enic->rx_coalesce_usecs = rx_coalesce_usecs;
-
-	return 0;
-}
-
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 32))
-static struct ethtool_ops enic_ethtool_ops = {
-#else
-static const struct ethtool_ops enic_ethtool_ops = {
-#endif
-	.get_settings = enic_get_settings,
-	.get_drvinfo = enic_get_drvinfo,
-	.get_msglevel = enic_get_msglevel,
-	.set_msglevel = enic_set_msglevel,
-	.get_link = ethtool_op_get_link,
-	.get_strings = enic_get_strings,
-#if (LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 24))
-	.get_stats_count = enic_get_stats_count,
-#else
-	.get_sset_count = enic_get_sset_count,
-#endif
-	.get_ethtool_stats = enic_get_ethtool_stats,
-	.get_rx_csum = enic_get_rx_csum,
-	.set_rx_csum = enic_set_rx_csum,
-	.get_tx_csum = ethtool_op_get_tx_csum,
-	.set_tx_csum = enic_set_tx_csum,
-	.get_sg = ethtool_op_get_sg,
-	.set_sg = ethtool_op_set_sg,
-	.get_tso = ethtool_op_get_tso,
-	.set_tso = enic_set_tso,
-	.get_coalesce = enic_get_coalesce,
-	.set_coalesce = enic_set_coalesce,
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 24))
-	.get_flags = ethtool_op_get_flags,
-	.set_flags = ethtool_op_set_flags,
-#endif
-};
 
 static void enic_free_wq_buf(struct vnic_wq *wq, struct vnic_wq_buf *buf)
 {
@@ -523,17 +173,17 @@ static void enic_mtu_check(struct enic *enic)
 
 	if (mtu && mtu != enic->port_mtu) {
 		enic->port_mtu = mtu;
-		if (enic_is_dynamic(enic)) {
+		if (enic_is_dynamic(enic) || enic_is_sriov_vf(enic)) {
 			mtu = max_t(int, ENIC_MIN_MTU,
 				min_t(int, ENIC_MAX_MTU, mtu));
 			if (mtu != netdev->mtu)
 				schedule_work(&enic->change_mtu_work);
 		} else {
-		if (mtu < netdev->mtu)
-			netdev_warn(netdev,
-				"interface MTU (%d) set higher "
-				"than switch port MTU (%d)\n",
-				netdev->mtu, mtu);
+			if (mtu < netdev->mtu)
+				netdev_warn(netdev,
+					"interface MTU (%d) set higher "
+					"than switch port MTU (%d)\n",
+					netdev->mtu, mtu);
 		}
 	}
 }
@@ -554,10 +204,11 @@ static void enic_link_check(struct enic *enic)
 
 static void enic_notify_check(struct enic *enic)
 {
-	enic_msglvl_check(enic);
-	enic_mtu_check(enic);
-	enic_link_check(enic);
+        enic_msglvl_check(enic);
+        enic_mtu_check(enic);
+        enic_link_check(enic);
 }
+
 
 #define ENIC_TEST_INTR(pba, i) (pba & (1 << i))
 
@@ -674,9 +325,14 @@ static irqreturn_t enic_isr_msix_notify(int irq, void *data)
 {
 	struct enic *enic = data;
 	unsigned int intr = enic_msix_notify_intr(enic);
+	if(atomic_read(&enic->in_stop)){
+		vnic_intr_mask(&enic->intr[intr]);
+		(void)vnic_intr_masked(&enic->intr[intr]); /* flush write */
+		return IRQ_HANDLED;
+	}
 
-	vnic_intr_return_all_credits(&enic->intr[intr]);
 	enic_notify_check(enic);
+	vnic_intr_return_all_credits(&enic->intr[intr]);
 
 	return IRQ_HANDLED;
 }
@@ -691,9 +347,9 @@ static inline void enic_queue_wq_skb_cont(struct enic *enic,
 	for (frag = skb_shinfo(skb)->frags; len_left; frag++) {
 		len_left -= frag->size;
 		enic_queue_wq_desc_cont(wq, skb,
-			pci_map_page(enic->pdev, frag->page,
-				frag->page_offset, frag->size,
-				PCI_DMA_TODEVICE),
+			skb_frag_dma_map(&enic->pdev->dev,
+					 frag, 0, frag->size,
+					 PCI_DMA_TODEVICE),
 			frag->size,
 			(len_left == 0),	/* EOP? */
 			loopback);
@@ -730,7 +386,7 @@ static inline void enic_queue_wq_skb_csum_l4(struct enic *enic,
 {
 	unsigned int head_len = skb_headlen(skb);
 	unsigned int len_left = skb->len - head_len;
-	unsigned int hdr_len = skb_transport_offset(skb);
+	unsigned int hdr_len = skb_checksum_start_offset(skb);
 	unsigned int csum_offset = hdr_len + skb->csum_offset;
 	int eop = (len_left == 0);
 
@@ -805,14 +461,14 @@ static inline void enic_queue_wq_skb_tso(struct enic *enic,
 	for (frag = skb_shinfo(skb)->frags; len_left; frag++) {
 		len_left -= frag->size;
 		frag_len_left = frag->size;
-		offset = frag->page_offset;
+		offset = 0;
 
 		while (frag_len_left) {
 			len = min(frag_len_left,
 				(unsigned int)WQ_ENET_MAX_DESC_LEN);
-			dma_addr = pci_map_page(enic->pdev, frag->page,
-				offset, len,
-				PCI_DMA_TODEVICE);
+			dma_addr = skb_frag_dma_map(&enic->pdev->dev, frag,
+						    offset, len,
+						    PCI_DMA_TODEVICE);
 			enic_queue_wq_desc_cont(wq, skb,
 				dma_addr,
 				len,
@@ -833,7 +489,11 @@ static inline void enic_queue_wq_skb(struct enic *enic,
 	int vlan_tag_insert = 0;
 	int loopback = 0;
 
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 37))
 	if (enic->vlan_group && vlan_tx_tag_present(skb)) {
+#else
+	if (vlan_tx_tag_present(skb)) {
+#endif
 		/* VLAN tag from trunking driver */
 		vlan_tag_insert = 1;
 		vlan_tag = vlan_tx_tag_get(skb);
@@ -902,10 +562,17 @@ static netdev_tx_t enic_hard_start_xmit(struct sk_buff *skb,
 }
 
 /* dev_base_lock rwlock held, nominally process context */
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3, 1, 00))
 static struct net_device_stats *enic_get_stats(struct net_device *netdev)
+#else
+static struct rtnl_link_stats64 *enic_get_stats(struct net_device *netdev,
+	struct rtnl_link_stats64 *net_stats)
+#endif
 {
 	struct enic *enic = netdev_priv(netdev);
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3, 1, 00))
 	struct net_device_stats *net_stats = &enic->net_stats;
+#endif
 	struct vnic_stats *stats;
 
 	enic_dev_stats_dump(enic, &stats);
@@ -926,9 +593,10 @@ static struct net_device_stats *enic_get_stats(struct net_device *netdev)
 	return net_stats;
 }
 
-static void enic_reset_multicast_list(struct enic *enic)
+void enic_reset_addr_lists(struct enic *enic)
 {
 	enic->mc_count = 0;
+	enic->uc_count = 0;
 	enic->flags = 0;
 }
 
@@ -936,7 +604,7 @@ static int enic_set_mac_addr(struct net_device *netdev, char *addr)
 {
 	struct enic *enic = netdev_priv(netdev);
 
-	if (enic_is_dynamic(enic)) {
+	if (enic_is_dynamic(enic) || enic_is_sriov_vf(enic)) {
 		if (!is_valid_ether_addr(addr) && !is_zero_ether_addr(addr))
 			return -EADDRNOTAVAIL;
 	} else {
@@ -947,32 +615,6 @@ static int enic_set_mac_addr(struct net_device *netdev, char *addr)
 	memcpy(netdev->dev_addr, addr, netdev->addr_len);
 
 	return 0;
-}
-
-static int enic_dev_add_station_addr(struct enic *enic)
-{
-	int err = 0;
-
-	if (is_valid_ether_addr(enic->netdev->dev_addr)) {
-		spin_lock(&enic->devcmd_lock);
-		err = vnic_dev_add_addr(enic->vdev, enic->netdev->dev_addr);
-		spin_unlock(&enic->devcmd_lock);
-	}
-
-	return err;
-}
-
-static int enic_dev_del_station_addr(struct enic *enic)
-{
-	int err = 0;
-
-	if (is_valid_ether_addr(enic->netdev->dev_addr)) {
-		spin_lock(&enic->devcmd_lock);
-		err = vnic_dev_del_addr(enic->vdev, enic->netdev->dev_addr);
-		spin_unlock(&enic->devcmd_lock);
-	}
-
-	return err;
 }
 
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 29))
@@ -1021,75 +663,23 @@ static int enic_set_mac_address(struct net_device *netdev, void *p)
 	return enic_dev_add_station_addr(enic);
 }
 
-static int enic_dev_packet_filter(struct enic *enic, int directed,
-	int multicast, int broadcast, int promisc, int allmulti)
+static void enic_update_multicast_addr_list(struct enic *enic)
 {
-	int err;
-
-	spin_lock(&enic->devcmd_lock);
-	err = vnic_dev_packet_filter(enic->vdev, directed,
-		multicast, broadcast, promisc, allmulti);
-	spin_unlock(&enic->devcmd_lock);
-
-	return err;
-}
-
-static int enic_dev_add_multicast_addr(struct enic *enic, u8 *addr)
-{
-	int err;
-
-	spin_lock(&enic->devcmd_lock);
-	err = vnic_dev_add_addr(enic->vdev, addr);
-	spin_unlock(&enic->devcmd_lock);
-
-	return err;
-}
-
-static int enic_dev_del_multicast_addr(struct enic *enic, u8 *addr)
-{
-	int err;
-
-	spin_lock(&enic->devcmd_lock);
-	err = vnic_dev_del_addr(enic->vdev, addr);
-	spin_unlock(&enic->devcmd_lock);
-
-	return err;
-}
-
-/* netif_tx_lock held, BHs disabled */
-static void enic_set_multicast_list(struct net_device *netdev)
-{
-	struct enic *enic = netdev_priv(netdev);
+	struct net_device *netdev = enic->netdev;
 #if (LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 34))
 	struct netdev_hw_addr *ha;
 #else
 	struct dev_mc_list *list;
 #endif
-	int directed = 1;
-	int multicast = (netdev->flags & IFF_MULTICAST) ? 1 : 0;
-	int broadcast = (netdev->flags & IFF_BROADCAST) ? 1 : 0;
-	int promisc = (netdev->flags & IFF_PROMISC) ? 1 : 0;
 	unsigned int mc_count = netdev_mc_count(netdev);
-	int allmulti = (netdev->flags & IFF_ALLMULTI) ||
-		mc_count > ENIC_MULTICAST_PERFECT_FILTERS;
-	unsigned int flags = netdev->flags | (allmulti ? IFF_ALLMULTI : 0);
 	u8 mc_addr[ENIC_MULTICAST_PERFECT_FILTERS][ETH_ALEN];
 	unsigned int i, j;
 
-	/* For ESX VFs, we ignore Rx filters from vmkernel.
-	 * Rx filters will get installed on VF when VM connects.
-	 */
-
-	if (enic_is_dynamic(enic))
-		return;
-
-	if (mc_count > ENIC_MULTICAST_PERFECT_FILTERS)
+	if (mc_count > ENIC_MULTICAST_PERFECT_FILTERS) {
+		netdev_warn(netdev, "Registering only %d out of %d "
+			"multicast addresses\n",
+			ENIC_MULTICAST_PERFECT_FILTERS, mc_count);
 		mc_count = ENIC_MULTICAST_PERFECT_FILTERS;
-
-	if (enic->flags != flags) {
-		enic->flags = flags;
-		enic_dev_packet_filter(enic, directed,
-			multicast, broadcast, promisc, allmulti);
 	}
 
 	/* Is there an easier way?  Trying to minimize to
@@ -1119,7 +709,7 @@ static void enic_set_multicast_list(struct net_device *netdev)
 				mc_addr[j]) == 0)
 				break;
 		if (j == mc_count)
-			enic_dev_del_multicast_addr(enic, enic->mc_addr[i]);
+			enic_dev_del_addr(enic, enic->mc_addr[i]);
 	}
 
 	for (i = 0; i < mc_count; i++) {
@@ -1128,7 +718,7 @@ static void enic_set_multicast_list(struct net_device *netdev)
 				enic->mc_addr[j]) == 0)
 				break;
 		if (j == enic->mc_count)
-			enic_dev_add_multicast_addr(enic, mc_addr[i]);
+			enic_dev_add_addr(enic, mc_addr[i]);
 	}
 
 	/* Save the list to compare against next time
@@ -1140,32 +730,109 @@ static void enic_set_multicast_list(struct net_device *netdev)
 	enic->mc_count = mc_count;
 }
 
-/* rtnl lock is held */
-static void enic_vlan_rx_register(struct net_device *netdev,
-	struct vlan_group *vlan_group)
+static void enic_update_unicast_addr_list(struct enic *enic)
 {
-	struct enic *enic = netdev_priv(netdev);
-	enic->vlan_group = vlan_group;
+#if (LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 22))
+	struct net_device *netdev = enic->netdev;
+#if (LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 30))
+	struct netdev_hw_addr *ha;
+#else
+	struct dev_addr_list *list;
+#endif
+	unsigned int uc_count = netdev_uc_count(netdev);
+	u8 uc_addr[ENIC_UNICAST_PERFECT_FILTERS][ETH_ALEN];
+	unsigned int i, j;
+
+	if (uc_count > ENIC_UNICAST_PERFECT_FILTERS) {
+		netdev_warn(netdev, "Registering only %d out of %d "
+			"unicast addresses\n",
+			ENIC_UNICAST_PERFECT_FILTERS, uc_count);
+		uc_count = ENIC_UNICAST_PERFECT_FILTERS;
+	}
+
+	/* Is there an easier way?  Trying to minimize to
+	 * calls to add/del unicast addrs.  We keep the
+	 * addrs from the last call in enic->uc_addr and
+	 * look for changes to add/del.
+	 */
+
+	i = 0;
+#if (LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 30))
+	netdev_for_each_uc_addr(ha, netdev) {
+		if (i == uc_count)
+			break;
+		memcpy(uc_addr[i++], ha->addr, ETH_ALEN);
+	}
+#else
+	netdev_for_each_uc_addr(list, netdev) {
+		if (i == uc_count)
+			break;
+		memcpy(uc_addr[i++], list->da_addr, ETH_ALEN);
+	}
+#endif
+
+	for (i = 0; i < enic->uc_count; i++) {
+		for (j = 0; j < uc_count; j++)
+			if (compare_ether_addr(enic->uc_addr[i],
+				uc_addr[j]) == 0)
+				break;
+		if (j == uc_count)
+			enic_dev_del_addr(enic, enic->uc_addr[i]);
+	}
+
+	for (i = 0; i < uc_count; i++) {
+		for (j = 0; j < enic->uc_count; j++)
+			if (compare_ether_addr(uc_addr[i],
+				enic->uc_addr[j]) == 0)
+				break;
+		if (j == enic->uc_count)
+			enic_dev_add_addr(enic, uc_addr[i]);
+	}
+
+	/* Save the list to compare against next time
+	 */
+
+	for (i = 0; i < uc_count; i++)
+		memcpy(enic->uc_addr[i], uc_addr[i], ETH_ALEN);
+
+	enic->uc_count = uc_count;
+#endif
 }
 
-/* rtnl lock is held */
-static void enic_vlan_rx_add_vid(struct net_device *netdev, u16 vid)
+/* netif_tx_lock held, BHs disabled */
+static void enic_set_rx_mode(struct net_device *netdev)
 {
 	struct enic *enic = netdev_priv(netdev);
+	int directed = 1;
+	int multicast = (netdev->flags & IFF_MULTICAST) ? 1 : 0;
+	int broadcast = (netdev->flags & IFF_BROADCAST) ? 1 : 0;
+	int promisc = (netdev->flags & IFF_PROMISC) ||
+		netdev_uc_count(netdev) > ENIC_UNICAST_PERFECT_FILTERS;
+	int allmulti = (netdev->flags & IFF_ALLMULTI) ||
+		netdev_mc_count(netdev) > ENIC_MULTICAST_PERFECT_FILTERS;
+	unsigned int flags = netdev->flags |
+		(allmulti ? IFF_ALLMULTI : 0) |
+		(promisc ? IFF_PROMISC : 0);
 
-	spin_lock(&enic->devcmd_lock);
-	enic_add_vlan(enic, vid);
-	spin_unlock(&enic->devcmd_lock);
-}
+	/* For ESX VFs and PFs owned by PTS, 
+	 * we ignore Rx filters from vmkernel.
+	 * Rx filters will get installed on VF when VM connects.
+	 */
 
-/* rtnl lock is held */
-static void enic_vlan_rx_kill_vid(struct net_device *netdev, u16 vid)
-{
-	struct enic *enic = netdev_priv(netdev);
+	if (enic->owner == OWNER_PTS || enic_is_dynamic(enic))
+		return;
 
-	spin_lock(&enic->devcmd_lock);
-	enic_del_vlan(enic, vid);
-	spin_unlock(&enic->devcmd_lock);
+	if (enic->flags != flags) {
+		enic->flags = flags;
+		enic_dev_packet_filter(enic, directed,
+			multicast, broadcast, promisc, allmulti);
+	}
+
+	if (!promisc) {
+		enic_update_unicast_addr_list(enic);
+		if (!allmulti)
+			enic_update_multicast_addr_list(enic);
+	}
 }
 
 
@@ -1179,6 +846,10 @@ static int enic_do_ioctl(struct net_device *netdev, struct ifreq *ifr, int cmd)
 	int bounce = 0;
 	void *bounce_buf = NULL;
 	int ret = 0;
+	struct pci_dev *pdev;
+	struct pci_bus *bus;
+	int segment;
+	unsigned int devfn;
 
 	switch(cmd) {
 
@@ -1200,23 +871,36 @@ static int enic_do_ioctl(struct net_device *netdev, struct ifreq *ifr, int cmd)
 		case CMD_INIT_PROV_INFO:
 		case CMD_STATS_DUMP:
 		case CMD_CONFIG_INFO_GET:
+		case CMD_PROV_INFO_UPDATE:
 			
 			/* These require a DMA'able bounce buffer
 			 * allocated from enic's heap.  Well copy
 			 * out of this bounce buffer into supplied
 			 * buffer when devcmd is finished.
 			 */
+			if (io->devcmd.cmd == CMD_PROV_INFO_UPDATE)
+				printk(KERN_INFO "enic: %s: Received "
+					"CMD_PROV_INFO_UPDATE\n", __func__);
 
 			bounce = 1;
 
 			break;
 
 		case CMD_LOGICAL_UPLINK:
+			/*
+			 * PTS requests for ownership of static vnics through
+			 * this devcmd.
+			 */
+			if (io->devcmd.a0 == 1)
+				enic->owner = OWNER_PTS;
+			else
+				enic->owner = OWNER_NETDEV;
 		case CMD_CAPABILITY:
 
 			if (cmd == ENIC_DEVCMD_PROXY)
 				return -EOPNOTSUPP;
 
+		case CMD_GET_MAC_ADDR:
 		case CMD_PACKET_FILTER:
 		case CMD_ADDR_ADD:
 		case CMD_ADDR_DEL:
@@ -1272,25 +956,39 @@ static int enic_do_ioctl(struct net_device *netdev, struct ifreq *ifr, int cmd)
                 switch (io->drvcmd.cmd) {
 
                 case DRVCMD_GET_NUM_WQ:
-			*a0 = vnic_dev_get_res_count(enic->vdev, 
-					RES_TYPE_WQ);
+			*a0 = min_t(unsigned int, 
+					vnic_dev_get_res_count(enic->vdev,
+					RES_TYPE_WQ), ENIC_WQ_MAX);
 			break;
 
                 case DRVCMD_GET_NUM_RQ:
-			*a0 = vnic_dev_get_res_count(enic->vdev,
-                                        RES_TYPE_RQ);
+			*a0 = min_t(unsigned int, 
+					vnic_dev_get_res_count(enic->vdev,
+					RES_TYPE_RQ), ENIC_RQ_MAX);
 			break;
 
                 case DRVCMD_GET_NUM_CQ:
-			*a0 = vnic_dev_get_res_count(enic->vdev,
-                                        RES_TYPE_CQ);
+			*a0 = min_t(unsigned int, 
+					vnic_dev_get_res_count(enic->vdev,
+					RES_TYPE_CQ), ENIC_CQ_MAX);
 			break;
 
                 case DRVCMD_GET_NUM_INTRS:
-			*a0 = vnic_dev_get_res_count(enic->vdev,
-                                        RES_TYPE_INTR_CTRL);
+			*a0 = min_t(unsigned int, 
+					vnic_dev_get_res_count(enic->vdev,
+					RES_TYPE_INTR_CTRL), ENIC_INTR_MAX);
 			break;
 
+		case DRVCMD_GET_SBDF:
+			pdev = enic->pdev;
+			bus = pdev->bus;
+			segment = pci_domain_nr(bus);
+			devfn = pdev->devfn;
+			*a0 = (segment << 16) 
+				| ((bus->number & 0xff) << 8)
+				| (((PCI_SLOT(devfn)) & 0x1f) << 3)
+				| ((PCI_FUNC(devfn)) & 0x07);
+			break;
 		default:
 			return -EOPNOTSUPP;
 
@@ -1306,6 +1004,16 @@ static int enic_do_ioctl(struct net_device *netdev, struct ifreq *ifr, int cmd)
 	return ret;
 }
 
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3, 1, 00))
+/* rtnl lock is held */
+static void enic_vlan_rx_register(struct net_device *netdev,
+	struct vlan_group *vlan_group)
+{
+	struct enic *enic = netdev_priv(netdev);
+	enic->vlan_group = vlan_group;
+}
+
+#endif
 /* netif_tx_lock held, BHs disabled */
 static void enic_tx_timeout(struct net_device *netdev)
 {
@@ -1343,62 +1051,6 @@ static int enic_rq_alloc_buf(struct vnic_rq *rq)
 
 	enic_queue_rq_desc(rq, skb, os_buf_index,
 		dma_addr, len);
-
-	return 0;
-}
-
-static int enic_rq_alloc_buf_a1(struct vnic_rq *rq)
-{
-	struct rq_enet_desc *desc = vnic_rq_next_desc(rq);
-
-	if (vnic_rq_posting_soon(rq)) {
-
-		/* SW workaround for A0 HW erratum: if we're just about
-		 * to write posted_index, insert a dummy desc
-		 * of type resvd
-		 */
-
-		rq_enet_desc_enc(desc, 0, RQ_ENET_TYPE_RESV2, 0);
-		vnic_rq_post(rq, 0, 0, 0, 0);
-	} else {
-		return enic_rq_alloc_buf(rq);
-	}
-
-	return 0;
-}
-
-static int enic_dev_hw_version(struct enic *enic,
-	enum vnic_dev_hw_version *hw_ver)
-{
-	int err;
-
-	spin_lock(&enic->devcmd_lock);
-	err = vnic_dev_hw_version(enic->vdev, hw_ver);
-	spin_unlock(&enic->devcmd_lock);
-
-	return err;
-}
-
-static int enic_set_rq_alloc_buf(struct enic *enic)
-{
-	enum vnic_dev_hw_version hw_ver;
-	int err;
-
-	err = enic_dev_hw_version(enic, &hw_ver);
-	if (err)
-		return err;
-
-	switch (hw_ver) {
-	case VNIC_DEV_HW_VER_A1:
-		enic->rq_alloc_buf = enic_rq_alloc_buf_a1;
-		break;
-	case VNIC_DEV_HW_VER_A2:
-	case VNIC_DEV_HW_VER_UNKNOWN:
-		enic->rq_alloc_buf = enic_rq_alloc_buf;
-		break;
-	default:
-		return -ENODEV;
-	}
 
 	return 0;
 }
@@ -1459,9 +1111,15 @@ static void enic_rq_indicate_buf(struct vnic_rq *rq,
 		skb_put(skb, bytes_written);
 		skb->protocol = eth_type_trans(skb, netdev);
 
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3, 0, 00))
 		if (enic->csum_rx_enabled && !csum_not_calc) {
-			skb->csum = htons(checksum);
-			skb->ip_summed = CHECKSUM_COMPLETE;
+#else
+		if ((netdev->features & NETIF_F_RXCSUM) && !csum_not_calc) {
+#endif
+			if(likely(tcp_udp_csum_ok)) {
+				skb->csum = htons(checksum);
+				skb->ip_summed = CHECKSUM_COMPLETE;
+			}
 		}
 
 		skb->dev = netdev;
@@ -1469,8 +1127,13 @@ static void enic_rq_indicate_buf(struct vnic_rq *rq,
 		netdev->last_rx = jiffies;
 #endif
 
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3, 0, 00))
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 36))
 		if (enic->vlan_group && vlan_stripped &&
 			(vlan_tci & CQ_ENET_RQ_DESC_VLAN_TCI_VLAN_MASK)) {
+#else
+		if (vlan_stripped) {
+#endif
 
 			if (netdev->features & NETIF_F_GRO)
 				vlan_gro_receive(&enic->napi[q_number],
@@ -1487,6 +1150,15 @@ static void enic_rq_indicate_buf(struct vnic_rq *rq,
 				netif_receive_skb(skb);
 
 		}
+#else
+		if (vlan_stripped)
+			__vlan_hwaccel_put_tag(skb, vlan_tci);
+
+		if (netdev->features & NETIF_F_GRO)
+			napi_gro_receive(&enic->napi[q_number], skb);
+		else
+			netif_receive_skb(skb);
+#endif
 	} else {
 
 		/* Buffer overflow
@@ -1542,7 +1214,7 @@ static int enic_poll(struct napi_struct *napi, int budget)
 			0 /* don't unmask intr */,
 			0 /* don't reset intr timer */);
 
-	err = vnic_rq_fill(&enic->rq[0], enic->rq_alloc_buf);
+	err = vnic_rq_fill(&enic->rq[0], enic_rq_alloc_buf);
 
 	/* Buffer allocation failed. Stay in polling
 	 * mode so we can try to fill the ring again.
@@ -1597,7 +1269,7 @@ static int enic_poll_msix(struct napi_struct *napi, int budget)
 			0 /* don't unmask intr */,
 			0 /* don't reset intr timer */);
 
-	err = vnic_rq_fill(&enic->rq[rq], enic->rq_alloc_buf);
+	err = vnic_rq_fill(&enic->rq[rq], enic_rq_alloc_buf);
 
 	/* Buffer allocation failed. Stay in polling mode
 	 * so we can try to fill the ring again.
@@ -1772,39 +1444,6 @@ static int enic_dev_notify_set(struct enic *enic)
 	return err;
 }
 
-static int enic_dev_notify_unset(struct enic *enic)
-{
-	int err;
-
-	spin_lock(&enic->devcmd_lock);
-	err = vnic_dev_notify_unset(enic->vdev);
-	spin_unlock(&enic->devcmd_lock);
-
-	return err;
-}
-
-static int enic_dev_enable(struct enic *enic)
-{
-	int err;
-
-	spin_lock(&enic->devcmd_lock);
-	err = vnic_dev_enable_wait(enic->vdev);
-	spin_unlock(&enic->devcmd_lock);
-
-	return err;
-}
-
-static int enic_dev_disable(struct enic *enic)
-{
-	int err;
-
-	spin_lock(&enic->devcmd_lock);
-	err = vnic_dev_disable(enic->vdev);
-	spin_unlock(&enic->devcmd_lock);
-
-	return err;
-}
-
 static void enic_notify_timer_start(struct enic *enic)
 {
 	switch (vnic_dev_get_intr_mode(enic->vdev)) {
@@ -1814,7 +1453,7 @@ static void enic_notify_timer_start(struct enic *enic)
 	default:
 		/* Using intr for notification for INTx/MSI-X */
 		break;
-	};
+	}
 }
 
 /* rtnl lock is held, process context */
@@ -1844,7 +1483,7 @@ static int enic_open(struct net_device *netdev)
 	}
 
 	for (i = 0; i < enic->rq_count; i++) {
-		vnic_rq_fill(&enic->rq[i], enic->rq_alloc_buf);
+		vnic_rq_fill(&enic->rq[i], enic_rq_alloc_buf);
 		/* Need at least one buffer on ring to get going */
 		if (vnic_rq_desc_used(&enic->rq[i]) == 0) {
 			netdev_err(netdev, "Unable to alloc receive buffers\n");
@@ -1857,9 +1496,11 @@ static int enic_open(struct net_device *netdev)
 		vnic_wq_enable(&enic->wq[i]);
 	for (i = 0; i < enic->rq_count; i++)
 		vnic_rq_enable(&enic->rq[i]);
+	
+	if (!enic_is_dynamic(enic) && !enic_is_sriov_vf(enic))
+		enic_dev_add_station_addr(enic);
 
-	enic_dev_add_station_addr(enic);
-	enic_set_multicast_list(netdev);
+	enic_set_rx_mode(netdev);
 
 	netif_wake_queue(netdev);
 
@@ -1867,6 +1508,8 @@ static int enic_open(struct net_device *netdev)
 		napi_enable(&enic->napi[i]);
 
 	enic_dev_enable(enic);
+
+        atomic_set(&enic->in_stop, 0);
 
 	for (i = 0; i < enic->intr_count; i++)
 		vnic_intr_unmask(&enic->intr[i]);
@@ -1877,6 +1520,7 @@ static int enic_open(struct net_device *netdev)
 
 err_out_notify_unset:
 	enic_dev_notify_unset(enic);
+
 err_out_free_intr:
 	enic_free_intr(enic);
 
@@ -1890,23 +1534,26 @@ static int enic_stop(struct net_device *netdev)
 	unsigned int i;
 	int err;
 
+	atomic_set(&enic->in_stop, 1);
+
 	for (i = 0; i < enic->intr_count; i++) {
 		vnic_intr_mask(&enic->intr[i]);
 		(void)vnic_intr_masked(&enic->intr[i]); /* flush write */
 	}
 
 	enic_synchronize_irqs(enic);
-
 	del_timer_sync(&enic->notify_timer);
 
 	enic_dev_disable(enic);
-
 	for (i = 0; i < enic->rq_count; i++)
 		napi_disable(&enic->napi[i]);
+	
 
 	enic_upt_link_down(enic);
 	netif_tx_disable(netdev);
-	enic_dev_del_station_addr(enic);
+
+	if (!enic_is_dynamic(enic) && !enic_is_sriov_vf(enic))
+		enic_dev_del_station_addr(enic);
 
 	for (i = 0; i < enic->wq_count; i++) {
 		err = vnic_wq_disable(&enic->wq[i]);
@@ -1918,10 +1565,9 @@ static int enic_stop(struct net_device *netdev)
 		if (err)
 			return err;
 	}
-
 	enic_dev_notify_unset(enic);
 	enic_free_intr(enic);
-
+			
 	for (i = 0; i < enic->wq_count; i++)
 		vnic_wq_clean(&enic->wq[i], enic_free_wq_buf);
 	for (i = 0; i < enic->rq_count; i++)
@@ -1931,7 +1577,9 @@ static int enic_stop(struct net_device *netdev)
 	for (i = 0; i < enic->intr_count; i++)
 		vnic_intr_clean(&enic->intr[i]);
 
+
 	enic_upt_prepare_for(enic);
+
 	return 0;
 }
 
@@ -1943,7 +1591,7 @@ static int enic_change_mtu(struct net_device *netdev, int new_mtu)
 	if (new_mtu < ENIC_MIN_MTU || new_mtu > ENIC_MAX_MTU)
 		return -EINVAL;
 
-	if (enic_is_dynamic(enic))
+	if (enic_is_dynamic(enic) || enic_is_sriov_vf(enic))
 		return 0;
 
 	if (running)
@@ -1976,7 +1624,7 @@ static void enic_change_mtu_work(struct work_struct *work)
 
 	/* Stop RQ */
 	del_timer_sync(&enic->notify_timer);
-	
+
 	for (i = 0; i < enic->rq_count; i++)
 		napi_disable(&enic->napi[i]);
 
@@ -1993,7 +1641,7 @@ static void enic_change_mtu_work(struct work_struct *work)
 
 	/* Fill RQ with new_mtu-sized buffers */
 	netdev->mtu = new_mtu;
-	vnic_rq_fill(&enic->rq[0], enic->rq_alloc_buf);
+	vnic_rq_fill(&enic->rq[0], enic_rq_alloc_buf);
 	/* Need at least one buffer on ring to get going */
 	if (vnic_rq_desc_used(&enic->rq[0]) == 0) {
 		netdev_err(netdev, "Unable to alloc receive buffers.\n");
@@ -2213,29 +1861,6 @@ static int enic_set_rss_nic_cfg(struct enic *enic)
 		rss_hash_bits, rss_base_cpu, rss_enable);
 }
 
-static int enic_dev_hang_notify(struct enic *enic)
-{
-	int err;
-
-	spin_lock(&enic->devcmd_lock);
-	err = vnic_dev_hang_notify(enic->vdev);
-	spin_unlock(&enic->devcmd_lock);
-
-	return err;
-}
-
-int enic_dev_set_ig_vlan_rewrite_mode(struct enic *enic)
-{
-	int err;
-
-	spin_lock(&enic->devcmd_lock);
-	err = vnic_dev_set_ig_vlan_rewrite_mode(enic->vdev,
-		IG_VLAN_REWRITE_MODE_PRIORITY_TAG_DEFAULT_VLAN);
-	spin_unlock(&enic->devcmd_lock);
-
-	return err;
-}
-
 static void enic_reset(struct work_struct *work)
 {
 	struct enic *enic = container_of(work, struct enic, reset);
@@ -2248,7 +1873,7 @@ static void enic_reset(struct work_struct *work)
 	enic_dev_hang_notify(enic);
 	enic_stop(enic->netdev);
 	enic_dev_hang_reset(enic);
-	enic_reset_multicast_list(enic);
+	enic_reset_addr_lists(enic);
 	enic_init_vnic_resources(enic);
 	enic_set_rss_nic_cfg(enic);
 	enic_dev_set_ig_vlan_rewrite_mode(enic);
@@ -2259,7 +1884,7 @@ static void enic_reset(struct work_struct *work)
 
 static int enic_set_intr_mode(struct enic *enic)
 {
-	unsigned int n = min_t(unsigned int, enic->rq_count, ENIC_RQ_MAX);
+	unsigned int n = 1;
 	unsigned int m = 1;
 	unsigned int i;
 
@@ -2394,12 +2019,21 @@ static const struct net_device_ops enic_netdev_dynamic_ops = {
 	.ndo_open		= enic_open,
 	.ndo_stop		= enic_stop,
 	.ndo_start_xmit		= enic_hard_start_xmit,
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3, 1, 00))
 	.ndo_get_stats		= enic_get_stats,
+#else
+	.ndo_get_stats64	= enic_get_stats,
+#endif
 	.ndo_validate_addr	= eth_validate_addr,
-	.ndo_set_multicast_list	= enic_set_multicast_list,
+	.ndo_set_rx_mode	= enic_set_rx_mode,
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3, 1, 00))
+	.ndo_set_multicast_list = enic_set_rx_mode,
+#endif
 	.ndo_set_mac_address	= enic_set_mac_address_dynamic,
 	.ndo_change_mtu		= enic_change_mtu,
-	.ndo_vlan_rx_register	= enic_vlan_rx_register,
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3, 1, 00))
+	.ndo_vlan_rx_register   = enic_vlan_rx_register,
+#endif
 	.ndo_vlan_rx_add_vid	= enic_vlan_rx_add_vid,
 	.ndo_vlan_rx_kill_vid	= enic_vlan_rx_kill_vid,
 	.ndo_tx_timeout		= enic_tx_timeout,
@@ -2412,12 +2046,21 @@ static const struct net_device_ops enic_netdev_ops = {
 	.ndo_open		= enic_open,
 	.ndo_stop		= enic_stop,
 	.ndo_start_xmit		= enic_hard_start_xmit,
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3, 1, 00))
 	.ndo_get_stats		= enic_get_stats,
+#else
+	.ndo_get_stats64	= enic_get_stats,
+#endif
 	.ndo_validate_addr	= eth_validate_addr,
-	.ndo_set_mac_address 	= enic_set_mac_address,
-	.ndo_set_multicast_list	= enic_set_multicast_list,
+	.ndo_set_mac_address	= enic_set_mac_address,
+	.ndo_set_rx_mode	= enic_set_rx_mode,
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3, 1, 00))
+	.ndo_set_multicast_list	= enic_set_rx_mode,
+#endif
 	.ndo_change_mtu		= enic_change_mtu,
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3, 1, 00))
 	.ndo_vlan_rx_register	= enic_vlan_rx_register,
+#endif
 	.ndo_vlan_rx_add_vid	= enic_vlan_rx_add_vid,
 	.ndo_vlan_rx_kill_vid	= enic_vlan_rx_kill_vid,
 	.ndo_tx_timeout		= enic_tx_timeout,
@@ -2444,6 +2087,14 @@ int enic_dev_init(struct enic *enic)
 	struct net_device *netdev = enic->netdev;
 	unsigned int i;
 	int err;
+
+	/* Get interrupt coalesce timer info */
+	err = enic_dev_intr_coal_timer_info(enic);
+	if (err) {
+		dev_warn(dev, "Using default conversion factor for "
+			"interrupt coalesce timer\n");
+		vnic_dev_intr_coal_timer_info_default(enic->vdev);
+	}
 
 	/* Get vNIC configuration
 	 */
@@ -2492,22 +2143,9 @@ int enic_dev_init(struct enic *enic)
 
 	enic_init_vnic_resources(enic);
 
-	err = enic_set_rq_alloc_buf(enic);
-	if (err) {
-		dev_err(dev, "Failed to set RQ buffer allocator, aborting\n");
-		goto err_out_free_vnic_resources;
-	}
-
 	err = enic_set_rss_nic_cfg(enic);
 	if (err) {
 		dev_err(dev, "Failed to config nic, aborting\n");
-		goto err_out_free_vnic_resources;
-	}
-
-	err = enic_dev_set_ig_vlan_rewrite_mode(enic);
-	if (err) {
-		dev_err(dev,
-			"Failed to set ingress vlan rewrite mode, aborting.\n");
 		goto err_out_free_vnic_resources;
 	}
 
@@ -2549,7 +2187,6 @@ static int __devinit enic_probe(struct pci_dev *pdev,
 	int using_dac = 0;
 	unsigned int i;
 	int err;
-
 	/* Allocate net device structure and initialize.  Private
 	 * instance data is initialized to zero.
 	 */
@@ -2589,11 +2226,11 @@ static int __devinit enic_probe(struct pci_dev *pdev,
 	pci_set_master(pdev);
 
 	/* Query PCI controller on system for DMA addressing
-	 * limitation for the device.  Try 40-bit first, and
+	 * limitation for the device.  Try 64-bit first, and
 	 * fail to 32-bit.
 	 */
 
-	err = pci_set_dma_mask(pdev, DMA_BIT_MASK(40));
+	err = pci_set_dma_mask(pdev, DMA_BIT_MASK(64));
 	if (err) {
 		err = pci_set_dma_mask(pdev, DMA_BIT_MASK(32));
 		if (err) {
@@ -2607,10 +2244,10 @@ static int __devinit enic_probe(struct pci_dev *pdev,
 			goto err_out_release_regions;
 		}
 	} else {
-		err = pci_set_consistent_dma_mask(pdev, DMA_BIT_MASK(40));
+		err = pci_set_consistent_dma_mask(pdev, DMA_BIT_MASK(64));
 		if (err) {
 			dev_err(dev, "Unable to obtain %u-bit DMA "
-				"for consistent allocations, aborting\n", 40);
+				"for consistent allocations, aborting\n", 64);
 			goto err_out_release_regions;
 		}
 		using_dac = 1;
@@ -2643,13 +2280,30 @@ static int __devinit enic_probe(struct pci_dev *pdev,
 		goto err_out_iounmap;
 	}
 
+
 	/* Issue device open to get device in known state
 	 */
 
 	err = enic_dev_open(enic);
 	if (err) {
 		dev_err(dev, "vNIC dev open failed, aborting\n");
-		goto err_out_vnic_unregister;
+		goto err_out_disable_sriov;
+	}
+
+	/* Setup devcmd lock
+	 */
+
+	spin_lock_init(&enic->devcmd_lock);
+
+	/*
+	 * Set ingress vlan rewrite mode before vnic initialization
+	 */
+
+	err = enic_dev_set_ig_vlan_rewrite_mode(enic);
+	if (err) {
+		dev_err(dev,
+			"Failed to set ingress vlan rewrite mode, aborting.\n");
+		goto err_out_dev_close;
 	}
 
 	/* Issue device init to initialize the vnic-to-switch link.
@@ -2674,11 +2328,6 @@ static int __devinit enic_probe(struct pci_dev *pdev,
 			goto err_out_dev_close;
 		}
 	}
-
-	/* Setup devcmd lock
-	 */
-
-	spin_lock_init(&enic->devcmd_lock);
 
 	err = enic_dev_init(enic);
 	if (err) {
@@ -2719,7 +2368,10 @@ static int __devinit enic_probe(struct pci_dev *pdev,
 	netdev->stop = enic_stop;
 	netdev->hard_start_xmit = enic_hard_start_xmit;
 	netdev->get_stats = enic_get_stats;
-	netdev->set_multicast_list = enic_set_multicast_list;
+#if (LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 22))
+	netdev->set_rx_mode = enic_set_rx_mode;
+#endif
+	netdev->set_multicast_list = enic_set_rx_mode;
 	netdev->set_mac_address = enic_set_mac_address;
 	netdev->change_mtu = enic_change_mtu;
 	netdev->vlan_rx_register = enic_vlan_rx_register;
@@ -2731,14 +2383,14 @@ static int __devinit enic_probe(struct pci_dev *pdev,
 	netdev->poll_controller = enic_poll_controller;
 #endif
 #else
-	if (enic_is_dynamic(enic))
+	if (enic_is_dynamic(enic) || enic_is_sriov_vf(enic))
 		netdev->netdev_ops = &enic_netdev_dynamic_ops;
 	else
 		netdev->netdev_ops = &enic_netdev_ops;
 #endif
 
 	netdev->watchdog_timeo = 2 * HZ;
-	netdev->ethtool_ops = &enic_ethtool_ops;
+	enic_set_ethtool_ops(enic);
 
 	netdev->features |= NETIF_F_HW_VLAN_TX | NETIF_F_HW_VLAN_RX;
 	if (ENIC_SETTING(enic, LOOP)) {
@@ -2748,14 +2400,33 @@ static int __devinit enic_probe(struct pci_dev *pdev,
 		dev_info(dev, "loopback tag=0x%04x\n", enic->loop_tag);
 	}
 	if (ENIC_SETTING(enic, TXCSUM))
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3, 0, 00))
 		netdev->features |= NETIF_F_SG | NETIF_F_HW_CSUM;
+#else
+		netdev->hw_features |= NETIF_F_SG | NETIF_F_HW_CSUM;
+#endif
 	if (ENIC_SETTING(enic, TSO))
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3, 0, 00))
 		netdev->features |= NETIF_F_TSO |
+#else
+		netdev->hw_features |= NETIF_F_TSO |
+#endif
 			NETIF_F_TSO6 | NETIF_F_TSO_ECN;
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3, 0, 00))
 	if (ENIC_SETTING(enic, LRO))
 		netdev->features |= NETIF_F_GRO;
+
+	enic->csum_rx_enabled = ENIC_SETTING(enic, RXCSUM);
+
+#else
+	if (ENIC_SETTING(enic, RXCSUM))
+		netdev->hw_features |= NETIF_F_RXCSUM;
+
+	netdev->features |= netdev->hw_features;
+
+#endif
 	if (using_dac)
-		netdev->features |= NETIF_F_DMA48;
+		netdev->features |= NETIF_F_HIGHDMA;
 
 	if (enic_is_dynamic(enic))
 		netdev->features |= NETIF_F_HIDDEN_UPLINK;
@@ -2766,7 +2437,9 @@ static int __devinit enic_probe(struct pci_dev *pdev,
 	 */
 
 	netdev->features |= NETIF_F_UPT;
-	enic->csum_rx_enabled = ENIC_SETTING(enic, RXCSUM);
+#if (LINUX_VERSION_CODE > KERNEL_VERSION(3, 1, 00))
+	netdev->priv_flags |= IFF_UNICAST_FLT;
+#endif
 
 
 	/* For ESX dynamic vnics, override the normal netdev
@@ -2775,14 +2448,14 @@ static int __devinit enic_probe(struct pci_dev *pdev,
 	 * when visor comes up, when the vmnic0 is a dynamic vnic.
 	 * We want etherswitch binding to the first non-dynamic vmnic.
 	 */
-
+/*
 	if (enic_is_dynamic(enic)) {
 		static unsigned int vf = 0;
 		netdev->useDriverNamingDevice = 1;
 		snprintf(netdev->name, sizeof(netdev->name),
 			"vf_vmnic%d", vf++);
 	}
-
+*/
 	/* Set UPT ops for dynamic vnics
 	 */
 
@@ -2794,14 +2467,14 @@ static int __devinit enic_probe(struct pci_dev *pdev,
 		dev_err(dev, "Cannot register net device, aborting\n");
 		goto err_out_dev_deinit;
 	}
-
+	
 	return 0;
 
 err_out_dev_deinit:
 	enic_dev_deinit(enic);
 err_out_dev_close:
 	vnic_dev_close(enic->vdev);
-err_out_vnic_unregister:
+err_out_disable_sriov:
 	vnic_dev_unregister(enic->vdev);
 err_out_iounmap:
 	enic_iounmap(enic);
@@ -2823,7 +2496,12 @@ static void __devexit enic_remove(struct pci_dev *pdev)
 	if (netdev) {
 		struct enic *enic = netdev_priv(netdev);
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 38))
+		cancel_work_sync(&enic->reset);
+		cancel_work_sync(&enic->change_mtu_work);
+#else
 		flush_scheduled_work();
+#endif
 		unregister_netdev(netdev);
 		enic_dev_deinit(enic);
 		vnic_dev_close(enic->vdev);

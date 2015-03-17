@@ -1,6 +1,7 @@
 /*
  * QLogic iSCSI HBA Driver
  * Copyright (c)   2003-2006 QLogic Corporation
+ * Portions Copyright 2009-2011 VMware, Inc.
  *
  * See LICENSE.qla4xxx for copyright and licensing details.
  */
@@ -89,7 +90,7 @@ int gratuitous_arp = 1;
 module_param(gratuitous_arp, int, S_IRUGO | S_IRUSR);
 MODULE_PARM_DESC(gratuitous_arp, "Gratuitous ARP");
 
-#define MAX_Q_DEPTH    32
+#define MAX_Q_DEPTH    128
 static int ql4xmaxqdepth = MAX_Q_DEPTH;
 module_param(ql4xmaxqdepth, int, S_IRUGO|S_IWUSR);
 MODULE_PARM_DESC(ql4xmaxqdepth,
@@ -867,6 +868,27 @@ void qla4xxx_mark_device_missing(struct scsi_qla_host *ha,
    qla4xxx_conn_stop(ddb_entry->conn, STOP_CONN_RECOVER);
 }
 
+
+#ifdef __VMKLNX__
+/***
+ * qla4xxx_mark_device_lost - inform iSCSI transport a session has been lost
+ * @ddb_entry: Pointer to device database entry
+ *
+ * This routine reports the device is lost to the iscsi transport.
+ **/
+void qla4xxx_mark_device_lost(struct ddb_entry *ddb_entry)
+{
+   struct iscsi_cls_conn *conn = ddb_entry->conn;
+
+   dev_info(&ddb_entry->ha->pdev->dev,
+      "scsi%ld: %s: index [%d] os [%d] LOST session\n",
+      ddb_entry->ha->host_no, __func__, ddb_entry->fw_ddb_index,
+      ddb_entry->os_target_id);
+
+   iscsi_lost_session(conn->session);
+}
+#endif /* __VMKLNX__ */
+
 /***
  * qla4xxx_get_new_srb - Allocate memory for a local srb.
  * @ha: Pointer to host adapter structure.
@@ -895,6 +917,10 @@ static struct srb* qla4xxx_get_new_srb(struct scsi_qla_host *ha,
    srb->flags = 0;
    cmd->SCp.ptr = (void *)srb;
    cmd->scsi_done = done;
+
+#if defined(__VMKLNX__)
+   srb->scsi_sec_lun_id = vmklnx_scsi_cmd_get_secondlevel_lun_id(cmd);
+#endif
 
    return srb;
 }
@@ -2180,6 +2206,15 @@ static int __devinit qla4xxx_probe_adapter(struct pci_dev *pdev,
    host->max_cmd_len = IOCB_MAX_CDB_LEN;
    host->transportt = qla4xxx_scsi_transport;
 
+#if defined(__VMKLNX__)
+   /* Register second-level lun addressing capability */
+   if (vmklnx_scsi_host_set_capabilities(host,
+                                         SHOST_CAP_SECONDLEVEL_ADDRESSING)) {
+      dev_warn(&ha->pdev->dev, "Failed to set capability: 0x%x for adapter.\n",
+               SHOST_CAP_SECONDLEVEL_ADDRESSING);
+   }
+#endif
+
    ha->max_q_depth = MAX_Q_DEPTH;
    if (ql4xmaxqdepth != 0 && ql4xmaxqdepth <= 0xffffU)
       ha->max_q_depth = ql4xmaxqdepth;
@@ -2373,7 +2408,7 @@ static int qla4xxx_slave_configure(struct scsi_device *sdev)
 	struct scsi_qla_host *ha = shost_priv(sdev->host);
 
 	if (sdev->tagged_supported)
-		scsi_activate_tcq(sdev, ha->max_q_depth);
+           scsi_activate_tcq(sdev, ha->max_q_depth);
 	else
 		scsi_deactivate_tcq(sdev, ha->max_q_depth);
 
@@ -2627,6 +2662,9 @@ static int qla4xxx_eh_device_reset(struct scsi_cmnd *cmd)
    unsigned int id = cmd->device->id;
    unsigned int lun = cmd->device->lun;
    int ret = FAILED, stat;
+#if defined(__VMKLNX__)
+   uint64_t sllid;
+#endif
 
    if (!ddb_entry)
       return ret;
@@ -2698,7 +2736,12 @@ static int qla4xxx_eh_device_reset(struct scsi_cmnd *cmd)
          goto eh_dev_reset_done;
       }
    }
+#if defined(__VMKLNX__)
+   sllid = vmklnx_scsi_cmd_get_secondlevel_lun_id(cmd);
+   if (qla4xxx_send_marker_iocb(ha, ddb_entry, lun, sllid)
+#else
    if (qla4xxx_send_marker_iocb(ha, ddb_entry, lun)
+#endif
       != QLA_SUCCESS)
       goto eh_dev_reset_done;
 

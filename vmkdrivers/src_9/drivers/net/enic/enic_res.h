@@ -16,7 +16,6 @@
  * SOFTWARE.
  *
  */
-#ident "$Id: enic_res.h 59839 2010-09-27 20:36:31Z roprabhu $"
 
 #ifndef _ENIC_RES_H_
 #define _ENIC_RES_H_
@@ -35,6 +34,7 @@
 #define ENIC_MAX_MTU			9000
 
 #define ENIC_MULTICAST_PERFECT_FILTERS	32
+#define ENIC_UNICAST_PERFECT_FILTERS	32
 
 #define ENIC_NON_TSO_MAX_DESC		16
 

@@ -77,6 +77,20 @@ int qla4xxx_get_req_pkt(struct scsi_qla_host *ha,
 	return QLA_ERROR;
 }
 
+#if defined(__VMKLNX__)
+/**
+ * qla4xxx_send_marker_iocb - issues marker iocb to HBA
+ * @ha: Pointer to host adapter structure.
+ * @ddb_entry: Pointer to device database entry
+ * @lun: SCSI LUN
+ * @marker_type: marker identifier
+ * @sllid: Second-level LUN id
+ *
+ * This routine issues a marker IOCB.
+ **/
+int qla4xxx_send_marker_iocb(struct scsi_qla_host *ha,
+			     struct ddb_entry *ddb_entry, int lun, uint64_t sllid)
+#else
 /**
  * qla4xxx_send_marker_iocb - issues marker iocb to HBA
  * @ha: Pointer to host adapter structure.
@@ -88,6 +102,7 @@ int qla4xxx_get_req_pkt(struct scsi_qla_host *ha,
  **/
 int qla4xxx_send_marker_iocb(struct scsi_qla_host *ha,
 			     struct ddb_entry *ddb_entry, int lun)
+#endif
 {
 	struct marker_entry *marker_entry;
 	unsigned long flags = 0;
@@ -108,7 +123,11 @@ int qla4xxx_send_marker_iocb(struct scsi_qla_host *ha,
 	marker_entry->hdr.entryCount = 1;
 	marker_entry->target = cpu_to_le16(ddb_entry->fw_ddb_index);
 	marker_entry->modifier = cpu_to_le16(MM_LUN_RESET);
+#if defined(__VMKLNX__)
+        qla4xxx_int_to_scsilun_with_sec_lun_id(lun, &marker_entry->lun, sllid);
+#else
 	int_to_scsilun(lun, &marker_entry->lun);
+#endif
 	wmb();
 
 	/* Tell ISP it's got a new I/O request */
@@ -376,7 +395,13 @@ int qla4xxx_send_command_to_isp(struct scsi_qla_host *ha, struct srb * srb)
 	cmd_entry->timeout = cpu_to_le16(cmd_timeout);
 #endif /* __VMKLNX__ */
 
+#if defined(__VMKLNX__)
+        qla4xxx_int_to_scsilun_with_sec_lun_id(cmd->device->lun,
+                                               &cmd_entry->lun,
+                                               srb->scsi_sec_lun_id);
+#else
 	int_to_scsilun(cmd->device->lun, &cmd_entry->lun);
+#endif
 	cmd_entry->cmdSeqNum = cpu_to_le32(ddb_entry->CmdSn);
 	cmd_entry->ttlByteCnt = cpu_to_le32(cmd->request_bufflen);
 	memcpy(cmd_entry->cdb, cmd->cmnd, cmd->cmd_len);

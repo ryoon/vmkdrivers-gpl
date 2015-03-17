@@ -1579,10 +1579,12 @@ extern int __kc_adapter_clean(struct net_device *, int *);
 #undef dev_get_by_name
 #define dev_get_by_name(_a, _b) dev_get_by_name(_b)
 #define __netif_subqueue_stopped(_a, _b) netif_subqueue_stopped(_a, _b)
-#define netif_napi_del(_a) do {} while (0)
-#else
-#define netif_napi_del(_a) do {} while (0)
 #if !defined(__VMKLNX__)
+#define netif_napi_del(_a) do {} while (0)
+#endif /* !defined(__VMKLNX__) */
+#else /* < 2.6.24 */
+#if !defined(__VMKLNX__)
+#define netif_napi_del(_a) do {} while (0)
 #ifdef NAPI
 #ifdef CONFIG_NETPOLL
 #undef netif_napi_del

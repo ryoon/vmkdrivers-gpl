@@ -1,20 +1,11 @@
 /****************************************************************************
- * Copyright(c) 2000-2012 Broadcom Corporation, all rights reserved
- * Proprietary and Confidential Information.
- *
- * This source file is the property of Broadcom Corporation, and
- * may not be copied or distributed in any isomorphic form without 
- * the prior written consent of Broadcom Corporation. 
+ * Copyright(c) 2000-2013 Broadcom Corporation, all rights reserved
  *
  * Name: esx_ioctl.h
  *
  * Description: Define data structures and prototypes to access ioctls
  *              supported by driver in VMware ESXi system.
  *
- * Author: cchsu
- *
- * $Log:
- * 
  ****************************************************************************/
 
 #ifndef BRCM_VMWARE_IOCTL_H

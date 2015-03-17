@@ -1,3 +1,22 @@
+/*
+ * Copyright 2009 Cisco Systems, Inc.  All rights reserved.
+ *
+ * This program is free software; you may redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; version 2 of the License.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
+ * BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+ * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+ * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ * [Insert appropriate license here when releasing outside of Cisco]
+ * $Id: fnic_kcompat.c 111268 2012-08-27 17:11:40Z atungara $
+ */
+
 #include "fnic.h"
 #include "fnic_kcompat.h"
 
@@ -46,7 +65,7 @@ void scsi_dma_unmap(struct scsi_cmnd *cmd)
 
 		dma_unmap_sg(dev, scsi_sglist(cmd), scsi_sg_count(cmd),
 				cmd->sc_data_direction);
-        }
+	}
 }
 #if !defined(__VMKLNX__)
 EXPORT_SYMBOL(scsi_dma_unmap);
@@ -58,23 +77,23 @@ EXPORT_SYMBOL(scsi_dma_unmap);
 
 void *memmove(void *dest, const void *src, size_t count)
 {
-        char *tmp;
-        const char *s;
+	char *tmp;
+	const char *s;
 
-        if (dest <= src) {
-                tmp = dest;
-                s = src;
-                while (count--)
-                        *tmp++ = *s++;
-        } else {
-                tmp = dest;
-                tmp += count;
-                s = src;
-                s += count;
-                while (count--)
-                        *--tmp = *--s;
-        }
-        return dest;
+	if (dest <= src) {
+		tmp = dest;
+		s = src;
+		while (count--)
+			*tmp++ = *s++;
+	} else {
+		tmp = dest;
+		tmp += count;
+		s = src;
+		s += count;
+		while (count--)
+			*--tmp = *--s;
+	}
+	return dest;
 }
 #if !defined(__VMKLNX__)
 EXPORT_SYMBOL(memmove);
@@ -82,15 +101,15 @@ EXPORT_SYMBOL(memmove);
 
 void fnic_block_error_handler(struct scsi_cmnd *sc)
 {
-        struct Scsi_Host *shost = sc->device->host;
-        struct fc_rport *rport = starget_to_rport(scsi_target(sc->device));
-        unsigned long flags;
+	struct Scsi_Host *shost = sc->device->host;
+	struct fc_rport *rport = starget_to_rport(scsi_target(sc->device));
+	unsigned long flags;
 
-        spin_lock_irqsave(shost->host_lock, flags);
-        while (rport->port_state == FC_PORTSTATE_BLOCKED) {
-                spin_unlock_irqrestore(shost->host_lock, flags);
-                msleep(1000);
-                spin_lock_irqsave(shost->host_lock, flags);
-        }
-        spin_unlock_irqrestore(shost->host_lock, flags);
+	spin_lock_irqsave(shost->host_lock, flags);
+	while (rport->port_state == FC_PORTSTATE_BLOCKED) {
+		spin_unlock_irqrestore(shost->host_lock, flags);
+		msleep(1000);
+		spin_lock_irqsave(shost->host_lock, flags);
+	}
+	spin_unlock_irqrestore(shost->host_lock, flags);
 }

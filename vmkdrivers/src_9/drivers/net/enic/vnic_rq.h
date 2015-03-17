@@ -16,7 +16,6 @@
  * SOFTWARE.
  *
  */
-#ident "$Id: vnic_rq.h 64224 2010-11-09 19:43:13Z vkolluri $"
 
 #ifndef _VNIC_RQ_H_
 #define _VNIC_RQ_H_
@@ -144,11 +143,6 @@ static inline void vnic_rq_post(struct vnic_rq *rq,
 	}
 }
 
-static inline int vnic_rq_posting_soon(struct vnic_rq *rq)
-{
-	return ((rq->to_use->index & VNIC_RQ_RETURN_RATE) == 0);
-}
-
 static inline void vnic_rq_return_descs(struct vnic_rq *rq, unsigned int count)
 {
 	rq->ring.desc_avail += count;
@@ -212,6 +206,7 @@ void vnic_rq_init_start(struct vnic_rq *rq, unsigned int cq_index,
 void vnic_rq_init(struct vnic_rq *rq, unsigned int cq_index,
 	unsigned int error_interrupt_enable,
 	unsigned int error_interrupt_offset);
+void vnic_rq_error_out(struct vnic_rq *rq, unsigned int error);
 unsigned int vnic_rq_error_status(struct vnic_rq *rq);
 void vnic_rq_enable(struct vnic_rq *rq);
 int vnic_rq_disable(struct vnic_rq *rq);

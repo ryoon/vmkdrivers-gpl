@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2003 - 2009 NetXen, Inc.
+ * Copyright (C) 2009 - QLogic Corporation.
  * All rights reserved.
  * 
  * This program is free software; you can redistribute it and/or
@@ -20,11 +21,6 @@
  * The full GNU General Public License is included in this distribution
  * in the file called LICENSE.
  * 
- * Contact Information:
- * licensing@netxen.com
- * NetXen, Inc.
- * 18922 Forge Drive
- * Cupertino, CA 95014
  */
 #include <linux/module.h>
 
@@ -80,14 +76,12 @@
 #include "unm_nic_ioctl.h"
 #include "nic_cmn.h"
 #include "nxhal.h"
-#include "nxhal_v34.h"
 #include "unm_nic_config.h"
 #include "unm_nic_lro.h"
 
 #include "unm_nic_hw.h"
 #include "unm_version.h"
 #include "unm_brdcfg.h"
-#include "nx_nic_linux_tnic_api.h"
 
 
 typedef struct {
@@ -125,39 +119,6 @@ nx_hash_tbl_ops_t lro_hash_ops = {
 	.compare_keys	= nx_cmp_ip_key,
 	.destroy_cb	= nx_lro_destroy_node,
 };
-
-#ifndef ESX
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,25))
-#define NX_NIC_FIND_DEV_FOR_IP(dev, _daddr_)	ip_dev_find(dev_net(dev), _daddr_)
-#elif (LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,20))
-#define NX_NIC_FIND_DEV_FOR_IP(dev, _daddr_)        ip_dev_find(_daddr_)
-#else /* > 2.6.20 */
-#define NX_NIC_FIND_DEV_FOR_IP(dev, _daddr_)        nx_nic_find_dev_for_ip(_daddr_)
-
-struct net_device *nx_nic_find_dev_for_ip(u32 addr)
-{
-        struct net_device       *dev;
-
-        read_lock(&dev_base_lock);
-        for (dev = DEV_BASE; dev; dev = dev->next) {
-                struct in_device        *indev = dev->ip_ptr;
-
-                if (indev) {
-                        for_ifa(indev) {
-                                if (ifa->ifa_address == addr &&
-                                    netif_running(dev)) {
-                                        dev_hold(dev);
-                                        read_unlock(&dev_base_lock);
-                                        return (dev);
-                                }
-                        } endfor_ifa(indev);
-                }
-        }
-        read_unlock(&dev_base_lock);
-        return (NULL);
-}
-#endif
-#endif
 
 int nx_initiate_lro(struct unm_adapter_s *adapter, nx_host_key_t *key,
 		    __uint32_t rss_hash, __uint32_t ctx_id,
@@ -223,13 +184,7 @@ int nx_try_initiate_lro(struct unm_adapter_s *adapter, struct sk_buff *skb,
 	__uint32_t	timestamp;
 	__uint32_t	hdr_size;
 
-#ifndef ESX
-	struct net_device	*dev = adapter->netdev;
-#endif
-
-#ifdef ESX
 	skb_pull(skb, ETH_HLEN);
-#endif
 
 	if (skb->protocol != htons(ETH_P_IP)) {
 		goto esx_done;
@@ -238,36 +193,10 @@ int nx_try_initiate_lro(struct unm_adapter_s *adapter, struct sk_buff *skb,
 	iph = (struct iphdr *)skb->data;
 
 	if (iph->version != NX_IP_VERSION_V4 ||
-	    iph->ihl != (IPV4_HDR_SIZE >> 2) || 
-	    iph->protocol != IPPROTO_TCP) {
+			iph->ihl != (IPV4_HDR_SIZE >> 2) || 
+			iph->protocol != IPPROTO_TCP) {
 		goto esx_done;
 	}
-
-/* 
-	IP forwarding not relevant for ESX, as the pnic doesn't have an ip associated with it.
-	So, we will always fail the following test in ESX.
-*/
-#ifndef ESX
-	dev = NX_NIC_FIND_DEV_FOR_IP(dev, iph->daddr);
-	if (dev == NULL) {
-		goto esx_done;
-	}
-
-	if (adapter->netdev != dev) {
-#ifdef NX_VLAN_ACCEL
-		/*
-		 * Check for VLAN netdev pointing to us as real device.
-		 */
-		if ((!(dev->priv_flags & IFF_802_1Q_VLAN)) ||
-		    (VLAN_DEV_INFO(dev)->real_dev != adapter->netdev))
-#endif /* NX_VLAN_ACCEL */
-		{
-			dev_put(dev);
-			goto esx_done;
-		}
-	}
-	dev_put(dev);
-#endif
 
 	if (skb_pull(skb, iph->ihl << 2) == NULL) {
 		goto esx_done;
@@ -302,7 +231,7 @@ int nx_try_initiate_lro(struct unm_adapter_s *adapter, struct sk_buff *skb,
 		skb_push(skb, TCP_HDR_SIZE);
 		if (ntohl(ts[0]) != 0x0101080a) {
 			nx_nic_print6(adapter, "LRO: Invalid timestamp "
-				      "option[0x%x]\n", ntohl(ts[0]));
+					"option[0x%x]\n", ntohl(ts[0]));
 			goto done;
 		}
 		timestamp = 1;
@@ -316,13 +245,11 @@ int nx_try_initiate_lro(struct unm_adapter_s *adapter, struct sk_buff *skb,
 
 	rv = nx_initiate_lro(adapter, &key, rss_hash, ctx_id, timestamp);
 
-  done:
+done:
 	skb_push(skb, iph->ihl << 2);
 
-  esx_done:
-#ifdef ESX
+esx_done:
 	skb_push(skb, ETH_HLEN);
-#endif
 	return rv;
 }
 
@@ -355,21 +282,19 @@ int unm_init_lro(struct unm_adapter_s *adapter)
 {
 	int		rv;
 	uint32_t	max_lro;
+	uint64_t cur_fn = (uint64_t) unm_init_lro;
 
 	nx_nic_print6(NULL, "LRO Initialization\n");
 
-	if (NX_FW_VERSION(adapter->version.major, adapter->version.minor,
-			  adapter->version.sub) >= NX_FW_VERSION(4, 0, 222)) {
-		if (nx_fw_cmd_query_max_lro(adapter->nx_dev,
-					    adapter->ahw.pci_func,
-					    &max_lro) != NX_RCODE_SUCCESS) {
-			nx_nic_print4(adapter, "Failed in query of FW for "
-				      "max LRO\n");
-			return (-EIO);
-		}
-	} else {
-		max_lro = 32;
+	if (nx_fw_cmd_query_max_lro(adapter->nx_dev,
+				adapter->ahw.pci_func,
+				&max_lro) != NX_RCODE_SUCCESS) {
+		nx_nic_print4(adapter, "Failed in query of FW for "
+				"max LRO\n");
+		return (-EIO);
 	}
+
+	NX_NIC_TRC_FN(adapter, cur_fn, max_lro);
 
 	nx_nic_print6(adapter, "Device supports %u LRO entries\n", max_lro);
 	rv = nx_mem_pool_create(&adapter->lro.mem_pool, max_lro,
@@ -431,6 +356,16 @@ void nx_lro_delete_ctx_lro (struct unm_adapter_s *adapter, int ctx_id)
 	struct list_head        *temp;
 	lro_entry_t             *entry;
 	nx_hash_tbl_t           *tbl = &adapter->lro.hash_tbl;
+	uint64_t cur_fn = (uint64_t) nx_lro_delete_ctx_lro;
+
+	NX_NIC_TRC_FN(adapter, cur_fn, ctx_id);
+
+
+	mutex_lock(&tbl->tbl_lock);
+	if(tbl->init_flag == 0 || tbl->buckets == NULL) {
+		mutex_unlock(&tbl->tbl_lock);
+		return;
+	}
 
 	for (i = 0; i < tbl->bucket_cnt; i++) {
 		spin_lock_bh(&tbl->buckets[i].lock);
@@ -447,6 +382,8 @@ void nx_lro_delete_ctx_lro (struct unm_adapter_s *adapter, int ctx_id)
 
 		spin_unlock_bh(&tbl->buckets[i].lock);
 	}       
+
+	mutex_unlock(&tbl->tbl_lock);
 }               
 
 static int nx_lro_set_state(struct unm_adapter_s *adapter, int val)
@@ -483,13 +420,8 @@ int nx_write_lro_state(struct file *file, const char *buffer,
 		return -EINVAL;
 	}
 
-#if defined(ESX)
-        memcpy((void *)&testval, (const void *)buffer, 1);
-#else
-	if (copy_from_user(&testval, buffer, 1)) {
-		return -EFAULT;
-	}
-#endif
+	memcpy((void *)&testval, (const void *)buffer, 1);
+
 	testval = testval - '0';
 
 	nx_lro_set_state(adapter, testval);
@@ -526,13 +458,8 @@ int nx_write_lro_stats(struct file *file, const char *buffer,
 		return -EINVAL;
 	}
 
-#if defined(ESX)
-        memcpy((void *)&testval, (const void *)buffer, 1);
-#else
-	if (copy_from_user(&testval, buffer, 1)) {
-		return -EFAULT;
-	}
-#endif
+	memcpy((void *)&testval, (const void *)buffer, 1);
+
 	testval = testval - '0';
 
 	adapter->lro.stats.chained_pkts = 0;

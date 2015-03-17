@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2003 - 2009 NetXen, Inc.
+ * Copyright (C) 2009 - QLogic Corporation.
  * All rights reserved.
  * 
  * This program is free software; you can redistribute it and/or
@@ -20,11 +21,6 @@
  * The full GNU General Public License is included in this distribution
  * in the file called LICENSE.
  * 
- * Contact Information:
- * licensing@netxen.com
- * NetXen, Inc.
- * 18922 Forge Drive
- * Cupertino, CA 95014
  */
 #ifndef _NXHAL_NIC_INTERFACE_H_
 #define _NXHAL_NIC_INTERFACE_H_
@@ -213,7 +209,11 @@ typedef U32     nx_reg_addr_t;
 
 #define NX_CDRP_CMD_CONFIG_GBE_PORT         0x0000001f
 
-#define NX_CDRP_CMD_MAX                     0x00000020
+#define NX_CDRP_CMD_MINIDUMP_TEMPLATE_SIZE	0x0000002f
+
+#define NX_CDRP_CMD_MINIDUMP_GET_TEMPLATE	0x00000030
+
+#define NX_CDRP_CMD_MAX                     0x0000003f
 
 /*****************************************************************************
  *        Capabilities
@@ -370,10 +370,6 @@ typedef struct nx_hostrq_cds_ring_s {
 	U32 rsvd;		/* Padding */
 } nx_hostrq_cds_ring_t;
 
-typedef struct {
-        U64 host_pexq_ring_address;
-} nx_hostrq_pexq_t;
-
 typedef struct nx_hostrq_tx_ctx_s {
 	U64 host_rsp_dma_addr;	/* Response dma'd here */
 	U64 cmd_cons_dma_addr;	/*  */
@@ -386,7 +382,6 @@ typedef struct nx_hostrq_tx_ctx_s {
 	U16 msi_index;
 	U16 rsvd3;		/* Padding */
 	nx_hostrq_cds_ring_t cds_ring;	/* Desc of cds ring */
-        nx_hostrq_pexq_t pexq_req; 
 	U8  reserved[120];	/* future expansion */
 } nx_hostrq_tx_ctx_t;
 
@@ -395,20 +390,12 @@ typedef struct nx_cardrsp_cds_ring_s {
 	U32 interrupt_crb;	/* Crb to use */
 } nx_cardrsp_cds_ring_t;
 
-typedef struct {
-        U64 pexq_card_fc_q;
-        U64 pexq_card_fc_address;
-        U32 pexq_dbell_number;
-        U32 pexq_reflection_offset;
-} nx_cardrsp_pexq_t;
-
 typedef struct nx_cardrsp_tx_ctx_s {
 	U32 host_ctx_state;	/* Starting state */
 	U16 context_id;		/* Handle for context */
 	U8  phys_port;		/* Physical id of port */
 	U8  virt_port;		/* Virtual/Logical id of port */
 	nx_cardrsp_cds_ring_t cds_ring;	/* Card cds settings */
-        nx_cardrsp_pexq_t pexq_rsp;
 	U8  reserved[104];	/* future expansion */
 } nx_cardrsp_tx_ctx_t;
 

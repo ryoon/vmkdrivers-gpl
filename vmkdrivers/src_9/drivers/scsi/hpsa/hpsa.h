@@ -1,6 +1,6 @@
 /*
  *    Disk Array driver for HP Smart Array SAS controllers
- *    Copyright 2000, 2010 Hewlett-Packard Development Company, L.P.
+ *    Copyright 2000-2012 Hewlett-Packard Development Company, L.P.
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
@@ -19,7 +19,7 @@
  *
  */
 /*    
- *    Portions Copyright 2008, 2010 VMware, Inc.
+ *    Portions Copyright 2008-2012 VMware, Inc.
  */
 #ifndef HPSA_H
 #define HPSA_H
@@ -65,6 +65,7 @@ struct hpsa_scsi_dev_t {
 	unsigned char model[16];        /* bytes 16-31 of inquiry data */
 	unsigned char revision[4];      /* bytes 32-35 of inquiry data */
 	unsigned char raid_level;	/* from inquiry page 0xC1 */
+	unsigned char volume_offline;   /* discovered via TUR or VPD */
 };
 
 struct ctlr_info {
@@ -123,8 +124,7 @@ struct ctlr_info {
 	struct Scsi_Host *scsi_host;
 	spinlock_t devlock; /* to protect hba[ctlr]->dev[];  */
 	int ndevices; /* number of used elements in .dev[] array. */
-#define HPSA_MAX_SCSI_DEVS_PER_HBA 256
-	struct hpsa_scsi_dev_t *dev[HPSA_MAX_SCSI_DEVS_PER_HBA];
+	struct hpsa_scsi_dev_t *dev[HPSA_MAX_DEVICES];
 	/*
 	 * Performant mode tables.
 	 */
@@ -146,6 +146,18 @@ struct ctlr_info {
 	int	debug_msg;	/* flag to enable/set debug messaging levels */
 	u32	TMFSupportFlags; /* remember ctlr's Task Management abilites */
 	struct task_struct	*rescan_thread;
+	spinlock_t offline_device_lock;
+	struct list_head offline_device_list;
+	struct task_struct *offline_device_monitor;
+	unsigned char offline_device_thread_state;
+#define OFFLINE_DEVICE_THREAD_STOPPED 0
+#define OFFLINE_DEVICE_THREAD_STOPPING 1
+#define OFFLINE_DEVICE_THREAD_RUNNING 2
+};
+
+struct offline_device_entry {
+	unsigned char scsi3addr[8];
+	struct list_head offline_list;
 };
 #define HPSA_ABORT_MSG 0
 #define HPSA_DEVICE_RESET_MSG 1

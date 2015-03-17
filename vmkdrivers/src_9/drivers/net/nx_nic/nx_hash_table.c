@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2003 - 2009 NetXen, Inc.
+ * Copyright (C) 2009 - QLogic Corporation.
  * All rights reserved.
  * 
  * This program is free software; you can redistribute it and/or
@@ -20,11 +21,6 @@
  * The full GNU General Public License is included in this distribution
  * in the file called LICENSE.
  * 
- * Contact Information:
- * licensing@netxen.com
- * NetXen, Inc.
- * 18922 Forge Drive
- * Cupertino, CA 95014
  */
 /*
  * NetXen:
@@ -57,6 +53,7 @@ int nx_hash_tbl_create(nx_hash_tbl_t *tbl, int bucket_cnt,
 
 	tbl->bucket_cnt = bucket_cnt;
 
+	mutex_init(&tbl->tbl_lock);
 	/* Allocate and initialize the table buckets. */
 	alloc_size = sizeof (nx_hbucket_head_t) * bucket_cnt;
 	tbl->buckets = (nx_hbucket_head_t *)vmalloc(alloc_size);
@@ -71,6 +68,10 @@ int nx_hash_tbl_create(nx_hash_tbl_t *tbl, int bucket_cnt,
 
 	tbl->ops = ops;
 
+	mutex_lock(&tbl->tbl_lock);
+	tbl->init_flag = 1;
+	mutex_unlock(&tbl->tbl_lock);
+
 	return (0);
 }
 
@@ -84,6 +85,13 @@ void nx_hash_tbl_destroy(nx_hash_tbl_t *tbl)
 	struct list_head 	*node1;
 	struct list_head	*node2;
 
+	mutex_lock(&tbl->tbl_lock);
+	if(tbl->init_flag == 0) {
+		mutex_unlock(&tbl->tbl_lock);
+		return;
+	}
+	tbl->init_flag = 0;
+
 	for (i = 0; i < tbl->bucket_cnt; i++) {
 		spin_lock_bh(&tbl->buckets[i].lock);
 
@@ -95,7 +103,10 @@ void nx_hash_tbl_destroy(nx_hash_tbl_t *tbl)
 
 		spin_unlock_bh(&tbl->buckets[i].lock);
 	}
+
 	vfree(tbl->buckets);
+	tbl->buckets = NULL;
+	mutex_unlock(&tbl->tbl_lock);
 }
 
 /*

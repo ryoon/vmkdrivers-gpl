@@ -25,6 +25,11 @@ VMK_VERSION_INFO(                                                       \
 /* Modules are built using the latest vmkapi */
 VMK_NAMESPACE_REQUIRED(VMK_NAMESPACE_VMKAPI,
                        VMK_NAMESPACE_CURRENT_VERSION);
+#if VMKAPI_REVISION >= VMK_REVISION_FROM_NUMBERS(2, 2, 0, 0) && \
+    defined(VMK_DEVKIT_USES_BINARY_INCOMPATIBLE_APIS)
+VMK_NAMESPACE_REQUIRED(VMK_NAMESPACE_VMKAPI_INCOMPAT,
+                       VMK_NAMESPACE_INCOMPAT_CURRENT_VERSION);
+#endif
 
 /*
  * vmkplexer defines its namespace in the vmkplexer.sc file.
@@ -207,6 +212,7 @@ VmkplxrMemPoolInit(void)
 VMK_ReturnStatus
 vmkplxr_GetMemPool(vmk_MemPool *mem_pool)
 {
+   VMK_ASSERT(vmk_PreemptionIsEnabled() == VMK_FALSE);
    VMK_ASSERT(vmkplexer_mem_pool != VMK_MEMPOOL_INVALID);
 
    if (vmkplexer_mem_pool != VMK_MEMPOOL_INVALID) {

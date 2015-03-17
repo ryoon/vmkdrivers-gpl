@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2003 - 2009 NetXen, Inc.
+ * Copyright (C) 2009 - QLogic Corporation.
  * All rights reserved.
  * 
  * This program is free software; you can redistribute it and/or
@@ -20,11 +21,6 @@
  * The full GNU General Public License is included in this distribution
  * in the file called LICENSE.
  * 
- * Contact Information:
- * licensing@netxen.com
- * NetXen, Inc.
- * 18922 Forge Drive
- * Cupertino, CA 95014
  */
 #ifndef _UNM_NIC_
 #define _UNM_NIC_
@@ -35,14 +31,6 @@
 
 #if defined(CONFIG_MODVERSIONS) && !defined(MODVERSIONS)
 #define MODVERSIONS
-#endif
-
-#if defined(MODVERSIONS) && !defined(__GENKSYMS__)
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,5,0)
-#if (!defined(__VMKERNEL_MODULE__) && !defined(__VMKLNX__))
-#include <linux/modversions.h>
-#endif /* ESX */
-#endif
 #endif
 
 #include <linux/skbuff.h>
@@ -59,38 +47,18 @@
 #include "nx_hash_table.h"
 #include "nx_mem_pool.h"
 #include "nxhal_nic_api.h"
-#include "unm_pstats.h"
 #include "unm_brdcfg.h"
-#include "queue.h"
-#include "nx_nic_linux_tnic_api.h"
 
-#if defined(__VMKERNEL_MODULE__) || defined(__VMKLNX__)
 #include "nx_nic_vmk.h"		// vmkernel specific defines
-#else
-#include "nx_nic_vmkcompat.h"	// dummy fucntions  defines
-#endif
+#include "nx_nic_minidump.h"
 
 #include <linux/ethtool.h>
-#ifndef  ESX
-#include <linux/autoconf.h>
-#include <linux/interrupt.h>
-#endif
-
-#if (defined(CONFIG_VLAN_8021Q) || defined(CONFIG_VLAN_8021Q_MODULE)) && \
-	(defined(NETIF_F_HW_VLAN_RX))
-#define	NX_VLAN_ACCEL	1
-#endif
 
 #define	NX_NIC_MAX_SG_PER_TX	(MAX_BUFFERS_PER_CMD - 2)
-#define  UNM_NIC_NAPI
-
-#if (defined(ESX_3X) || defined(ESX_3X_COS))
-#undef UNM_NIC_NAPI
-#endif
-
-#include "nx_pexq.h"
 
 #define NX_FW_VERSION(a, b, c)    (((a) << 16) + ((b) << 8) + (c))
+
+#define NX_NIC_VERSION_CODE(a, b, c)    (((a) << 24) + ((b) << 16) + (c))
 
 #define HDR_CP 64
 
@@ -106,28 +74,17 @@
 #define IRQF_SHARED SA_SHIRQ 
 #endif
 
-#ifdef OLD_KERNEL
-typedef void (*NX_IRQ_HANDLER)(int , void *, struct pt_regs *);
-#elif !defined(__VMKLNX__) && LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
+#if !defined(__VMKLNX__) && LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
 typedef irqreturn_t (*NX_IRQ_HANDLER)(int , void *, struct pt_regs *);
 #else
 typedef irqreturn_t (*NX_IRQ_HANDLER)(int , void *);
 #endif
 
-#ifdef UNM_NIC_NAPI
-
 #define	__NETIF_RX(_SKB)	netif_receive_skb(_SKB);
-
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,24))
-#define NEW_NAPI
-#endif
 
 #define TX_LOCK(__lock, flags) spin_lock_bh((__lock))
 #define TX_UNLOCK(__lock, flags) spin_unlock_bh((__lock))
 
-
-
-#if defined(NEW_NAPI)
 #define GET_SDS_NETDEV_IRQ(HOST_SDS_RING) \
 	(HOST_SDS_RING)->netdev_irq
 
@@ -160,120 +117,21 @@ typedef irqreturn_t (*NX_IRQ_HANDLER)(int , void *);
 #define NX_SDS_NAPI_DISABLE(HOST_SDS_RING) \
 	napi_disable(&(HOST_SDS_RING)->napi)
 
-	#if (LINUX_VERSION_CODE < KERNEL_VERSION(2,6,29))
-	#define NX_PREP_AND_SCHED_RX(NETDEV, SDS_RING)                              \
+#define NX_PREP_AND_SCHED_RX(NETDEV, SDS_RING)                              \
 	do {                                                                \
 		if (netif_rx_schedule_prep((NETDEV), &((SDS_RING)->napi))) {\
 			__netif_rx_schedule(NETDEV, &((SDS_RING)->napi));   \
 		}                                                           \
 	}while (0)
 
-	#define	NETIF_RX_COMPLETE(_NETDEV, _NAPI) netif_rx_complete(_NETDEV, _NAPI)
-
-	#else
-	#define NX_PREP_AND_SCHED_RX(NETDEV, SDS_RING)			\
-		do {                                                               \
-			if (netif_rx_schedule_prep(&((SDS_RING)->napi))) {\
-			__netif_rx_schedule(&((SDS_RING)->napi));   \
-			}                                                  \
-		}while (0)
-
-	#define	NETIF_RX_COMPLETE(_NETDEV, _NAPI) netif_rx_complete(_NAPI)
-
-	#endif // 2.6.29
-
-#else
-
-#define NX_SDS_NAPI_ENABLE(HOST_SDS_RING) 
-
-#define NX_SDS_NAPI_DISABLE(HOST_SDS_RING) 
-
-#define GET_SDS_NETDEV_IRQ(HOST_SDS_RING) \
-	(HOST_SDS_RING)->netdev->irq 
-
-#define GET_SDS_NETDEV_NAME(HOST_SDS_RING) \
-	(HOST_SDS_RING)->netdev->name 
-
-#define SET_SDS_NETDEV_IRQ(HOST_SDS_RING, IRQ) \
-	do {                                    \
-		(HOST_SDS_RING)->netdev->irq = (IRQ);   \
-	}while (0)
-
-#define NETIF_RX_COMPLETE(_NETDEV, _NAPI)  netif_rx_complete(_NETDEV)
-
-#define SET_SDS_NETDEV_NAME(HOST_SDS_RING, NAME, CTX_ID, NUM, ...) \
-	do {    \
-		if ((CTX_ID)) { \
-			sprintf((HOST_SDS_RING)->netdev->name, \
-					"%s:%d:%d", (NAME), \
-					 (CTX_ID), (NUM), ##__VA_ARGS__); \
-		} else if ((NUM)) { \
-			sprintf((HOST_SDS_RING)->netdev->name, \
-					"%s:%d", (NAME), \
-					(NUM), ##__VA_ARGS__); \
-		} else { \
-			sprintf((HOST_SDS_RING)->netdev->name, \
-					"%s", (NAME), ##__VA_ARGS__); \
-		} \
-	}       while(0)
-
-#if ((LINUX_VERSION_CODE < KERNEL_VERSION(2,6,24)) &&                       \
-		(LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,16)))
-#define NX_PREP_AND_SCHED_RX(NETDEV, SDS_RING)                              \
-	do {                                                                \
-		if (__netif_rx_schedule_prep(NETDEV)) {                     \
-			__netif_rx_schedule(NETDEV);                        \
-		}                                                           \
-	}while (0)
-#else
-#define NX_PREP_AND_SCHED_RX(NETDEV, SDS_RING)                              \
-	do {                                                                \
-		if (!test_and_set_bit(__LINK_STATE_RX_SCHED,                \
-					&((NETDEV))->state)) {              \
-			__netif_rx_schedule(NETDEV);                        \
-		}                                                           \
-	}while (0)
-#endif	// End KERNEL_VERSION
-#endif	// End NEW_NAPI
-
-#else
-
-#define GET_SDS_NETDEV_IRQ(HOST_SDS_RING) \
-	(HOST_SDS_RING)->netdev->irq 
-
-#define GET_SDS_NETDEV_NAME(HOST_SDS_RING) \
-	(HOST_SDS_RING)->netdev->name 
-
-#define SET_SDS_NETDEV_IRQ(HOST_SDS_RING, IRQ) \
-	do {                                    \
-		(HOST_SDS_RING)->netdev->irq = (IRQ);   \
-	}while (0)
-
-#define SET_SDS_NETDEV_NAME(HOST_SDS_RING, NAME, CTX_ID, NUM, ...) \
-	do {    \
-		if ((CTX_ID)) { \
-			sprintf((HOST_SDS_RING)->netdev->name, \
-					"%s:%d:%d", (NAME), \
-					(CTX_ID), (NUM), ##__VA_ARGS__); \
-		} else if ((NUM)) { \
-			sprintf((HOST_SDS_RING)->netdev->name, \
-					"%s:%d", (NAME), \
-					(NUM), ##__VA_ARGS__); \
-		} else { \
-			sprintf((HOST_SDS_RING)->netdev->name, \
-					"%s", (NAME), ##__VA_ARGS__); \
-		} \
-	}       while(0)
-
-#define	__NETIF_RX(_SKB)	netif_rx(_SKB);
-#define TX_LOCK(__lock, flags) spin_lock_irqsave((__lock),flags)
-#define TX_UNLOCK(__lock, flags) spin_unlock_irqrestore((__lock),flags)
-
-#endif //End UNM_NIC_NAPI
+#define	NETIF_RX_COMPLETE(_NETDEV, _NAPI) netif_rx_complete(_NETDEV, _NAPI)
 
 #define NX_INVALID_SPEED_CFG 0xFFFF 
 #define NX_INVALID_DUPLEX_CFG 0xFFFF 
 #define NX_INVALID_AUTONEG_CFG 0xFFFF 
+
+#define NX_PCI_SUBSYSTEM_VENDOR_ID 0x2c
+#define NX_HP_VENDOR_ID 0x103c
 
 /* XXX try to reduce this so struct sk_buff + data fits into
  * 2k pool
@@ -282,34 +140,21 @@ typedef irqreturn_t (*NX_IRQ_HANDLER)(int , void *);
 
 #define NX_MIN_DRIVER_RDS_SIZE		64
 
-#if (defined(ESX) || defined(CONFIG_XEN) || defined(ESX_3X_COS))
-#define NX_DEFAULT_RDS_SIZE		512
+#define NX_DEFAULT_RDS_SIZE		1024
 #define NX_DEFAULT_RDS_SIZE_1G		512
 #define NX_DEFAULT_JUMBO_RDS_SIZE	128
 #define NX_DEFAULT_JUMBO_RDS_SIZE_1G	128
 #define MAX_LRO_RCV_DESCRIPTORS		32 /*  XXX */
 #define RDS_MAX_FW230			1024
 #define RDS_JUMBO_MAX_FW230		256
-#else
-#define NX_DEFAULT_RDS_SIZE		4096
-#define NX_DEFAULT_RDS_SIZE_1G		2048
-#define NX_DEFAULT_JUMBO_RDS_SIZE	1024
-#define NX_DEFAULT_JUMBO_RDS_SIZE_1G	512
-#define MAX_LRO_RCV_DESCRIPTORS		64 /*  XXX */
-#define RDS_MAX_FW230			2048
-#define RDS_JUMBO_MAX_FW230		512
-#endif
+#define MAX_SUPPORTED_FILTERS		512
 
 #define RDS_LIMIT_FW230(size) (((size) > RDS_MAX_FW230) ? \
 				RDS_MAX_FW230 : (size))
 #define RDS_JUMBO_LIMIT_FW230(size) (((size) > RDS_JUMBO_MAX_FW230) ? \
 					RDS_JUMBO_MAX_FW230 : (size))
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,4,28)
-#define PCI_DEVICE(vend,dev) \
-         .vendor = (vend), .device = (dev), \
-         .subvendor = PCI_ANY_ID, .subdevice = PCI_ANY_ID
-#endif
+#define NX_SSID_NC375T 0x1740103c
 
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(2,6,24))
 #define netdev_priv(_DEV)       (_DEV)->priv
@@ -328,7 +173,7 @@ typedef irqreturn_t (*NX_IRQ_HANDLER)(int , void *);
 #define ADDR_IN_BOTH_WINDOWS(off)\
        ((off >= UNM_CRB_PCIX_HOST) && (off < UNM_CRB_DDR_NET)) ? 1 : 0
 
-#if defined(CONFIG_X86_64) || defined(CONFIG_64BIT) || ((defined(ESX) && CPU == x86-64))
+#if defined(CONFIG_X86_64) || defined(CONFIG_64BIT) || (CPU == x86-64)
 typedef unsigned long uptr_t;
 #else
 typedef unsigned uptr_t;
@@ -358,10 +203,12 @@ typedef unsigned uptr_t;
 #define DB_NORMALIZE(adapter, off) \
         (void *)(uptr_t)(adapter->ahw.db_base + (off))
 
-#if defined(CONFIG_FW_LOADER) || defined(CONFIG_FW_LOADER_MODULE)
-#define NX_FW_LOADER
-#endif
-
+typedef struct {
+        __uint32_t	major;
+        __uint32_t	minor;
+        __uint32_t	sub;
+	__uint32_t	build;
+} nic_version_t;
 
 static const nic_version_t NX_SUPPORTED_FW_VERSIONS[] = {
   {.major = 3, .minor = 4},
@@ -372,8 +219,7 @@ static const nic_version_t NX_SUPPORTED_FW_VERSIONS[] = {
 #define NX_MAX_RDS_SZ_FW40	(8 * 1024)
 #define NX_MAX_RDS_SZ_FW34	(32 * 1024)
 #define NX_MAX_CMD_DESCRIPTORS	(1024)
-#define NX_MAX_SUPPORTED_RDS_SZ(FW_V34) (FW_V34) ? (NX_MAX_RDS_SZ_FW34): \
-						(NX_MAX_RDS_SZ_FW40)
+#define NX_MAX_SUPPORTED_RDS_SZ	(NX_MAX_RDS_SZ_FW40)
 #define NX_MAX_JUMBO_RDS_SIZE        (1024)
 
 /* Phantom is multi-function.  For our purposes,  use function 0 */
@@ -505,33 +351,12 @@ extern char	*nx_nic_kern_msgs[];
 /* only works for sizes that are powers of 2 */
 #define UNM_ROUNDUP(i, size) ((i) = (((i) + (size) - 1) & ~((size) - 1)))
 
-#ifndef	TAILQ_FIRST
-#define	TAILQ_FIRST(head)    ((head)->tqh_first)
-#define	TAILQ_EMPTY(head)    ((head)->tqh_first == NULL)
-#define	TAILQ_MERGE(head1, head2, field)			\
-{								\
-	*(head1)->tqh_last = (head2)->tqh_first;		\
-	(head2)->tqh_first->field.tqe_prev = (head1)->tqh_last;	\
-	(head1)->tqh_last = (head2)->tqh_last;			\
-}
-#define	TAILQ_COPY(head1, head2, field)					\
-{									\
-	(head2)->tqh_first = (head1)->tqh_first;			\
-	(head2)->tqh_last = (head1)->tqh_last;				\
-	(head2)->tqh_first->field.tqe_prev = &(head2)->tqh_first;	\
-}
-#endif
-
 /*
  * If there are too many allocation failures and there are only 4 more skbs
  * left then don't send the packet up the stack but just repost it to the
  * firmware
  */
-#ifdef ESX
 #define NX_NIC_RX_POST_THRES    10
-#else
-#define	NX_NIC_RX_POST_THRES	4
-#endif
 
 /* For the MAC Address:experimental ref. pegnet_types.h */
 #define UNM_MAC_OUI          "00:0e:1e:"
@@ -548,32 +373,6 @@ enum {
 	LOAD_FW_LAST_INVALID,
 };
 
-struct nx_vlan_buffer {
-	void *data;
-	dma_addr_t phys;
-	struct pci_dev *pdev;
-};
-
-struct nx_cmd_struct {
-	TAILQ_ENTRY(nx_cmd_struct) link;
-	void *data;
-	dma_addr_t phys;
-	int index;
-	int busy;
-};
-
-struct vmk_bounce {
-	TAILQ_HEAD(free_bbuf_list, nx_cmd_struct) free_vmk_bounce;
-	struct nx_cmd_struct buf[MAX_VMK_BOUNCE];
-	unsigned int index;
-	unsigned int max;
-	struct pci_dev *pdev;
-	unsigned int len;
-	void *vaddr_off;
-	dma_addr_t dmaddr_off;
-	spinlock_t lock;
-};
-
 /*
  * unm_skb_frag{} is to contain mapping info for each SG list. This
  * has to be freed when DMA is complete. This is part of unm_tx_buffer{}.
@@ -581,9 +380,6 @@ struct vmk_bounce {
 struct unm_skb_frag {
 	uint64_t dma;
 	uint32_t length;
-#ifdef  ESX
-	struct nx_cmd_struct *bounce_buf[MAX_PAGES_PER_FRAG];
-#endif
 };
 
 /*    Following defines are for the state of the buffers    */
@@ -595,17 +391,13 @@ struct unm_skb_frag {
  * used to save the dma info for pci_unmap_page()
  */
 struct unm_cmd_buffer {
-	TAILQ_ENTRY(unm_cmd_buffer) link;
-
 	struct sk_buff *skb;
 	struct unm_skb_frag fragArray[MAX_BUFFERS_PER_CMD + 1];
-	struct nx_vlan_buffer vlan_buf;
 	struct pci_dev *pdev;
 	uint32_t totalLength;
 	uint32_t mss;
 	uint32_t port:16, cmd:8, fragCount:8;
 	unsigned long time_stamp;
-
 	uint32_t state;
 };
 #define NX_FILE_FW_READ 1
@@ -618,9 +410,6 @@ struct nx_firmware {
 	uint32_t fw_bios_version;
 	uint32_t fw_buildno;
 	uint32_t file_fw_state;
-#ifdef NX_FW_LOADER
-	const struct firmware *fw;
-#endif 
 };
 
 /* In rx_buffer, we do not need multiple fragments as is a single buffer */
@@ -755,7 +544,11 @@ typedef struct nx_free_rbufs {
  * Jumbo buffer size is increased by the following size to improve LRO
  * performance.
  */
+#if 0
 #define	NX_NIC_JUMBO_EXTRA_BUFFER	2048
+#else
+#define	NX_NIC_JUMBO_EXTRA_BUFFER	0
+#endif
 
 /*
  * Rcv Descriptor Context. One such per Rcv Descriptor. There may
@@ -787,25 +580,24 @@ typedef struct rds_host_ring_s {
 #define MAX_RX_DESC_RINGS       3
 
 typedef struct sds_host_ring_s {
-        uint32_t                producer;
-        uint32_t                consumer;
+	uint32_t                producer;
+	uint32_t                consumer;
 	uint64_t 		count;
-        struct pci_dev          *pci_dev;
-        struct unm_adapter_s    *adapter;
-        struct net_device       *netdev;
-        uint32_t                ring_idx;
-        uint64_t                ints;
-        uint64_t                polled;
-        void                    *cons_reg_addr;
-        void                    *intr_reg_addr;
-#ifdef NEW_NAPI
+	struct pci_dev          *pci_dev;
+	struct unm_adapter_s    *adapter;
+	struct net_device       *netdev;
+	uint32_t                ring_idx;
+	uint64_t                ints;
+	uint64_t                polled;
+	void                    *cons_reg_addr;
+	void                    *intr_reg_addr;
 	struct napi_struct      napi;
-	unsigned int            netdev_irq;  
+	unsigned int            netdev_irq;
+	unsigned int            irq_allocated;
 	char                    netdev_name[IFNAMSIZ];
 	uint32_t                napi_enable;
-#endif
 	nx_host_sds_ring_t      *ring;
-        nx_free_rbufs_t         free_rbufs[MAX_RX_DESC_RINGS];
+	nx_free_rbufs_t         free_rbufs[MAX_RX_DESC_RINGS];
 } sds_host_ring_t;
 
 /*
@@ -830,38 +622,6 @@ typedef struct {
 } nx_sts_ring_ctx_t;
 #endif
 #define	NX_NIC_MAX_HOST_RSS_RINGS	8
-/*
- * Receive context. There is one such structure per instance of the
- * receive processing. Any state information that is relevant to
- * the receive, and is must be in this structure. The global data may be
- * present elsewhere.
- */
-
-/*
- * Taken from the Windows driver. TODO: We need to use a common code between
- * linux and windows.
- * This is used when we do not have enough descriptors..
- * When the interrupt routines has freed up more than 64 descriptors, only then
- * we will send them to the hardware... or the interrupt routine has enough
- * descriptors to complete all the descriptors..
- */
-#define	MAX_PENDING_DESC_BLOCK_SIZE	64
-
-typedef struct unm_pending_cmd_desc_block_s {
-	struct list_head link;
-	uint32_t cnt;
-	cmdDescType0_t cmd[MAX_PENDING_DESC_BLOCK_SIZE];
-} unm_pending_cmd_desc_block_t;
-
-/*
- * When the current block gets full, it is moved into the cmd_list.
- */
-typedef struct unm_pending_cmd_descs_s {
-	uint32_t cnt;
-	struct list_head free_list;
-	struct list_head cmd_list;
-	unm_pending_cmd_desc_block_t *curr_block;
-} unm_pending_cmd_descs_t;
 
 #define UNM_NIC_MSI_ENABLED	0x02
 #define UNM_NIC_MSIX_ENABLED	0x04
@@ -872,11 +632,7 @@ typedef struct unm_pending_cmd_descs_s {
 #define	NX_USE_MSIX
 
 /* msix defines */
-#ifdef ESX
-#define MSIX_ENTRIES_PER_ADAPTER	16
-#else
 #define MSIX_ENTRIES_PER_ADAPTER	8
-#endif
 
 #define UNM_MSIX_TBL_SPACE		8192
 #define UNM_PCI_REG_MSIX_TBL		0x44
@@ -943,37 +699,69 @@ typedef struct {
 #define NX_WAIT_BIT_MAP_SIZE            4					
 #define NX_MAX_COMP_ID                  256					
 
-typedef struct nx_status_msg_handler {
-        uint8_t         msg_type;
-        void            *data;
-        int             (*handler) (struct net_device *netdev,   
-                                    void *data, 
-                                    unm_msg_t *msg,
-                                    struct sk_buff *skb);	
-        int             registered;
-} nx_status_msg_handler_t;
-
-typedef struct nx_status_callback_handler {
-        uint8_t         interface_type;
-        void            *data;
-        int             registered;
-        int             refcnt;
-        spinlock_t      lock;
-} nx_status_callback_handler_t;
-
-typedef struct nx_nic_net_stats {
-        nx_ctx_stats_t		*data;
-        dma_addr_t              phys;
-} nx_nic_net_stats_t;
-
-struct old_context_add{
-	char *ptr;
-	nx_dma_addr_t phys;
-	U32 size;
-};
-
 #define	PORT_BITS	4
 #define PORT_MASK	((1 << PORT_BITS) - 1)
+
+#define NX_NIC_NUM_PEGS 5
+
+#define NX_TRACE_ARR_SIZE	4096
+
+#define NX_NIC_TRC_FN(A, F, V) 						\
+{													\
+	uint16_t i = 0;									\
+	unsigned long   flags;							\
+	spin_lock_irqsave(&(A)->trc_lock, flags);		\
+	i = (A)->trc_idx;								\
+	(A)->trc_buf[i].fn_ptr = (uint64_t)(F);			\
+	(A)->trc_buf[i].ts     = jiffies;				\
+	(A)->trc_buf[i].cpu    = smp_processor_id();	\
+	(A)->trc_buf[i].line    = __LINE__;				\
+	(A)->trc_buf[i].val    = (uint64_t)(V);			\
+	(A)->trc_idx++;									\
+	if ((A)->trc_idx == NX_TRACE_ARR_SIZE)			\
+		(A)->trc_idx = 0;							\
+	spin_unlock_irqrestore(&(A)->trc_lock, flags);	\
+}
+
+struct trace_s {
+	uint64_t	fn_ptr;
+	uint64_t	ts;
+	uint32_t	cpu;
+	uint32_t	line;
+	uint64_t	val;
+};
+
+struct fw_dump {
+	uint32_t enabled;
+	char *pcon[NX_NIC_NUM_PEGS];
+	char *phanstat;
+	char *srestat;
+	char *epgstat;
+	char *nicregs;
+	char *macstat[UNM_NIU_MAX_XG_PORTS];
+	char *epgregs;
+	char *sreregs;
+};
+
+struct nx_nic_minidump {
+    u8  fw_supports_md;
+    u8  dump_needed;
+    u8  has_valid_dump;
+    u8  md_capture_mask;
+    u8  md_enabled;
+    u8  disable_overwrite;
+
+    u32 md_dump_size;
+    u32 md_capture_size;
+
+    u32 md_template_size;
+    u32 md_template_ver;
+
+    u64 md_timestamp;
+
+    void* md_template;
+    void* md_capture_buff;
+};
 
 /* Following structure is for specific port information */
 typedef struct unm_adapter_s
@@ -990,7 +778,8 @@ typedef struct unm_adapter_s
 	uint16_t link_autoneg;
 	uint16_t link_module_type;
 
-        uint16_t attach_flag;
+	uint16_t attach_flag;
+
 	 /* User configured values for 1Gbps adapter */
 	uint16_t cfg_speed;
 	uint16_t cfg_duplex;
@@ -1017,32 +806,20 @@ typedef struct unm_adapter_s
 
 	sds_host_ring_t *host_sds_rings;
 	int num_sds_rings;
-#if defined(NEW_NAPI)
 	/* 
 	 * Spinlock for exclusive Tx cmd ring processing 
 	 * by CPUs. Only one CPU will be doing Tx 
 	 * at any given time
 	 */
 	spinlock_t              tx_cpu_excl;
-#endif
 	rwlock_t adapter_lock;
 	spinlock_t lock;
 	spinlock_t buf_post_lock;
-        spinlock_t ctx_state_lock;
+	spinlock_t ctx_state_lock;
 	struct nx_legacy_intr_set	legacy_intr;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,0)
 	struct work_struct watchdog_task;
 	struct work_struct watchdog_task_fw_reset;
 	struct work_struct tx_timeout_task;
-#else
-
-#if (defined (ESX_3X) || defined(ESX_3X_COS))
-	struct tq_struct watchdog_task;
-	struct tq_struct watchdog_task_fw_reset;
-#endif
-
-	struct tq_struct tx_timeout_task;
-#endif
 	struct timer_list watchdog_timer;
 	struct timer_list watchdog_timer_fw_reset;
 	struct tasklet_struct tx_tasklet;
@@ -1054,7 +831,7 @@ typedef struct unm_adapter_s
 	uint32_t *cmdConsumer;
 
 	uint32_t crb_addr_cmd_producer;
-	uint32_t crb_addr_cmd_consumer;
+	dma_addr_t crb_addr_cmd_consumer;
 
 	uint32_t lastCmdConsumer;
 	/* Num of bufs posted in phantom */
@@ -1074,7 +851,6 @@ typedef struct unm_adapter_s
 	int msg_type_sync_offload;
 	int msg_type_rx_desc;
 
-	u32 fw_v34;
 	u32 alive_counter;
 	u32 fw_alive_failures;
 	nic_version_t	version;
@@ -1082,17 +858,16 @@ typedef struct unm_adapter_s
 	nic_version_t	bios_ver;
 	const struct firmware *fw;
 	__uint32_t fwtype;
+	uint32_t bootld_size;
 
 	struct unm_cmd_buffer *cmd_buf_arr;	/* Command buffers for xmit */
 
 	uint8_t			msix_supported;
 	uint8_t			max_possible_rss_rings;
 	uint8_t			msglvl;
-#if ((LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,8)) || defined(ESX_3X))
 	/* msi-x entries array */
 	struct msix_entry msix_entries[MSIX_ENTRIES_PER_ADAPTER];
 	int num_msix;
-#endif
 	struct netdev_list_s *netlist;
 	int is_up;
 	uint32_t led_blink_rate;
@@ -1100,8 +875,6 @@ typedef struct unm_adapter_s
 	/* Coalescing parameters per context */
 	nx_nic_intr_coalesce_t coal;
 	struct proc_dir_entry *dev_dir;
-
-	unm_pending_cmd_descs_t pending_cmds;
 
 #define UNM_HOST_DUMMY_DMA_SIZE         1024
 	struct {
@@ -1112,58 +885,45 @@ typedef struct unm_adapter_s
                 void *addr;
                 dma_addr_t phys_addr;
         } nx_lic_dma;
-#ifdef UNM_NIC_SNMP
-	struct {
-		void *addr;
-		dma_addr_t phys_addr;
-	} snmp_stats_dma;
-#endif
 	void *rdma_private;
 
-	unsigned int bounce;
-	struct vmk_bounce vmk_bounce;
-	struct nx_vlan_buffer vlan_buffer;
-	spinlock_t cb_lock;
-	nx_status_msg_handler_t nx_sds_msg_cb_tbl[NX_MAX_SDS_OPCODE];
-	nx_status_callback_handler_t nx_sds_cb_tbl[NX_NIC_CB_MAX];
-#ifndef ESX
-	nx_nic_net_stats_t nic_net_stats;
-#endif
 	struct list_head wait_list;
 	uint64_t wait_bit_map[NX_WAIT_BIT_MAP_SIZE];
-	nx_pexq_dbell_t pexq;
 
-#if LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,9)
+	struct nx_nic_minidump mdump;
+	spinlock_t trc_lock;
+	uint16_t trc_idx;
+	struct trace_s trc_buf[NX_TRACE_ARR_SIZE];
+
 #ifdef	CONFIG_PM
 	__uint32_t	pm_state[32];	/* Can't find a macro but the Linux
 					 * code uses 16 dwords.
 					 * Being cautious */
 #endif
-#endif
-	struct old_context_add ctx_add;
 	int tx_timeout_count;
 	int auto_fw_reset;
 	int removing_module;
 	struct nx_firmware nx_fw;
 	int multi_ctx;
+	int init_link_update_ctr;
+	int false_linkup;
 	uint32_t num_rx_queues;
 	uint64_t fwload_failed_jiffies;
 	uint64_t fwload_failed_count;
 
-#ifdef ESX
-	unsigned char		fmax, fstart, fnum;
-	unsigned long long	faddr[NUM_EPG_FILTERS/2];
-	unsigned long		ltime[NUM_EPG_FILTERS/2];
-	gfp_t			gfp_mask;
-#endif
-#ifdef NX_VLAN_ACCEL
 	struct vlan_group	*vlgrp;
-#endif /* NX_VLAN_ACCEL */
-        void (*unm_nic_pci_change_crbwindow)(struct unm_adapter_s *, uint32_t);
-        int (*unm_nic_hw_write_wx)(struct unm_adapter_s *, u64, u32);
-        int (*unm_nic_hw_write_ioctl)(struct unm_adapter_s *, u64,
+	
+	struct fw_dump fw_dmp;
+
+	void (*unm_nic_pci_change_crbwindow)(struct unm_adapter_s *, uint32_t);
+	int (*unm_nic_hw_write_wx)(struct unm_adapter_s *, u64, u32);
+    int (*unm_nic_hw_indirect_write)(struct unm_adapter_s *, u64, u32);
+    int (*unm_nic_hw_write_bar_reg)(struct unm_adapter_s *, u64, u32);
+	int (*unm_nic_hw_write_ioctl)(struct unm_adapter_s *, u64,
 				      void *, int);
 	u32 (*unm_nic_hw_read_wx)(struct unm_adapter_s *, u64);
+	u32 (*unm_nic_hw_indirect_read)(struct unm_adapter_s *, u64);
+	u32 (*unm_nic_hw_read_bar_reg)(struct unm_adapter_s *, u64);
 	int (*unm_nic_hw_read_ioctl)(struct unm_adapter_s *, u64, void *, int);
 	int (*unm_nic_pci_mem_read)(struct unm_adapter_s *adapter, u64 off,
 				    void *data, int size);
@@ -1223,13 +983,6 @@ void unm_nic_pci_change_crbwindow_128M(unm_adapter *adapter, uint32_t wndw);
 #define NXWR32(adapter, off, val) \
 	(adapter->unm_nic_hw_write_wx(adapter, off, val))
 
-/*
- * Functions from unm_nic_snmp.c
- */
-void set_temperature_user_pid(unsigned int);
-void unm_nic_send_snmp_trap(unsigned char temp);
-int unm_nic_snmp_ether_read_proc(char *buf, char **start, off_t offset,
-				int count, int *eof, void *data);
 /*
  * Functions from unm_nic_test.c
  */
@@ -1309,6 +1062,23 @@ int unm_nic_pci_mem_write_2M(struct unm_adapter_s *adapter, u64 off,
 int nx_flash_read_version(struct unm_adapter_s *adapter, __uint32_t offset,
 			  nic_version_t *version);
 
+
+int nx_nic_rom_fast_read_words(unm_adapter *adapter, int addr,
+                u8 *bytes, size_t size);
+
+/*
+ * Minidump specific
+ */
+int unm_nic_pci_mem_read_md(struct unm_adapter_s *adapter, u64 off, void *data,
+    int size, int mem_type);
+int unm_nic_hw_indirect_write_2M(unm_adapter *adapter, u64 off, u32 data);
+u32 unm_nic_hw_indirect_read_2M(unm_adapter *adapter, u64 off);
+
+int unm_nic_hw_write_bar_reg_2M(unm_adapter *adapter, u64 off, u32 data);
+u32 unm_nic_hw_read_bar_reg_2M(unm_adapter *adapter, u64 off);
+
+
+
 /*
  * Note : only 32-bit reads and writes !
  */
@@ -1374,12 +1144,6 @@ int unm_niu_xg_macaddr_set(struct unm_adapter_s *, unm_ethernet_macaddr_t addr);
 
 /* Generic enable for GbE ports. Will detect the speed of the link. */
 long unm_niu_gbe_init_port(long port);
-
-/* Enable a GbE interface */
-native_t nx_p2_niu_enable_gbe_port(struct unm_adapter_s *adapter);
-
-/* Disable a GbE interface */
-native_t nx_p2_niu_disable_gbe_port(struct unm_adapter_s *);
 
 native_t unm_niu_disable_xg_port(struct unm_adapter_s *);
 

@@ -192,6 +192,10 @@ void aac_fib_free(struct fib *fibptr)
 {
 	unsigned long flags;
 
+	/* fib with status wait timeout?  */
+	if (fibptr->done == 2)
+		return;
+
 	spin_lock_irqsave(&fibptr->dev->fib_lock, flags);
 	if (unlikely(fibptr->flags & FIB_CONTEXT_FLAG_TIMED_OUT))
 		aac_config.fib_timeouts++;
@@ -424,6 +428,18 @@ int aac_fib_send(u16 command, struct fib *fibptr, unsigned long size,
 	} else if (wait && reply) {
 		hw_fib->header.XferState |= cpu_to_le32(ResponseExpected);
 		FIB_COUNTER_INCREMENT(aac_config.NormalSent);
+#if defined(__VMKLNX__)
+		/*
+		 * If wait > 0 and reply != 0 then there is a potential to land
+		 * in down() below which will eventually land us where we'll try
+		 * to sleep. We can't sleep in this routine because we're in the
+		 * issuing path for the VMkernel. Setting wait<0 causes us to
+		 * spin for up to three minutes with down_trylock() instead of
+		 * down() so we won't trip the World_AssertIsSafeToBlock().
+		*/
+		wait = -1;
+#endif
+
 	}
 	/*
 	 *	Map the fib into 32bits by using the fib number
@@ -516,13 +532,32 @@ int aac_fib_send(u16 command, struct fib *fibptr, unsigned long size,
 				}
 				if ((blink = aac_adapter_check_health(dev)) > 0) {
 					if (wait == -1) {
-	        				printk(KERN_ERR "aacraid: aac_fib_send: adapter blinkLED 0x%x.\n"
+						printk(KERN_ERR "aacraid: aac_fib_send: adapter blinkLED 0x%x.\n"
 						  "Usually a result of a serious unrecoverable hardware problem\n",
 						  blink);
 					}
+					spin_lock_irqsave(&fibptr->event_lock, flags);
+					fibptr->done = 2;
+					spin_unlock_irqrestore(&fibptr->event_lock, flags);
+					dprintk((KERN_ERR "aacraid: sync. command timed out after 180 seconds\n"));
 					return -EFAULT;
 				}
 				udelay(5);
+#ifdef __VMKERNEL_MOULE__
+				/*
+				 * We are waiting for an interrupt but might be in a deadlock here.
+				 * Since vmkernel is non-preemtible and we are hoggin the CPU,
+				 * in special circumstances the interrupt handler may not get to run.
+				 * For more details, please see PR 414597
+				 */
+				if ((count % 1000L) == 0L) {
+					// busy waiting for at most 5 ms at a time.
+					dprintk((KERN_INFO "aacraid: aac_fib_send: Calling interrupt handler\n"));
+					disable_irq(dev->scsi_host_ptr->irq);
+					aac_adapter_intr(dev);
+					enable_irq(dev->scsi_host_ptr_irq);
+				}
+#endif
 			}
 		} else if (down_interruptible(&fibptr->event_wait)) {
 			fibptr->done = 2;
@@ -708,7 +743,7 @@ int aac_fib_complete(struct fib *fibptr)
 	 *	Check for a fib which has already been completed
 	 */
 
-	if (hw_fib->header.XferState == 0)
+	if (hw_fib->header.XferState == 0 || fibptr->done == 2)
 		return 0;
 	/*
 	 *	If we plan to do anything check the structure type first.

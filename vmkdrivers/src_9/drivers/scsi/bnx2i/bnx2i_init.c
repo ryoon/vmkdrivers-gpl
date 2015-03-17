@@ -1,6 +1,6 @@
-/* bnx2i.c: Broadcom NetXtreme II iSCSI driver.
- *
- * Copyright (c) 2006 - 2010 Broadcom Corporation
+/*
+ * QLogic NetXtreme II iSCSI offload driver.
+ * Copyright (c)   2003-2014 QLogic Corporation
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,17 +23,16 @@ static struct list_head adapter_list;
 static u32 adapter_count;
 
 #define DRV_MODULE_NAME		"bnx2i"
-#define DRV_MODULE_VERSION	"1.9.1d.v50.1-3vmw"
-#define DRV_MODULE_RELDATE	"June 5, 2010"
-
+#define DRV_MODULE_VERSION	"2.78.76.v60.8"
+#define DRV_MODULE_RELDATE	"May 21, 2014"
 static char version[] __devinitdata =
-		"Broadcom NetXtreme II iSCSI Driver " DRV_MODULE_NAME \
+		"QLogic NetXtreme II iSCSI Driver " DRV_MODULE_NAME \
 		" v" DRV_MODULE_VERSION " (" DRV_MODULE_RELDATE ")\n";
 
 
-MODULE_AUTHOR("Anil Veerabhadrappa <anilgv@broadcom.com>");
-MODULE_DESCRIPTION("Broadcom NetXtreme II BCM5706/5708/5709/57710/57711/57712"
-		   "/57713 iSCSI Driver");
+MODULE_AUTHOR("QLogic Corporation");
+MODULE_DESCRIPTION("QLogic NetXtreme II BCM5706/5708/5709/57710/57711/57712/57800/57810"
+		   " iSCSI Driver");
 MODULE_LICENSE("GPL");
 MODULE_VERSION(DRV_MODULE_VERSION);
 
@@ -57,11 +56,11 @@ module_param(time_stamps, int, 0664);
 MODULE_PARM_DESC(time_stamps, "Enable TCP TimeStamps");
 
 unsigned int error_mask1 = 0x00;
-module_param(error_mask1, int, 0664);
+module_param(error_mask1, uint, 0664);
 MODULE_PARM_DESC(error_mask1, "Config FW iSCSI Error Mask #1");
 
 unsigned int error_mask2 = 0x00;
-module_param(error_mask2, int, 0664);
+module_param(error_mask2, uint, 0664);
 MODULE_PARM_DESC(error_mask2, "Config FW iSCSI Error Mask #2");
 
 unsigned int sq_size = 0;
@@ -93,6 +92,12 @@ module_param(max_bnx2_sessions, int, 0664);
 MODULE_PARM_DESC(max_bnx2_sessions, "Maximum number of 1G sessions");
 
 #ifdef __VMKLNX__
+#if (VMWARE_ESX_DDK_VERSION >= 50000)
+unsigned int bnx2i_esx_mtu_max = 9000;
+module_param(bnx2i_esx_mtu_max, int, 0664);
+MODULE_PARM_DESC(bnx2i_esx_mtu_max, "Max MTU Supported for Offload Sessions");
+#endif
+
 unsigned int en_hba_poll = 0;
 module_param(en_hba_poll, int, 0664);
 MODULE_PARM_DESC(en_hba_poll, "Enable HBA poll timer");
@@ -100,6 +105,17 @@ MODULE_PARM_DESC(en_hba_poll, "Enable HBA poll timer");
 unsigned int bnx2i_chip_cmd_max = 24;
 module_param(bnx2i_chip_cmd_max, int, 0664);
 MODULE_PARM_DESC(bnx2i_chip_cmd_max, "Max IOs queued to chip");
+
+int bnx2i_max_sectors = -1;
+module_param(bnx2i_max_sectors, int, 0664);
+MODULE_PARM_DESC(bnx2i_max_sectors, "Maximum sectors supported by the driver\n"
+				    "\tValid range: 64 - 256. -1 will set it to default value.\n"
+				    "\tThe default value are 256 for 10G NIC, 127 for 1G NIC.\n");
+
+unsigned int bnx2i_max_task_pgs = 2;
+module_param(bnx2i_max_task_pgs, int, 0664);
+MODULE_PARM_DESC(bnx2i_max_task_pgs, "Maximum pages allocated for iSCSi tasks per connection\n"
+				    "\tValid range: 2 - 8");
 #endif
 
 unsigned int bnx2i_debug_level = 0;
@@ -113,6 +129,10 @@ MODULE_PARM_DESC(bnx2i_debug_level, "Bit mask to enable/disable debug logs\n"
 				    "\tITT CLEANUP:\t0x20\n"
 				    "\tCONN EVT:\t0x40\n"
 				    "\tSESS Recovery:\t0x80\n");
+
+unsigned int ooo_enable = 1;
+module_param(ooo_enable, int, 0664);
+MODULE_PARM_DESC(ooo_enable, "Enable TCP out-of-order support");
 
 u64 iscsi_error_mask = 0x00;
 
@@ -129,39 +149,59 @@ void bnx2i_unbind_adapter_devices(struct bnx2i_hba *hba);
 #endif
 
 
+/* Validate module parameter's range and zero value
+ */
+static void bnx2i_param_check_range(void)
+{
+	if (!event_coal_div)
+		event_coal_div = 1;
+	if (!cmd_cmpl_per_work) {
+		printk(KERN_INFO "bnx2i: cmd_cmpl_per_work %d out of range,"
+			" using %d\n", cmd_cmpl_per_work, BNX2I_CQ_WQES_MIN);
+		cmd_cmpl_per_work = BNX2I_CQ_WQES_MIN;
+	}
+
+	tcp_buf_size = roundup_pow_of_two(tcp_buf_size);
+	if (tcp_buf_size < BNX2I_TCP_WINDOW_MIN ||
+	    tcp_buf_size > BNX2I_TCP_WINDOW_MAX) {
+		printk(KERN_INFO "bnx2i: TCP window %d out of range, using %d\n",
+			tcp_buf_size, BNX2I_TCP_WINDOW_DEFAULT);
+		tcp_buf_size = BNX2I_TCP_WINDOW_DEFAULT;
+	}
+}
+
+
 /**
  * bnx2i_identify_device - identifies NetXtreme II device type
- *
  * @hba: 		Adapter structure pointer
+ * @cnic:		Corresponding cnic device
  *
  * This function identifies the NX2 device type and sets appropriate
  *	queue mailbox register access method, 5709 requires driver to
  *	access MBOX regs using *bin* mode
- **/
-void bnx2i_identify_device(struct bnx2i_hba *hba)
+ */
+void bnx2i_identify_device(struct bnx2i_hba *hba, struct cnic_dev *dev)
 {
 	hba->cnic_dev_type = 0;
-	if ((hba->pci_did == PCI_DEVICE_ID_NX2_5706) ||
-	    (hba->pci_did == PCI_DEVICE_ID_NX2_5706S))
-		set_bit(BNX2I_NX2_DEV_5706, &hba->cnic_dev_type);
-	else if ((hba->pci_did == PCI_DEVICE_ID_NX2_5708) ||
-	    (hba->pci_did == PCI_DEVICE_ID_NX2_5708S))
-		set_bit(BNX2I_NX2_DEV_5708, &hba->cnic_dev_type);
-	else if ((hba->pci_did == PCI_DEVICE_ID_NX2_5709) ||
-	    (hba->pci_did == PCI_DEVICE_ID_NX2_5709S)) {
-		set_bit(BNX2I_NX2_DEV_5709, &hba->cnic_dev_type);
-		hba->mail_queue_access = 0| BNX2I_MQ_BIN_MODE;
-	} else if (hba->pci_did == PCI_DEVICE_ID_NX2_57710 ||
-		   hba->pci_did == PCI_DEVICE_ID_NX2_57711 ||
-		   hba->pci_did == PCI_DEVICE_ID_NX2_57711E ||
-		   hba->pci_did == PCI_DEVICE_ID_NX2_57712 ||
-		   hba->pci_did == PCI_DEVICE_ID_NX2_57712E ||
-		   hba->pci_did == PCI_DEVICE_ID_NX2_57713 ||
-		   hba->pci_did == PCI_DEVICE_ID_NX2_57713E)
+	if (test_bit(CNIC_F_BNX2_CLASS, &dev->flags)) {
+		if ((hba->pci_did == PCI_DEVICE_ID_NX2_5706) ||
+		    (hba->pci_did == PCI_DEVICE_ID_NX2_5706S))
+			set_bit(BNX2I_NX2_DEV_5706, &hba->cnic_dev_type);
+		else if ((hba->pci_did == PCI_DEVICE_ID_NX2_5708) ||
+		    (hba->pci_did == PCI_DEVICE_ID_NX2_5708S))
+			set_bit(BNX2I_NX2_DEV_5708, &hba->cnic_dev_type);
+		else if ((hba->pci_did == PCI_DEVICE_ID_NX2_5709) ||
+		    (hba->pci_did == PCI_DEVICE_ID_NX2_5709S)) {
+			set_bit(BNX2I_NX2_DEV_5709, &hba->cnic_dev_type);
+			hba->mail_queue_access = BNX2I_MQ_BIN_MODE;
+		}
+	} else if (test_bit(CNIC_F_BNX2X_CLASS, &dev->flags))
 		set_bit(BNX2I_NX2_DEV_57710, &hba->cnic_dev_type);
 	else
-		PRINT_ERR(hba, "unknown device, 0x%x\n", hba->pci_did);
+		printk(KERN_ALERT "bnx2i: unknown device, 0x%x\n",
+				  hba->pci_did);
 }
+
 
 /**
  * get_adapter_list_head - returns head of adapter list
@@ -364,8 +404,8 @@ void bnx2i_stop(void *handle)
 	 * outside agents such as vmkiscsid, cnic, firmware to
 	 * to complete this process.
 	 */
-	int wait_num_secs = 90 * HZ;
-	int timeout;
+	int wait_num_secs = 0;
+	int timeout, ulp_tmo;
 	int repeat = 0;
 
 	/* cnic will guarantee 'ulp_stop' will be called only once */
@@ -374,39 +414,47 @@ void bnx2i_stop(void *handle)
 	 * both previously active and inflight connections to be torn down.
 	 */
 #ifdef __VMKLNX__
-   if (vmk_SystemCheckState(VMK_SYSTEM_STATE_NORMAL) == VMK_TRUE) {
+	if (atomic_read(&hba->ep_tmo_poll_enabled)) 
+		wake_up_interruptible(&hba->ep_tmo_wait);	
+	 
+   	if (vmk_SystemCheckState(VMK_SYSTEM_STATE_NORMAL) == VMK_TRUE) {
 #endif
 
 	timeout = 40 * HZ;
-	while (wait_num_secs) {
+	ulp_tmo = 40;
+	while (hba->ofld_conns_active) {
 		bnx2i_start_iscsi_hba_shutdown(hba);
 		wait_event_interruptible_timeout(hba->eh_wait,
 						 (hba->ofld_conns_active == 0),
 						 timeout);
 
-		BNX2I_DBG(DBG_CNIC_IF, NULL, "%s: hba %p, num ofld conns %d\n",
-			  __FUNCTION__, hba, hba->ofld_conns_active);
-
-		if (!hba->ofld_conns_active)
-			break;
-
+		wait_num_secs += timeout;
+		if (ulp_tmo == 40) {
+			printk(KERN_INFO "%s: %s - hba %p, ulp_stop wait time %d seconds (%d)\n",
+				__FUNCTION__, hba->netdev->name, hba, wait_num_secs/HZ,
+				hba->ofld_conns_active);
+			ulp_tmo = 0;
+		} else 
+			ulp_tmo++;
+		
 		repeat++;
-		wait_num_secs -= timeout;
 		timeout = HZ;
 	}
 #ifdef __VMKLNX__
-   } else {
-      /*
-       * If network stop event is received when not in normal system
-       * state we are in shutdown.  At this point vmkiscsid is already
-       * dead so active connection cleanup processing won't complete.
-       * just skip full processing since we are in the shutdown path.
-       */
-      bnx2i_start_iscsi_hba_shutdown(hba);
-      printk(KERN_ERR "%s: %s - hba %p, stop event during shutdown\n",
-            __FUNCTION__, hba->netdev->name, hba);
-   }
+	} else {
+	/*
+	* If network stop event is received when not in normal system
+	* state we are in shutdown.  At this point vmkiscsid is already
+	* dead so active connection cleanup processing won't complete.
+	* just skip full processing since we are in the shutdown path.
+	*/
+		bnx2i_iscsi_hba_cleanup(hba);
+		printk(KERN_ERR "%s: %s - hba %p, stop event during shutdown\n",
+			__FUNCTION__, hba->netdev->name, hba);
+	}
 #endif
+	printk(KERN_INFO "%s: %s - hba %p, ulp_stop completed in %d seconds\n",
+		__FUNCTION__, hba->netdev->name, hba, wait_num_secs/HZ);
 
 	if (repeat)
 		hba->stop_event_repeat++;
@@ -560,16 +608,15 @@ int bnx2i_bind_adapter_devices(struct bnx2i_hba *hba)
 		hba->pci_devno = PCI_SLOT(hba->pcidev->devfn);
 	}
 
-	bnx2i_identify_device(hba);
+	bnx2i_identify_device(hba, cnic);
 
 	if (test_bit(BNX2I_NX2_DEV_5709, &hba->cnic_dev_type)) {
-		hba->regview = ioremap_nocache(hba->netdev->base_addr,
-					       BNX2_MQ_CONFIG2);
+		hba->regview = pci_iomap(hba->pcidev, 0, BNX2_MQ_CONFIG2);
 		if (!hba->regview)
 			goto mem_err;
 	} else if (test_bit(BNX2I_NX2_DEV_57710, &hba->cnic_dev_type)) {
 		nx2_10g_dev = 1;
-		hba->regview = ioremap_nocache(hba->netdev->base_addr, 4096);
+		hba->regview = pci_iomap(hba->pcidev, 0, 4096);
 		if (!hba->regview)
 			goto mem_err;
 	}
@@ -604,7 +651,7 @@ mem_err:
 void bnx2i_unbind_adapter_devices(struct bnx2i_hba *hba)
 {
 	if (hba->regview) {
-		iounmap(hba->regview);
+		pci_iounmap(hba->pcidev, hba->regview);
 		hba->regview = NULL;
 	}
 
@@ -670,6 +717,12 @@ static int bnx2i_init_one(struct bnx2i_hba *hba, struct cnic_dev *cnic)
 
 	bnx2i_tcp_port_tbl.num_required += hba->max_active_conns;
 #endif
+
+	if (ooo_enable)
+		set_bit(CNIC_F_ISCSI_OOO_ENABLE, &cnic->flags);
+	else
+		clear_bit(CNIC_F_ISCSI_OOO_ENABLE, &cnic->flags);
+
 	mutex_unlock(&bnx2i_dev_lock);
 
 	return 0;
@@ -760,6 +813,46 @@ void bnx2i_ulp_exit(struct cnic_dev *dev)
 	bnx2i_free_hba(hba);
 }
 
+/**
+ * bnx2i_get_stats - Retrieve various statistic from iSCSI offload
+ * @handle:		bnx2i_hba
+ *
+ * function callback exported via bnx2i - cnic driver interface to
+ *	retrieve various iSCSI offload related statistics.
+ */
+int bnx2i_get_stats(void *handle)
+{
+	struct bnx2i_hba *hba = handle;
+	struct iscsi_stats_info *stats;
+
+	if (!hba)
+		return -EINVAL;
+
+	stats = (struct iscsi_stats_info *)hba->cnic->stats_addr;
+
+	if (!stats)
+		return -ENOMEM;
+
+	memcpy(stats->version, DRV_MODULE_VERSION, sizeof(stats->version));
+	memcpy(stats->mac_add1 + 2, hba->cnic->mac_addr, ETH_ALEN);
+
+	stats->max_frame_size = hba->netdev->mtu;
+	stats->txq_size = hba->max_sqes;
+	stats->rxq_size = hba->max_cqes;
+
+	/* Loop through all ep to get the cqe_left average */
+	stats->txq_avg_depth = 0;
+	stats->rxq_avg_depth = 0;
+
+	spin_lock_bh(&hba->stat_lock);
+	GET_STATS_64(hba, stats, rx_pdus);
+	GET_STATS_64(hba, stats, rx_bytes);
+	GET_STATS_64(hba, stats, tx_pdus);
+	GET_STATS_64(hba, stats, tx_bytes);
+	spin_unlock_bh(&hba->stat_lock);
+
+	return 0;
+}
 
 /**
  * bnx2i_mod_init - module init entry point
@@ -773,6 +866,8 @@ static int __init bnx2i_mod_init(void)
 	int rc;
 
 	printk(KERN_INFO "%s", version);
+
+	bnx2i_param_check_range();
 
 	INIT_LIST_HEAD(&adapter_list);
 	adapter_count = 0;

@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2003 - 2009 NetXen, Inc.
+ * Copyright (C) 2009 - QLogic Corporation.
  * All rights reserved.
  * 
  * This program is free software; you can redistribute it and/or
@@ -20,11 +21,6 @@
  * The full GNU General Public License is included in this distribution
  * in the file called LICENSE.
  * 
- * Contact Information:
- * licensing@netxen.com
- * NetXen, Inc.
- * 18922 Forge Drive
- * Cupertino, CA 95014
  */
 
 /*
@@ -82,13 +78,16 @@ static int nx_get_lic_finger_print(struct unm_adapter_s *adapter,
 		nx_finger_print_t *nx_lic_finger_print);
 extern U32
 issue_cmd(nx_dev_handle_t drv_handle,  U32 pci_fn, U32 version,
-		U32 arg1, U32 arg2, U32 arg3, U32 cmd);
+		U32 input_arg1, U32 input_arg2, U32 input_arg3, U32 cmd,
+        U32 *output_arg1, U32 *output_arg2, U32 *output_arg3);
 extern int 
 nx_p3_set_vport_miss_mode(struct unm_adapter_s *adapter, int mode);
 static int
 unm_loopback_xmit_frame(struct sk_buff *skb, struct net_device *netdev);
 static int
 unm_nic_led_config(struct unm_adapter_s *adapter, nx_nic_led_config_t *param);
+extern void nx_nic_halt_firmware(struct unm_adapter_s *adapter);
+extern int nx_nic_minidump(struct unm_adapter_s *adapter);
 
 
 unm_send_test_t tx_args;
@@ -235,7 +234,10 @@ int unm_irq_test(unm_adapter *adapter)
 			adapter->portnum,
 			0,
 			0,
-			NX_CDRP_CMD_GEN_INT);
+			NX_CDRP_CMD_GEN_INT,
+			NULL,
+			NULL,
+			NULL);
 	
 	if (rcode != NX_RCODE_SUCCESS) {
 		return -1;
@@ -282,16 +284,12 @@ unm_loopback_test(struct net_device *netdev, int fint, void *ptr,
 	unsigned char *data;
 	unm_send_test_t args;
 	struct unm_adapter_s *adapter;
-	__uint32_t val, mode = VPORT_MISS_MODE_DROP;
+	__uint32_t mode = VPORT_MISS_MODE_DROP;
 	
 	
 	adapter = (struct unm_adapter_s *)netdev_priv(netdev);
 
-	if ((fint) && (adapter->ahw.boardcfg.board_type == UNM_BRDTYPE_P2_SB31_10G_IMEZ
-		|| adapter->ahw.boardcfg.board_type == UNM_BRDTYPE_P2_SB31_10G_HMEZ))
-		return (-LB_NOT_SUPPORTED);
-	
-	if((!fint) && NX_IS_REVISION_P3(adapter->ahw.revision_id))
+	if(!fint)
 		return (-LB_NOT_SUPPORTED);
 	ret = 0;
 	if (ptr) {
@@ -345,26 +343,13 @@ unm_loopback_test(struct net_device *netdev, int fint, void *ptr,
 	}
 
 	if (fint == 1) {
-		if (!NX_IS_REVISION_P3(adapter->ahw.revision_id)) {
-			if (phy_lock(adapter))
-				goto lock_fail;
-			/* halt peg 0 */
-			NXWR32(adapter, UNM_CRB_PEG_NET_0 + 0x3c, 1);
-			mdelay(1000);   /* wait for halt */
-			phy_unlock(adapter);
-			if (xge_loopback(adapter, 1)) {
-				nx_nic_print3(adapter, "phy_lock Failed\n");
-				goto lock_fail;
-			}
-		} else {
-			unm_set_fw_loopback(adapter, 1);
-			testCtx->loopback_start = 1;
-			if (netdev->flags & IFF_PROMISC)
-				mode = VPORT_MISS_MODE_ACCEPT_ALL;
-			if (netdev->flags & IFF_ALLMULTI)
-				mode |= VPORT_MISS_MODE_ACCEPT_MULTI;
-			nx_p3_set_vport_miss_mode(adapter, VPORT_MISS_MODE_ACCEPT_ALL);
-		}
+		unm_set_fw_loopback(adapter, 1);
+		testCtx->loopback_start = 1;
+		if (netdev->flags & IFF_PROMISC)
+			mode = VPORT_MISS_MODE_ACCEPT_ALL;
+		if (netdev->flags & IFF_ALLMULTI)
+			mode |= VPORT_MISS_MODE_ACCEPT_MULTI;
+		nx_p3_set_vport_miss_mode(adapter, VPORT_MISS_MODE_ACCEPT_ALL);
 	}
 	mdelay(1000);
 	testCtx->tx_stop = 0;
@@ -404,21 +389,10 @@ unm_loopback_test(struct net_device *netdev, int fint, void *ptr,
       end:
 	testCtx->tx_stop = 1;
 	if (fint == 1) {
-		if (!NX_IS_REVISION_P3(adapter->ahw.revision_id)) {
-			phy_unlock(adapter);
-			if (xge_loopback(adapter, 0))
-				nx_nic_print3(adapter, "phy_lock Failed\n");
-			/* unhalt peg 0 */
-			val = NXRD32(adapter, UNM_CRB_PEG_NET_0 + 0x30);
-			NXWR32(adapter, UNM_CRB_PEG_NET_0 + 0x30, val);
-		}
-		else {
-			unm_set_fw_loopback(adapter, 0);
-			nx_p3_set_vport_miss_mode(adapter, mode);
-		}
+		unm_set_fw_loopback(adapter, 0);
+		nx_p3_set_vport_miss_mode(adapter, mode);
 		testCtx->loopback_start = 0;
 	}
-lock_fail:
 	if (netif_running(netdev)) {
 		netif_wake_queue(netdev);
 	}
@@ -445,10 +419,6 @@ int unm_led_blink_rate_set(unm_adapter *adapter, u32 testval)
 	nx_nic_led_config_t param;
 	int ret = 0;
 
-	if (adapter->fw_v34) {
-		return 1;
-	}
-
 	testval &= 0xff;
 	if (testval <= 1) {
 		param.ctx_id = adapter->portnum;
@@ -465,10 +435,6 @@ int unm_led_blink_state_set(unm_adapter *adapter, u32 testval)
 	nx_nic_led_config_t param;
 	int ret = 0;
 
-	if (adapter->fw_v34) {
-		return 1;
-	}
-
 	testval &= 0xff;
 	if (testval <= 1) {
 		param.ctx_id = adapter->portnum;
@@ -483,68 +449,8 @@ int unm_led_blink_state_set(unm_adapter *adapter, u32 testval)
 
 int unm_led_test(unm_adapter *adapter)
 {
-	int rv;
-	long phy_id;
-
 	adapter->ahw.LEDTestRet = LED_TEST_OK;
-	if (NX_IS_REVISION_P3(adapter->ahw.revision_id)) {
-		return (-LED_TEST_NOT_SUPPORTED);
-	}
-	//For MEZZ boards we do not support LED Test
-        if (adapter->ahw.boardcfg.board_type == UNM_BRDTYPE_P2_SB31_10G_IMEZ ||
-	    adapter->ahw.boardcfg.board_type == UNM_BRDTYPE_P2_SB31_10G_HMEZ) {
-
-                rv = adapter->ahw.LEDTestRet = LED_TEST_NOT_SUPPORTED;
-                return rv;
-        }
-        //Determine if it is a quake or mysticom phy
-        phy_id = unm_xge_mdio_rd(adapter, DEV_PMA_PMD, PMD_IDENTIFIER);
-
-        if (adapter->ahw.LEDState) {   // already on? then turn it off
-
-                adapter->ahw.LEDState = 0;
-		if (phy_id == PMD_ID_MYSTICOM) {
-			NXWR32(adapter, UNM_ROMUSB_GPIO(0), LED_OFF);
-			NXWR32(adapter, UNM_ROMUSB_GPIO(1), LED_OFF);
-		} else if (phy_id == PMD_ID_QUAKE) {
-			//turn off
-			unm_xge_mdio_wr(adapter, DEV_PMA_PMD, 0xd006, 0x4);
-			unm_xge_mdio_wr(adapter, DEV_PMA_PMD, 0xd007, 0x4);
-		} else {
-			(adapter->ahw).LEDTestRet = LED_TEST_UNKNOWN_PHY;
-				nx_nic_print4(adapter, "LED test UNKNOWN "
-					      "PHY %ld\n", phy_id);
-		}
-
-	} else {		// off, so turn it on...
-
-               adapter->ahw.LEDState = 1;
-		if (phy_id == PMD_ID_MYSTICOM) {
-			NXWR32(adapter, UNM_ROMUSB_GPIO(0), LED_ON);
-			NXWR32(adapter, UNM_ROMUSB_GPIO(1), LED_ON);
-
-		} else if (phy_id == PMD_ID_QUAKE) {
-			//turn on
-			unm_xge_mdio_wr(adapter, DEV_PMA_PMD, 0xd006, 0x5);
-			unm_xge_mdio_wr(adapter, DEV_PMA_PMD, 0xd007, 0x5);
-		} else {
-			(adapter->ahw).LEDTestRet = LED_TEST_UNKNOWN_PHY;
-			       nx_nic_print4(adapter, "LED test UNKNOWN "
-					     "PHY %ld\n", phy_id);
-		}
-	}
-	//Reinitialize LED back to original state
-        if (adapter->ahw.LEDTestLast) {
-		if (phy_id == PMD_ID_QUAKE) {
-			/* set up LEDs for Quake */
-			unm_xge_mdio_wr(adapter, DEV_PMA_PMD, 0xd006, 9);
-			unm_xge_mdio_wr(adapter, DEV_PMA_PMD, 0xd007, 2);
-		}
-		//don't know what to do for MYSTICOM
-	}
-
-       rv = adapter->ahw.LEDTestRet;
-	return (rv);
+	return (-LED_TEST_NOT_SUPPORTED);
 }
 
 static int unmtest_pegstuck(unm_crbword_t addr, U64 reg, int loop,
@@ -744,13 +650,17 @@ static int unm_nic_do_ioctl(struct unm_adapter_s *adapter, void *u_data)
 	unm_nic_ioctl_data_t data;
 	unm_nic_ioctl_data_t *up_data = (unm_nic_ioctl_data_t *)u_data;
 	int retval = 0;
+	int ori_auto_fw_reset;
 	long phy_id = 0 ;
 	uint64_t efuse_chip_id = 0;
+	char *ptr = NULL;
 	nx_finger_print_t nx_lic_finger_print;
 	nx_license_capabilities_t nx_lic_capabilities;
 	nx_finger_print_ioctl_t *snt_ptr;
 	nx_license_capabilities_ioctl_t *snt_ptr1;
 	nx_install_license_ioctl_t *snt_ptr2;
+	u8 *capture_buff;
+	u32 dump_size;
 
 	nx_nic_print7(adapter, "doing ioctl for %p\n", adapter);
 	if (copy_from_user(&data, up_data, sizeof(data))) {
@@ -892,7 +802,7 @@ static int unm_nic_do_ioctl(struct unm_adapter_s *adapter, void *u_data)
 				u32 testval = 0, rate = 1;
 				led_params_t *snt_ptr3=NULL;
 				retval = 0;
-                                 memcpy(&snt_ptr3, &(data.ptr), sizeof(u32 *));
+				memcpy(&snt_ptr3, &(data.ptr), sizeof(u32 *));
 				if (copy_from_user((void *)&testval, (void*)&(snt_ptr3->state), sizeof(u32))) {
 					nx_nic_print4(adapter, "bad copy from userland:\n ");
 					retval = -EFAULT;
@@ -947,7 +857,7 @@ static int unm_nic_do_ioctl(struct unm_adapter_s *adapter, void *u_data)
 			break;
 		case UNM_NIC_CMD_GET_LIC_FINGERPRINT:
 			data.rv = nx_get_lic_finger_print(adapter, &nx_lic_finger_print);
-                        memcpy(&snt_ptr, &(data.ptr), sizeof(u32 *));
+			memcpy(&snt_ptr, &(data.ptr), sizeof(u32 *));
 
 
 			if(copy_to_user(&snt_ptr->req_len, &(nx_lic_finger_print.len),
@@ -1007,18 +917,6 @@ static int unm_nic_do_ioctl(struct unm_adapter_s *adapter, void *u_data)
 				goto error_out;
 			}
 			break;
-#ifdef UNM_NIC_SNMP_TRAP
-		case UNM_NIC_CMD_SET_PID_TRAP:
-			/* It will save the pid, netlink temperature message
-			 * will be sent to this process
-			 */
-			if (data.off < 1)
-				goto error_out;
-			set_temperature_user_pid(data.off);
-			/*if success , w'll return same pid. */
-			data.rv = data.off;
-			break;
-#endif
 
 #if 0				// wait for the unmflash changes
 		case UNM_NIC_CMD_FLASH_READ:
@@ -1050,6 +948,182 @@ static int unm_nic_do_ioctl(struct unm_adapter_s *adapter, void *u_data)
 			data.rv = rom_se(adapter, data.off);
 			break;
 #endif
+		case UNM_NIC_CMD_TRCBUF_READ:
+			
+			if(data.off > NX_TRACE_ARR_SIZE) {
+				retval = -EINVAL;
+				goto error_out;
+			}
+			if (copy_to_user((void *)&(up_data->u),
+						&(adapter->trc_buf[data.off]), data.size)) {
+				nx_nic_print6(adapter, "bad copy to userland: %d\n",
+						(int)sizeof(data));
+
+				retval = -EFAULT;
+				goto error_out;
+			}
+			data.rv = 0;
+			break;
+
+		case UNM_NIC_CMD_MINIDUMP_SIZE:
+		    if (adapter->mdump.has_valid_dump) {
+				dump_size = adapter->mdump.md_dump_size;
+		    } else {
+				dump_size = 0;
+		    }
+
+		    if (copy_to_user((void *)&(up_data->size), &dump_size, sizeof(up_data->size)))
+				return -EFAULT;
+
+		    data.rv = 0;
+		    break;
+
+		case UNM_NIC_CMD_MINIDUMP_READ:
+		    if (!adapter->mdump.has_valid_dump) {
+				return -EINVAL;
+		    }
+
+		    if (data.size > NX_NIC_MINIDUMP_IOCTL_COPY_SIZE ||
+			    (data.off + data.size) > adapter->mdump.md_dump_size || !data.ptr) {
+				return -EINVAL;
+		    }
+
+		    capture_buff = adapter->mdump.md_capture_buff;
+
+		    if (copy_to_user((void *)(data.ptr), capture_buff + data.off, data.size))
+				return -EFAULT;
+
+		    data.rv = 0;
+		    break;
+
+		case UNM_NIC_CMD_FORCE_MINIDUMP:
+		    if (!adapter->mdump.fw_supports_md || adapter->portnum != 0) {
+				return -EINVAL;
+		    }
+			ori_auto_fw_reset = adapter->auto_fw_reset;
+			adapter->auto_fw_reset = 0;
+			nx_nic_halt_firmware(adapter);
+			data.rv = nx_nic_minidump(adapter);
+			if (adapter->mdump.has_valid_dump == 1) {
+				adapter->mdump.disable_overwrite = 1;
+			}
+			adapter->auto_fw_reset = ori_auto_fw_reset;
+		    break;
+
+		case UNM_NIC_CMD_FWLOG_GET_SIZE:
+
+			switch (data.off) {
+				case 0:
+					ptr = adapter->fw_dmp.pcon[0];
+					break;
+				case 1:
+					ptr = adapter->fw_dmp.pcon[1];
+					break;
+				case 2:
+					ptr = adapter->fw_dmp.pcon[2];
+					break;
+				case 3:
+					ptr = adapter->fw_dmp.pcon[3];
+					break;
+				case 4:
+					ptr = adapter->fw_dmp.pcon[4];
+					break;
+				case 5:
+					ptr = adapter->fw_dmp.phanstat;
+					break;
+				case 6:
+					ptr = adapter->fw_dmp.srestat;
+					break;
+				case 7:
+					ptr = adapter->fw_dmp.epgstat;
+					break;
+				case 8:
+					ptr = adapter->fw_dmp.nicregs;
+					break;
+				case 9:
+					ptr = adapter->fw_dmp.macstat[0];
+					break;
+				case 10:
+					ptr = adapter->fw_dmp.macstat[1];
+					break;
+				default:
+					retval = -EOPNOTSUPP;
+					goto error_out;
+			}
+
+			if(ptr == NULL) {
+				dump_size = 0;
+			} else {
+				dump_size = strlen(ptr);
+			}
+
+			if (copy_to_user((void *)&(up_data->size), &dump_size, sizeof(up_data->size)))
+				return -EFAULT;
+
+			data.rv = 0;
+
+			break;
+
+		case UNM_NIC_CMD_FWLOG_GET:
+
+			switch (data.off) {
+				case 0:
+					ptr = adapter->fw_dmp.pcon[0];
+					break;
+				case 1:
+					ptr = adapter->fw_dmp.pcon[1];
+					break;
+				case 2:
+					ptr = adapter->fw_dmp.pcon[2];
+					break;
+				case 3:
+					ptr = adapter->fw_dmp.pcon[3];
+					break;
+				case 4:
+					ptr = adapter->fw_dmp.pcon[4];
+					break;
+				case 5:
+					ptr = adapter->fw_dmp.phanstat;
+					break;
+				case 6:
+					ptr = adapter->fw_dmp.srestat;
+					break;
+				case 7:
+					ptr = adapter->fw_dmp.epgstat;
+					break;
+				case 8:
+					ptr = adapter->fw_dmp.nicregs;
+					break;
+				case 9:
+					ptr = adapter->fw_dmp.macstat[0];
+					break;
+				case 10:
+					ptr = adapter->fw_dmp.macstat[1];
+					break;
+				default:
+					retval = -EOPNOTSUPP;
+					goto error_out;
+			}
+
+			if(ptr == NULL) {
+				retval = -ENODATA;
+				goto error_out;
+			}
+
+			if(data.size < strlen(ptr)) {
+				retval = -EINVAL;
+				goto error_out;
+			}
+
+			if (copy_to_user((void *)data.ptr, ptr, strlen(ptr))) {
+				nx_nic_print6(adapter, "bad copy to userland: %d\n",
+						(int)sizeof(data));
+
+				retval = -EFAULT;
+				goto error_out;
+			}
+			data.rv = 0;
+			break;
 
 		default:
 			nx_nic_print4(adapter, "bad command %d\n", data.cmd);
@@ -1092,9 +1166,7 @@ int unm_nic_ioctl(struct net_device *netdev, struct ifreq *ifr, int cmd)
                                 adapter->portnum);
 
 			count = -1;
-			if (NX_IS_REVISION_P2(adapter->ahw.revision_id))
-				count = adapter->physical_port;
-			else if (adapter->interface_id != -1)
+			if (adapter->interface_id != -1)
 				count = adapter->interface_id & PORT_MASK;
 
 			if (count != -1)
@@ -1114,10 +1186,6 @@ int unm_nic_ioctl(struct net_device *netdev, struct ifreq *ifr, int cmd)
                 break;
 
         case UNM_NIC_IRQ_TEST:
-		if (adapter->fw_v34) {
-			err = INT_NOT_SUPPORTED;
-			break;
-		}
                 err = unm_irq_test(adapter);
                 break;
 
@@ -1203,10 +1271,6 @@ int unm_write_blink_state(struct file *file, const char *buffer,
 	unsigned int testval;
 	int ret = 0;
 
-	if (adapter->fw_v34) {
-		return 1;
-	}
- 
 	if (!capable(CAP_NET_ADMIN)) {
 		return -EACCES;
 	}
@@ -1349,10 +1413,6 @@ int nx_get_lic_finger_print(struct unm_adapter_s *adapter, nx_finger_print_t *nx
 	struct timeval tv;
 	nx_os_wait_event_t swait;
 
-        if (adapter->fw_v34) {
-                nx_nic_print3(adapter, "%s: does not support in FW V3.4\n", __FUNCTION__);
-                return -1;
-        }
 	memset(&req, 0, sizeof(req));
 	memset(adapter->nx_lic_dma.addr, 0, sizeof(nx_finger_print_t));
 	req.opcode = NX_NIC_HOST_REQUEST;
@@ -1395,11 +1455,6 @@ int nx_install_license(struct unm_adapter_s *adapter) {
 	nx_install_license_request_t *lic_req;
 	int          rv = 0;
 
-        if (adapter->fw_v34) {
-                nx_nic_print3(adapter, "%s: does not support in FW V3.4\n", __FUNCTION__);
-                return -1;
-        }
-
 	memset(&req, 0, sizeof(req));
 	req.opcode = NX_NIC_HOST_REQUEST;
 	req.qmsg_type = UNM_MSGTYPE_NIC_REQUEST;
@@ -1425,11 +1480,6 @@ int nx_get_capabilty_request(struct unm_adapter_s *adapter, nx_license_capabilit
 	nx_get_license_capability_request_t *lic_req;
 	int          rv = 0;
 	nx_os_wait_event_t swait;
-
-        if (adapter->fw_v34) {
-                nx_nic_print3(adapter, "%s: does not support in FW V3.4\n", __FUNCTION__);
-                return -1;
-        }
 
 	memset(&req, 0, sizeof(req));
 	memset(adapter->nx_lic_dma.addr, 0, sizeof(nx_license_capabilities_t));

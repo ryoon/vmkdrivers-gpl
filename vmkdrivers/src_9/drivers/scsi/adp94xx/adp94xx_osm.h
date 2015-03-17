@@ -461,7 +461,7 @@ typedef enum {
  */
 struct asd_cmd_internal {
 	/* Area owned by the Linux scsi layer. */
-	uint8_t	private[offsetof(struct scsi_cmnd, SCp.Status)];
+	uint8_t	private[__builtin_offsetof(struct scsi_cmnd, SCp.Status)];
 	struct list_head		links;
 	uint32_t			end;
 };

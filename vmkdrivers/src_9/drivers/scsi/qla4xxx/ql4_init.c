@@ -1,6 +1,7 @@
 /*
  * QLogic iSCSI HBA Driver
  * Copyright (c)  2003-2006 QLogic Corporation
+ * Portions Copyright 2009-2011 VMware, Inc.
  *
  * See LICENSE.qla4xxx for copyright and licensing details.
  */
@@ -1684,6 +1685,7 @@ int qla4xxx_process_ddb_changed(struct scsi_qla_host *ha, uint32_t fw_ddb_index,
 		clear_bit(DF_NO_RELOGIN, &ddb_entry->flags);
 #ifdef __VMKLNX__
 		clear_bit(DF_STOP_RELOGIN, &ddb_entry->flags);
+		clear_bit(DF_MARK_PERM_LOSS, &ddb_entry->flags);
 #endif
 
 		DEBUG6(dev_info(&ha->pdev->dev, "%s conn startddb_entry 0x%p"
@@ -1717,6 +1719,24 @@ int qla4xxx_process_ddb_changed(struct scsi_qla_host *ha, uint32_t fw_ddb_index,
 				ddb_entry->sess, ddb_entry->conn));
 			qla4xxx_mark_device_missing(ha, ddb_entry);
 		}
+#ifdef __VMKLNX__
+                /*
+		 * If the state of the device had been online and the
+		 * login response shows the target is gone, mark the
+		 * device lost for ESX PDL handling, rather than
+		 * APD.
+		 */
+		if (!test_bit(DF_MARK_PERM_LOSS, &ddb_entry->flags)) {
+			switch (conn_err & LOGIN_ERROR_MASK) {
+                	case LOGIN_ERROR_TARGET_FORBIDDEN:
+			case LOGIN_ERROR_TARGET_NOT_FOUND:
+			case LOGIN_ERROR_TARGET_REMOVED:
+				set_bit(DF_MARK_PERM_LOSS, &ddb_entry->flags);
+				qla4xxx_mark_device_lost(ddb_entry);
+                 		break;
+                        }
+		}
+#endif  /* __VMKLNX__ */
 		/*
 		 * Relogin if device state changed to a not active state.
 		 * However, do not relogin if a RELOGIN is in process, or

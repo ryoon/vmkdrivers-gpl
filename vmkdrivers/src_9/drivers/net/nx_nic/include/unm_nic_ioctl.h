@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2003 - 2009 NetXen, Inc.
+ * Copyright (C) 2009 - QLogic Corporation.
  * All rights reserved.
  * 
  * This program is free software; you can redistribute it and/or
@@ -20,11 +21,6 @@
  * The full GNU General Public License is included in this distribution
  * in the file called LICENSE.
  * 
- * Contact Information:
- * licensing@netxen.com
- * NetXen, Inc.
- * 18922 Forge Drive
- * Cupertino, CA 95014
  */
 #ifndef __UNM_NIC_IOCTL_H__
 #define __UNM_NIC_IOCTL_H__
@@ -175,9 +171,18 @@ struct driverimg_header
 #define UNM_NIC_CMD_LIC_INSTALL		14
 #define UNM_NIC_CMD_GET_LIC_FEATURES 	15
 #define UNM_NIC_CMD_SET_PID_TRAP 	16
+
 #define UNM_NIC_CMD_FLASH_READ 		50
 #define UNM_NIC_CMD_FLASH_WRITE 	51
 #define UNM_NIC_CMD_FLASH_SE		52
+#define UNM_NIC_CMD_TRCBUF_READ		53
+#define UNM_NIC_CMD_FWLOG_GET		54
+
+#define UNM_NIC_CMD_MINIDUMP_SIZE	55
+#define UNM_NIC_CMD_MINIDUMP_READ	56
+
+#define UNM_NIC_CMD_FWLOG_GET_SIZE	57
+#define UNM_NIC_CMD_FORCE_MINIDUMP	58
 
 #define UNM_FLASH_READ_SIZE     4
 #define UNM_FLASH_WRITE_SIZE    4

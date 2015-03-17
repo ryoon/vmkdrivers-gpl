@@ -1,7 +1,7 @@
 /*******************************************************************************
 
   Intel(R) Gigabit Ethernet Linux driver
-  Copyright(c) 2007-2009 Intel Corporation.
+  Copyright(c) 2007-2013 Intel Corporation.
 
   This program is free software; you can redistribute it and/or modify it
   under the terms and conditions of the GNU General Public License,
@@ -386,7 +386,7 @@ static s32 e1000_obtain_mbx_lock_pf(struct e1000_hw *hw, u16 vf_number)
  *  returns SUCCESS if it successfully copied message into the buffer
  **/
 static s32 e1000_write_mbx_pf(struct e1000_hw *hw, u32 *msg, u16 size,
-                              u16 vf_number)
+			      u16 vf_number)
 {
 	s32 ret_val;
 	u16 i;
@@ -429,7 +429,7 @@ out_no_write:
  *  a message due to a VF request so no polling for message is needed.
  **/
 static s32 e1000_read_mbx_pf(struct e1000_hw *hw, u32 *msg, u16 size,
-                             u16 vf_number)
+			     u16 vf_number)
 {
 	s32 ret_val;
 	u16 i;
@@ -465,7 +465,10 @@ s32 e1000_init_mbx_params_pf(struct e1000_hw *hw)
 {
 	struct e1000_mbx_info *mbx = &hw->mbx;
 
-	if (hw->mac.type == e1000_82576) {
+	switch (hw->mac.type) {
+	case e1000_82576:
+	case e1000_i350:
+	case e1000_i354:
 		mbx->timeout = 0;
 		mbx->usec_delay = 0;
 
@@ -484,8 +487,8 @@ s32 e1000_init_mbx_params_pf(struct e1000_hw *hw)
 		mbx->stats.reqs = 0;
 		mbx->stats.acks = 0;
 		mbx->stats.rsts = 0;
+	default:
+		return E1000_SUCCESS;
 	}
-
-	return E1000_SUCCESS;
 }
 

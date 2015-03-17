@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2003 - 2009 NetXen, Inc.
+ * Copyright (C) 2009 - QLogic Corporation.
  * All rights reserved.
  * 
  * This program is free software; you can redistribute it and/or
@@ -20,11 +21,6 @@
  * The full GNU General Public License is included in this distribution
  * in the file called LICENSE.
  * 
- * Contact Information:
- * licensing@netxen.com
- * NetXen, Inc.
- * 18922 Forge Drive
- * Cupertino, CA 95014
  */
 /*
  * Provides access to the Network Interface Unit h/w block.
@@ -34,13 +30,7 @@
 #include <asm/string.h> /* for memset */
 #include <linux/delay.h>
 #include <linux/version.h>
-#if LINUX_VERSION_CODE > KERNEL_VERSION(2,6,8)
 #include <linux/hardirq.h>
-#else
-#if LINUX_VERSION_CODE > KERNEL_VERSION(2,6,0)
-#include <asm/hardirq.h>
-#endif
-#endif
 #include <asm/processor.h>
 
 #include "unm_nic.h"
@@ -69,16 +59,12 @@ int phy_lock(struct unm_adapter_s *adapter)
         /*
          * Yield CPU
          */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,0)
         if(!in_atomic())
                 schedule();
         else {
-#endif
                 for(i = 0; i < 20; i++)
                         cpu_relax();    /*This a nop instr on i386*/
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,0)
         }
-#endif
     }
     NXWR32(adapter, UNM_PHY_LOCK_ID, PHY_LOCK_DRIVER);
     return 0;
@@ -104,7 +90,8 @@ void phy_unlock(struct unm_adapter_s *adapter)
  *
  */
 long unm_niu_gbe_phy_read (struct unm_adapter_s *adapter,
-			   long reg, unm_crbword_t *readval) {
+			   long reg, unm_crbword_t *readval) 
+{
     long phy = adapter->physical_port;
     unm_niu_gb_mii_mgmt_address_t address;
     unm_niu_gb_mii_mgmt_command_t command;
@@ -300,116 +287,6 @@ unm_niu_gbe_macaddr_set(struct unm_adapter_s *adapter,
     NXWR32(adapter, UNM_NIU_GB_STATION_ADDR_0(phy), temp);
 
     return 0;
-}
-
-
-/* Enable a GbE interface */
-native_t nx_p2_niu_enable_gbe_port(struct unm_adapter_s *adapter)
-{
-	unm_niu_gb_mac_config_0_t mac_cfg0;
-	unm_niu_gb_mac_config_1_t mac_cfg1;
-	unm_niu_gb_mii_mgmt_config_t mii_cfg;
-	native_t port = adapter->physical_port;
-
-	if ((port < 0) || (port > UNM_NIU_MAX_GBE_PORTS)) {
-		return -1;
-	}
-
-	if (adapter->link_speed != SPEED_10 &&
-	    adapter->link_speed != SPEED_100 &&
-	    adapter->link_speed != SPEED_1000) {
-
-		return -1;
-	}
-
-        *(unm_crbword_t *)&mac_cfg0 = 0;
-        mac_cfg0.soft_reset = 1;
-        NXWR32(adapter, UNM_NIU_GB_MAC_CONFIG_0(port), 
-				*(u32 *)&mac_cfg0);
-
-        *(unm_crbword_t *)&mac_cfg0 = 0;
-        mac_cfg0.tx_enable = 1;
-        mac_cfg0.rx_enable = 1;
-        mac_cfg0.rx_flowctl = 0;
-        mac_cfg0.tx_reset_pb = 1;
-        mac_cfg0.rx_reset_pb = 1;
-        mac_cfg0.tx_reset_mac = 1;
-        mac_cfg0.rx_reset_mac = 1;
-
-        NXWR32(adapter, UNM_NIU_GB_MAC_CONFIG_0(port), 
-				*(u32 *)&mac_cfg0);
-
-        *(unm_crbword_t *)&mac_cfg1 = 0;
-        mac_cfg1.preamblelen = 0xf;
-        mac_cfg1.duplex=1;
-        mac_cfg1.crc_enable=1;
-        mac_cfg1.padshort=1;
-        mac_cfg1.checklength=1;
-        mac_cfg1.hugeframes=1;
-
-        switch(adapter->link_speed) {
-        case SPEED_10:
-        case SPEED_100: /* Fall Through */
-                mac_cfg1.intfmode=1;
-                NXWR32(adapter, UNM_NIU_GB_MAC_CONFIG_1(port), 
-					*(u32 *)&mac_cfg1);
-
-                /* set mii mode */
-                NXWR32(adapter, UNM_NIU_GB0_GMII_MODE+(port<<3), 
-					0);
-                NXWR32(adapter, UNM_NIU_GB0_MII_MODE+(port<< 3), 
-					1);
-                break;
-
-        case SPEED_1000:
-                mac_cfg1.intfmode=2;
-                NXWR32(adapter, UNM_NIU_GB_MAC_CONFIG_1(port), 
-					*(u32 *)&mac_cfg1);
-
-                /* set gmii mode */
-                NXWR32(adapter, UNM_NIU_GB0_MII_MODE+(port<< 3), 
-					0);
-                NXWR32(adapter, UNM_NIU_GB0_GMII_MODE+(port << 3), 
-					1);
-                break;
-
-        default:
-                /* Will not happen */
-                break;
-        }
-
-        *(unm_crbword_t *)&mii_cfg = 0;
-        mii_cfg.clockselect = 7;
-        NXWR32(adapter, UNM_NIU_GB_MII_MGMT_CONFIG(port),
-				 *(u32 *)&mii_cfg);
-
-        *(unm_crbword_t *)&mac_cfg0 = 0;
-        mac_cfg0.tx_enable = 1;
-        mac_cfg0.rx_enable = 1;
-        mac_cfg0.tx_flowctl = 0;
-        mac_cfg0.rx_flowctl = 0;
-        NXWR32(adapter, UNM_NIU_GB_MAC_CONFIG_0(port), 
-				*(u32 *)&mac_cfg0);
-
-	return 0;
-}
-
-
-/* Disable a GbE interface */
-native_t nx_p2_niu_disable_gbe_port(struct unm_adapter_s *adapter)
-{
-	native_t port = adapter->physical_port;
-	unm_niu_gb_mac_config_0_t mac_cfg0;
-
-	if ((port < 0) || (port > UNM_NIU_MAX_GBE_PORTS)) {
-		return -1;
-	}
-	*(unm_crbword_t *)&mac_cfg0 = 0;
-	mac_cfg0.soft_reset = 1;
-
-	NXWR32(adapter, UNM_NIU_GB_MAC_CONFIG_0(port),
-				    *(u32 *)&mac_cfg0);
-	return 0;
 }
 
 /* Disable an XG interface */
@@ -620,19 +497,9 @@ unm_niu_xg_set_promiscuous_mode(struct unm_adapter_s *adapter,
         mac_cfg.rx_enable = 0;
         NXWR32(adapter, UNM_NIU_XGE_CONFIG_0+(0x10000*port), *(u32 *)&mac_cfg);
 
-
-        /* wait until mac is drained by sre */
-        if ((adapter->ahw.boardcfg.board_type != UNM_BRDTYPE_P2_SB31_10G_IMEZ) &&
-	        (adapter->ahw.boardcfg.board_type != UNM_BRDTYPE_P2_SB31_10G_HMEZ)){
-	/*     single port case bit 9*/
-	reg     = 0x0200;
-        	NXWR32(adapter, UNM_NIU_FRAME_COUNT_SELECT , reg );
-         }else{
-
         	//Port 0 rx fifo bit 5
         	reg = (0x20 << port);
         	NXWR32(adapter, UNM_NIU_FRAME_COUNT_SELECT , reg );
-        }
         do{
 	mdelay(10);
             reg = NXRD32(adapter, UNM_NIU_FRAME_COUNT);
@@ -662,134 +529,4 @@ unm_niu_xg_set_promiscuous_mode(struct unm_adapter_s *adapter,
     }
 
     return result;
-}
-
-int
-unm_niu_xg_get_tx_flow_ctl(struct unm_adapter_s *adapter,
-				int *val)
-{
-    int port = adapter->physical_port;
-    unm_niu_xg_pause_ctl_t reg;
-    if ((port < 0) || (port > UNM_NIU_MAX_XG_PORTS)) {
-        return -1;
-    }
-    *(u32*)&reg = NXRD32(adapter, UNM_NIU_XG_PAUSE_CTL);
-    if (port == 0) {
-        *val = !reg.xg0_mask;
-    } else {
-        *val = !reg.xg1_mask;
-    }
-    return 0;
-}
-
-int
-unm_niu_xg_set_tx_flow_ctl(struct unm_adapter_s *adapter,
-				int enable)
-{
-    int port = adapter->physical_port;
-    unm_niu_xg_pause_ctl_t reg;
-
-    if ((port < 0) || (port > UNM_NIU_MAX_XG_PORTS)) {
-        return -1;
-    }
-    *(u32*)&reg = NXRD32(adapter, UNM_NIU_XG_PAUSE_CTL);
-    if (port == 0) {
-        reg.xg0_mask = !enable;
-    } else {
-        reg.xg1_mask = !enable;
-    }
-    NXWR32(adapter, UNM_NIU_XG_PAUSE_CTL, *(u32 *)&reg);
-
-    return 0;
-}
-
-int
-unm_niu_gbe_get_tx_flow_ctl(struct unm_adapter_s *adapter,
-				int *val)
-{
-    int port = adapter->physical_port;
-    unm_niu_gb_pause_ctl_t reg;
-    if ((port < 0) || (port > UNM_NIU_MAX_GBE_PORTS)) {
-        return -1;
-    }
-    *(u32*)&reg = NXRD32(adapter, UNM_NIU_GB_PAUSE_CTL);
-    switch (port) {
-        case(0):
-            *val = !reg.gb0_mask;
-            break;
-        case(1):
-            *val = !reg.gb1_mask;
-            break;
-        case(2):
-            *val = !reg.gb2_mask;
-            break;
-        case(3):
-        default:
-            *val = !reg.gb3_mask;
-            break;
-    }
-    return 0;
-}
-int
-unm_niu_gbe_set_tx_flow_ctl(struct unm_adapter_s *adapter,
-				int enable)
-{
-    int port = adapter->physical_port;
-    unm_niu_gb_pause_ctl_t reg;
-
-    if ((port < 0) || (port > UNM_NIU_MAX_GBE_PORTS)) {
-        return -1;
-    }
-    *(u32*)&reg = NXRD32(adapter, UNM_NIU_GB_PAUSE_CTL);
-    switch (port) {
-        case(0):
-            reg.gb0_mask = !enable;
-            break;
-        case(1):
-            reg.gb1_mask = !enable;
-            break;
-        case(2):
-            reg.gb2_mask = !enable;
-            break;
-        case(3):
-        default:
-            reg.gb3_mask = !enable;
-            break;
-    }
-    NXWR32(adapter, UNM_NIU_GB_PAUSE_CTL, *(u32 *)&reg);
-
-    return 0;
-}
-
-int
-unm_niu_gbe_get_rx_flow_ctl(struct unm_adapter_s *adapter,
-				int *val)
-{
-    int port = adapter->physical_port;
-    unm_niu_gb_mac_config_0_t reg;
-
-    if ((port < 0) || (port > UNM_NIU_MAX_GBE_PORTS)) {
-        return -1;
-    }
-    *(u32*)&reg = NXRD32(adapter, UNM_NIU_GB_MAC_CONFIG_0(port));
-    *val = reg.rx_flowctl;
-
-    return 0;
-}
-int
-unm_niu_gbe_set_rx_flow_ctl(struct unm_adapter_s *adapter,
-				int enable)
-{
-    int port = adapter->physical_port;
-    unm_niu_gb_mac_config_0_t reg;
-
-    if ((port < 0) || (port > UNM_NIU_MAX_GBE_PORTS)) {
-        return -1;
-    }
-
-    *(u32*)&reg = NXRD32(adapter, UNM_NIU_GB_MAC_CONFIG_0(port));
-    reg.rx_flowctl = enable;
-    NXWR32(adapter, UNM_NIU_GB_MAC_CONFIG_0(port), *(u32 *)&reg);
-
-    return 0;
 }

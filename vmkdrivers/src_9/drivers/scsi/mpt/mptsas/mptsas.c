@@ -101,7 +101,7 @@ MODULE_DESCRIPTION(my_NAME);
 MODULE_LICENSE("GPL");
 MODULE_VERSION(my_VERSION);
 
-static int mpt_pt_clear;
+static int mpt_pt_clear = MPTSCSIH_PT_CLEAR;
 module_param(mpt_pt_clear, int, 0);
 MODULE_PARM_DESC(mpt_pt_clear,
 		" Clear persistency table: enable=1  "
@@ -5457,6 +5457,7 @@ mptsas_hotplug_work(MPT_ADAPTER *ioc, struct fw_event_work *fw_event,
 		if (!ioc->disable_hotplug_remove) {
 			phy_info = mptsas_find_phyinfo_by_sas_address(ioc,
 			    hot_plug_info->sas_address);
+			printk("in MPTSAS_DEL_DEVICE\n");
 			mptsas_del_end_device(ioc, phy_info);
 		}
 		break;
@@ -6616,6 +6617,10 @@ mptsas_exit(void)
 	mpt_deregister(mptsasTaskCtx);
 	mpt_deregister(mptsasDoneCtx);
 	mpt_deregister(mptsasDeviceResetCtx);
+#if defined(__VMKLNX__)
+        fusion_exit();
+#endif
+
 }
 
 module_init(mptsas_init);

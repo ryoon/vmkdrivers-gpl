@@ -1,7 +1,7 @@
 /*******************************************************************************
 
   Intel 10 Gigabit PCI Express Linux driver
-  Copyright(c) 1999 - 2010 Intel Corporation.
+  Copyright(c) 1999 - 2011 Intel Corporation.
 
   This program is free software; you can redistribute it and/or modify it
   under the terms and conditions of the GNU General Public License,
@@ -62,6 +62,24 @@
 #define hw_dbg(hw, S, A...)      do {} while (0)
 #endif
 
+#define e_dev_info(format, arg...) \
+	dev_info(pci_dev_to_dev(adapter->pdev), format, ## arg)
+#define e_dev_warn(format, arg...) \
+	dev_warn(pci_dev_to_dev(adapter->pdev), format, ## arg)
+#define e_dev_err(format, arg...) \
+	dev_err(pci_dev_to_dev(adapter->pdev), format, ## arg)
+#define e_dev_notice(format, arg...) \
+	dev_notice(pci_dev_to_dev(adapter->pdev), format, ## arg)
+#define e_info(msglvl, format, arg...) \
+	netif_info(adapter, msglvl, adapter->netdev, format, ## arg)
+#define e_err(msglvl, format, arg...) \
+	netif_err(adapter, msglvl, adapter->netdev, format, ## arg)
+#define e_warn(msglvl, format, arg...) \
+	netif_warn(adapter, msglvl, adapter->netdev, format, ## arg)
+#define e_crit(msglvl, format, arg...) \
+	netif_crit(adapter, msglvl, adapter->netdev, format, ## arg)
+
+
 #ifdef DBG
 #define IXGBE_WRITE_REG(a, reg, value) do {\
 	switch (reg) { \
@@ -105,6 +123,9 @@ extern void ixgbe_write_pci_cfg_word(struct ixgbe_hw *hw, u32 reg, u16 value);
 #define IXGBE_WRITE_PCIE_WORD ixgbe_write_pci_cfg_word
 #define IXGBE_EEPROM_GRANT_ATTEMPS 100
 #define IXGBE_HTONL(_i) htonl(_i)
-#define IXGBE_HTONS(_i) htons(_i)
+#define IXGBE_NTOHL(_i) ntohl(_i)
+#define IXGBE_NTOHS(_i) ntohs(_i)
+#define IXGBE_CPU_TO_LE32(_i) cpu_to_le32(_i)
+#define IXGBE_LE32_TO_CPUS(_i) le32_to_cpus(_i)
 
 #endif /* _IXGBE_OSDEP_H_ */

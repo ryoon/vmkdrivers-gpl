@@ -119,11 +119,13 @@ static int ioctl_send_fib(struct aac_dev * dev, void __user *arg)
 		retval = aac_fib_send(le16_to_cpu(kfib->header.Command), fibptr,
 				le16_to_cpu(kfib->header.Size) , FsaNormal,
 				1, 1, NULL, NULL);
-		if (retval) {
-			goto cleanup;
-		}
+
 		if (aac_fib_complete(fibptr) != 0) {
-			retval = -EINVAL;
+			if (!retval)
+				retval = -EINVAL;
+		}
+
+		if (retval) {
 			goto cleanup;
 		}
 	}

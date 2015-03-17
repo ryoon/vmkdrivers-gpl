@@ -1,13 +1,11 @@
 /* bnx2x_fw_file_hdr.h: FW binary file header structure.
  *
- * Copyright (c) 2007-2011 Broadcom Corporation
+ * Copyright (c) 2007-2014 QLogic Corporation
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation.
  *
- * Maintained by: Eilon Greenstein <eilong@broadcom.com>
- * Written by: Vladislav Zolotarov <vladz@broadcom.com>
  * Based on the original idea of John Wright <john.wright@hp.com>.
  */
 
@@ -31,6 +29,7 @@ struct bnx2x_fw_file_hdr {
 	struct bnx2x_fw_file_section csem_pram_data;
 	struct bnx2x_fw_file_section xsem_int_table_data;
 	struct bnx2x_fw_file_section xsem_pram_data;
+	struct bnx2x_fw_file_section iro_arr;
 	struct bnx2x_fw_file_section fw_version;
 };
 

@@ -1,4 +1,4 @@
-/* Copyright (C) 2009-2012 Broadcom Corporation. */
+/* Copyright (C) 2009-2013 Broadcom Corporation. */
 
 #ifndef BCM_HAS_PCI_PCIE_CAP
 static inline int pci_pcie_cap(struct pci_dev *pdev)
@@ -107,8 +107,8 @@ static inline void tg3_5780_class_intx_workaround(struct tg3 *tp)
 #define tg3_update_trans_start(dev)		((dev)->trans_start = jiffies)
 #endif
 
-#ifndef BCM_HAS_VLAN_HWACCEL_PUT_TAG
-#define TG3_TO_INT(Y)       ((int)((unsigned long long)(Y) & (SMP_CACHE_BYTES - 1)))
+#ifndef BCM_HAS_NEW_VLAN_INTERFACE
+#define TG3_TO_INT(Y)       ((int)((ptrdiff_t)(Y) & (SMP_CACHE_BYTES - 1)))
 #define TG3_COMPAT_VLAN_ALLOC_LEN		(SMP_CACHE_BYTES + VLAN_HLEN)
 #define TG3_COMPAT_VLAN_RESERVE(addr)	(SKB_DATA_ALIGN((addr) + VLAN_HLEN) - (addr))
 #else
@@ -117,31 +117,13 @@ static inline void tg3_5780_class_intx_workaround(struct tg3 *tp)
 #endif
 
 #ifdef BCM_KERNEL_SUPPORTS_8021Q
-#ifndef BCM_HAS_VLAN_HWACCEL_PUT_TAG
 
-#undef TG3_RAW_IP_ALIGN
+#ifndef BCM_HAS_NEW_VLAN_INTERFACE
+#undef  TG3_RAW_IP_ALIGN
 #define TG3_RAW_IP_ALIGN (2 + VLAN_HLEN)
+#endif /* BCM_HAS_NEW_VLAN_INTERFACE */
 
-static inline struct sk_buff *tg3_vlan_hwaccel_put_tag(struct sk_buff *skb,
-						       u16 vlan_tci)
-{
-	struct vlan_ethhdr *ve = (struct vlan_ethhdr *)
-			    __skb_push(skb, VLAN_HLEN);
-
-	memmove(ve, skb->data + VLAN_HLEN, ETH_ALEN * 2);
-
-	ve->h_vlan_proto = htons(ETH_P_8021Q);
-
-	ve->h_vlan_TCI = htons(vlan_tci);
-
-	skb->protocol = htons(ETH_P_8021Q);
-
-	return skb;
-}
-
-#endif /* BCM_HAS_VLAN_HWACCEL_PUT_TAG */
-
-#ifdef BCM_USE_OLD_VLAN_INTERFACE
+#ifndef BCM_HAS_NEW_VLAN_INTERFACE
 static void __tg3_set_rx_mode(struct net_device *);
 static inline void tg3_netif_start(struct tg3 *tp);
 static inline void tg3_netif_stop(struct tg3 *tp);
@@ -270,11 +252,11 @@ static int tg3_set_tso(struct net_device *dev, u32 value)
 		if (value) {
 			dev->features |= NETIF_F_TSO6;
 			if (tg3_flag(tp, HW_TSO_3) ||
-			    GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_5761 ||
-			    (GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_5784 &&
-			     GET_CHIP_REV(tp->pci_chip_rev_id) != CHIPREV_5784_AX) ||
-			    GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_5785 ||
-			    GET_ASIC_REV(tp->pci_chip_rev_id) == ASIC_REV_57780)
+			    tg3_asic_rev(tp) == ASIC_REV_5761 ||
+			    (tg3_asic_rev(tp) == ASIC_REV_5784 &&
+			     tg3_chip_rev(tp) != CHIPREV_5784_AX) ||
+			    tg3_asic_rev(tp) == ASIC_REV_5785 ||
+			    tg3_asic_rev(tp) == ASIC_REV_57780)
 				dev->features |= NETIF_F_TSO_ECN;
 		} else
 			dev->features &= ~(NETIF_F_TSO6 | NETIF_F_TSO_ECN);
@@ -297,13 +279,16 @@ static void netdev_update_features(struct net_device *dev)
 }
 #endif /* BCM_HAS_NETDEV_UPDATE_FEATURES */
 
-#ifndef BCM_HAS_SET_PHYS_ID
+#if !defined(BCM_HAS_SET_PHYS_ID) || defined(GET_ETHTOOL_OP_EXT)
+
+#if !defined(BCM_HAS_SET_PHYS_ID)
 enum ethtool_phys_id_state {
 	ETHTOOL_ID_INACTIVE,
 	ETHTOOL_ID_ACTIVE,
 	ETHTOOL_ID_ON,
 	ETHTOOL_ID_OFF
 };
+#endif
 
 static int tg3_set_phys_id(struct net_device *dev,
 			    enum ethtool_phys_id_state state);
@@ -331,6 +316,16 @@ static int tg3_phys_id(struct net_device *dev, u32 data)
 	return 0;
 }
 #endif /* BCM_HAS_SET_PHYS_ID */
+
+#ifndef BCM_HAS_GET_STATS64
+static struct rtnl_link_stats64 *tg3_get_stats64(struct net_device *dev,
+						struct rtnl_link_stats64 *stats);
+static struct rtnl_link_stats64 *tg3_get_stats(struct net_device *dev)
+{
+	struct tg3 *tp = netdev_priv(dev);
+	return tg3_get_stats64(dev, &tp->net_stats);
+}
+#endif /* BCM_HAS_GET_STATS64 */
 
 #ifdef BCM_HAS_GET_RXFH_INDIR
 #ifndef BCM_HAS_GET_RXFH_INDIR_SIZE

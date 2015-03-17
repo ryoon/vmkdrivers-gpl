@@ -1605,6 +1605,10 @@ mptspi_exit(void)
 	mpt_deregister(mptspiTaskCtx);
 	mpt_deregister(mptspiDoneCtx);
 	spi_release_transport(mptspi_transport_template);
+#if defined(__VMKLNX__)
+        fusion_exit();
+#endif
+
 }
 
 module_init(mptspi_init);

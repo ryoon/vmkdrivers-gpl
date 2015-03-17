@@ -16,7 +16,6 @@
  * SOFTWARE.
  *
  */
-#ident "$Id: vnic_cq.h 59839 2010-09-27 20:36:31Z roprabhu $"
 
 #ifndef _VNIC_CQ_H_
 #define _VNIC_CQ_H_
@@ -58,6 +57,7 @@ struct vnic_cq {
 	struct vnic_dev_ring ring;
 	unsigned int to_clean;
 	unsigned int last_color;
+	unsigned int interrupt_offset;
 };
 
 static inline unsigned int vnic_cq_service(struct vnic_cq *cq,

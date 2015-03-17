@@ -1,7 +1,7 @@
 /*******************************************************************************
 
   Intel(R) Gigabit Ethernet Linux driver
-  Copyright(c) 2007-2009 Intel Corporation.
+  Copyright(c) 2007-2013 Intel Corporation.
 
   This program is free software; you can redistribute it and/or modify it
   under the terms and conditions of the GNU General Public License,
@@ -29,26 +29,354 @@
 #include "kcompat.h"
 
 /*****************************************************************************/
-#if ( LINUX_VERSION_CODE < KERNEL_VERSION(2,4,21) )
-struct sk_buff *
-_kc_skb_pad(struct sk_buff *skb, int pad)
+#if ( LINUX_VERSION_CODE < KERNEL_VERSION(2,4,8) )
+/* From lib/vsprintf.c */
+#include <asm/div64.h>
+
+static int skip_atoi(const char **s)
 {
-        struct sk_buff *nskb;
-        
-        /* If the skbuff is non linear tailroom is always zero.. */
-        if(skb_tailroom(skb) >= pad)
-        {
-                memset(skb->data+skb->len, 0, pad);
-                return skb;
-        }
-        
-        nskb = skb_copy_expand(skb, skb_headroom(skb), skb_tailroom(skb) + pad, GFP_ATOMIC);
-        kfree_skb(skb);
-        if(nskb)
-                memset(nskb->data+nskb->len, 0, pad);
-        return nskb;
-} 
-#endif /* < 2.4.21 */
+	int i=0;
+
+	while (isdigit(**s))
+		i = i*10 + *((*s)++) - '0';
+	return i;
+}
+
+#define _kc_ZEROPAD	1		/* pad with zero */
+#define _kc_SIGN	2		/* unsigned/signed long */
+#define _kc_PLUS	4		/* show plus */
+#define _kc_SPACE	8		/* space if plus */
+#define _kc_LEFT	16		/* left justified */
+#define _kc_SPECIAL	32		/* 0x */
+#define _kc_LARGE	64		/* use 'ABCDEF' instead of 'abcdef' */
+
+static char * number(char * buf, char * end, long long num, int base, int size, int precision, int type)
+{
+	char c,sign,tmp[66];
+	const char *digits;
+	const char small_digits[] = "0123456789abcdefghijklmnopqrstuvwxyz";
+	const char large_digits[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+	int i;
+
+	digits = (type & _kc_LARGE) ? large_digits : small_digits;
+	if (type & _kc_LEFT)
+		type &= ~_kc_ZEROPAD;
+	if (base < 2 || base > 36)
+		return 0;
+	c = (type & _kc_ZEROPAD) ? '0' : ' ';
+	sign = 0;
+	if (type & _kc_SIGN) {
+		if (num < 0) {
+			sign = '-';
+			num = -num;
+			size--;
+		} else if (type & _kc_PLUS) {
+			sign = '+';
+			size--;
+		} else if (type & _kc_SPACE) {
+			sign = ' ';
+			size--;
+		}
+	}
+	if (type & _kc_SPECIAL) {
+		if (base == 16)
+			size -= 2;
+		else if (base == 8)
+			size--;
+	}
+	i = 0;
+	if (num == 0)
+		tmp[i++]='0';
+	else while (num != 0)
+		tmp[i++] = digits[do_div(num,base)];
+	if (i > precision)
+		precision = i;
+	size -= precision;
+	if (!(type&(_kc_ZEROPAD+_kc_LEFT))) {
+		while(size-->0) {
+			if (buf <= end)
+				*buf = ' ';
+			++buf;
+		}
+	}
+	if (sign) {
+		if (buf <= end)
+			*buf = sign;
+		++buf;
+	}
+	if (type & _kc_SPECIAL) {
+		if (base==8) {
+			if (buf <= end)
+				*buf = '0';
+			++buf;
+		} else if (base==16) {
+			if (buf <= end)
+				*buf = '0';
+			++buf;
+			if (buf <= end)
+				*buf = digits[33];
+			++buf;
+		}
+	}
+	if (!(type & _kc_LEFT)) {
+		while (size-- > 0) {
+			if (buf <= end)
+				*buf = c;
+			++buf;
+		}
+	}
+	while (i < precision--) {
+		if (buf <= end)
+			*buf = '0';
+		++buf;
+	}
+	while (i-- > 0) {
+		if (buf <= end)
+			*buf = tmp[i];
+		++buf;
+	}
+	while (size-- > 0) {
+		if (buf <= end)
+			*buf = ' ';
+		++buf;
+	}
+	return buf;
+}
+
+int _kc_vsnprintf(char *buf, size_t size, const char *fmt, va_list args)
+{
+	int len;
+	unsigned long long num;
+	int i, base;
+	char *str, *end, c;
+	const char *s;
+
+	int flags;		/* flags to number() */
+
+	int field_width;	/* width of output field */
+	int precision;		/* min. # of digits for integers; max
+				   number of chars for from string */
+	int qualifier;		/* 'h', 'l', or 'L' for integer fields */
+				/* 'z' support added 23/7/1999 S.H.    */
+				/* 'z' changed to 'Z' --davidm 1/25/99 */
+
+	str = buf;
+	end = buf + size - 1;
+
+	if (end < buf - 1) {
+		end = ((void *) -1);
+		size = end - buf + 1;
+	}
+
+	for (; *fmt ; ++fmt) {
+		if (*fmt != '%') {
+			if (str <= end)
+				*str = *fmt;
+			++str;
+			continue;
+		}
+
+		/* process flags */
+		flags = 0;
+		repeat:
+			++fmt;		/* this also skips first '%' */
+			switch (*fmt) {
+				case '-': flags |= _kc_LEFT; goto repeat;
+				case '+': flags |= _kc_PLUS; goto repeat;
+				case ' ': flags |= _kc_SPACE; goto repeat;
+				case '#': flags |= _kc_SPECIAL; goto repeat;
+				case '0': flags |= _kc_ZEROPAD; goto repeat;
+			}
+
+		/* get field width */
+		field_width = -1;
+		if (isdigit(*fmt))
+			field_width = skip_atoi(&fmt);
+		else if (*fmt == '*') {
+			++fmt;
+			/* it's the next argument */
+			field_width = va_arg(args, int);
+			if (field_width < 0) {
+				field_width = -field_width;
+				flags |= _kc_LEFT;
+			}
+		}
+
+		/* get the precision */
+		precision = -1;
+		if (*fmt == '.') {
+			++fmt;
+			if (isdigit(*fmt))
+				precision = skip_atoi(&fmt);
+			else if (*fmt == '*') {
+				++fmt;
+				/* it's the next argument */
+				precision = va_arg(args, int);
+			}
+			if (precision < 0)
+				precision = 0;
+		}
+
+		/* get the conversion qualifier */
+		qualifier = -1;
+		if (*fmt == 'h' || *fmt == 'l' || *fmt == 'L' || *fmt =='Z') {
+			qualifier = *fmt;
+			++fmt;
+		}
+
+		/* default base */
+		base = 10;
+
+		switch (*fmt) {
+			case 'c':
+				if (!(flags & _kc_LEFT)) {
+					while (--field_width > 0) {
+						if (str <= end)
+							*str = ' ';
+						++str;
+					}
+				}
+				c = (unsigned char) va_arg(args, int);
+				if (str <= end)
+					*str = c;
+				++str;
+				while (--field_width > 0) {
+					if (str <= end)
+						*str = ' ';
+					++str;
+				}
+				continue;
+
+			case 's':
+				s = va_arg(args, char *);
+				if (!s)
+					s = "<NULL>";
+
+				len = strnlen(s, precision);
+
+				if (!(flags & _kc_LEFT)) {
+					while (len < field_width--) {
+						if (str <= end)
+							*str = ' ';
+						++str;
+					}
+				}
+				for (i = 0; i < len; ++i) {
+					if (str <= end)
+						*str = *s;
+					++str; ++s;
+				}
+				while (len < field_width--) {
+					if (str <= end)
+						*str = ' ';
+					++str;
+				}
+				continue;
+
+			case 'p':
+				if (field_width == -1) {
+					field_width = 2*sizeof(void *);
+					flags |= _kc_ZEROPAD;
+				}
+				str = number(str, end,
+						(unsigned long) va_arg(args, void *),
+						16, field_width, precision, flags);
+				continue;
+
+
+			case 'n':
+				/* FIXME:
+				* What does C99 say about the overflow case here? */
+				if (qualifier == 'l') {
+					long * ip = va_arg(args, long *);
+					*ip = (str - buf);
+				} else if (qualifier == 'Z') {
+					size_t * ip = va_arg(args, size_t *);
+					*ip = (str - buf);
+				} else {
+					int * ip = va_arg(args, int *);
+					*ip = (str - buf);
+				}
+				continue;
+
+			case '%':
+				if (str <= end)
+					*str = '%';
+				++str;
+				continue;
+
+				/* integer number formats - set up the flags and "break" */
+			case 'o':
+				base = 8;
+				break;
+
+			case 'X':
+				flags |= _kc_LARGE;
+			case 'x':
+				base = 16;
+				break;
+
+			case 'd':
+			case 'i':
+				flags |= _kc_SIGN;
+			case 'u':
+				break;
+
+			default:
+				if (str <= end)
+					*str = '%';
+				++str;
+				if (*fmt) {
+					if (str <= end)
+						*str = *fmt;
+					++str;
+				} else {
+					--fmt;
+				}
+				continue;
+		}
+		if (qualifier == 'L')
+			num = va_arg(args, long long);
+		else if (qualifier == 'l') {
+			num = va_arg(args, unsigned long);
+			if (flags & _kc_SIGN)
+				num = (signed long) num;
+		} else if (qualifier == 'Z') {
+			num = va_arg(args, size_t);
+		} else if (qualifier == 'h') {
+			num = (unsigned short) va_arg(args, int);
+			if (flags & _kc_SIGN)
+				num = (signed short) num;
+		} else {
+			num = va_arg(args, unsigned int);
+			if (flags & _kc_SIGN)
+				num = (signed int) num;
+		}
+		str = number(str, end, num, base,
+				field_width, precision, flags);
+	}
+	if (str <= end)
+		*str = '\0';
+	else if (size > 0)
+		/* don't write out a null byte if the buf size is zero */
+		*end = '\0';
+	/* the trailing null byte doesn't count towards the total
+	* ++str;
+	*/
+	return str-buf;
+}
+
+int _kc_snprintf(char * buf, size_t size, const char *fmt, ...)
+{
+	va_list args;
+	int i;
+
+	va_start(args, fmt);
+	i = _kc_vsnprintf(buf,size,fmt,args);
+	va_end(args);
+	return i;
+}
+#endif /* < 2.4.8 */
 
 /*****************************************************************************/
 #if ( LINUX_VERSION_CODE < KERNEL_VERSION(2,4,13) )
@@ -157,10 +485,9 @@ _kc_alloc_etherdev(int sizeof_priv)
 	int alloc_size;
 
 	alloc_size = sizeof(*dev) + sizeof_priv + IFNAMSIZ + 31;
-	dev = kmalloc(alloc_size, GFP_KERNEL);
+	dev = kzalloc(alloc_size, GFP_KERNEL);
 	if (!dev)
 		return NULL;
-	memset(dev, 0, alloc_size);
 
 	if (sizeof_priv)
 		dev->priv = (void *) (((unsigned long)(dev + 1) + 31) & ~31);
@@ -264,7 +591,92 @@ found_middle:
 }
 #endif /* __VMKLNX__ */
 
+size_t _kc_strlcpy(char *dest, const char *src, size_t size)
+{
+	size_t ret = strlen(src);
+
+	if (size) {
+		size_t len = (ret >= size) ? size - 1 : ret;
+		memcpy(dest, src, len);
+		dest[len] = '\0';
+	}
+	return ret;
+}
+
+#ifndef do_div
+#if BITS_PER_LONG == 32
+uint32_t __attribute__((weak)) _kc__div64_32(uint64_t *n, uint32_t base)
+{
+	uint64_t rem = *n;
+	uint64_t b = base;
+	uint64_t res, d = 1;
+	uint32_t high = rem >> 32;
+
+	/* Reduce the thing a bit first */
+	res = 0;
+	if (high >= base) {
+		high /= base;
+		res = (uint64_t) high << 32;
+		rem -= (uint64_t) (high*base) << 32;
+	}
+
+	while ((int64_t)b > 0 && b < rem) {
+		b = b+b;
+		d = d+d;
+	}
+
+	do {
+		if (rem >= b) {
+			rem -= b;
+			res += d;
+		}
+		b >>= 1;
+		d >>= 1;
+	} while (d);
+
+	*n = res;
+	return rem;
+}
+#endif /* BITS_PER_LONG == 32 */
+#endif /* do_div */
 #endif /* 2.6.0 => 2.4.6 */
+
+/*****************************************************************************/
+#if ( LINUX_VERSION_CODE < KERNEL_VERSION(2,6,4) )
+int _kc_scnprintf(char * buf, size_t size, const char *fmt, ...)
+{
+	va_list args;
+	int i;
+
+	va_start(args, fmt);
+	i = vsnprintf(buf, size, fmt, args);
+	va_end(args);
+	return (i >= size) ? (size - 1) : i;
+}
+#endif /* < 2.6.4 */
+
+/*****************************************************************************/
+#if ( LINUX_VERSION_CODE < KERNEL_VERSION(2,6,10) )
+DECLARE_BITMAP(_kcompat_node_online_map, MAX_NUMNODES) = {1};
+#endif /* < 2.6.10 */
+
+/*****************************************************************************/
+#if ( LINUX_VERSION_CODE < KERNEL_VERSION(2,6,13) )
+char *_kc_kstrdup(const char *s, unsigned int gfp)
+{
+	size_t len;
+	char *buf;
+
+	if (!s)
+		return NULL;
+
+	len = strlen(s) + 1;
+	buf = kmalloc(len, gfp);
+	if (buf)
+		memcpy(buf, s, len);
+	return buf;
+}
+#endif /* < 2.6.13 */
 
 /*****************************************************************************/
 #if ( LINUX_VERSION_CODE < KERNEL_VERSION(2,6,14) )
@@ -278,31 +690,50 @@ void *_kc_kzalloc(size_t size, int flags)
 #endif /* <= 2.6.13 */
 
 /*****************************************************************************/
-#if ( LINUX_VERSION_CODE < KERNEL_VERSION(2,6,18) )
-struct sk_buff *_kc_netdev_alloc_skb(struct net_device *dev,
-                                     unsigned int length)
-{
-	/* 16 == NET_PAD_SKB */
-	struct sk_buff *skb;
-	skb = alloc_skb(length + 16, GFP_ATOMIC);
-	if (likely(skb != NULL)) {
-		skb_reserve(skb, 16);
-		skb->dev = dev;
-	}
-	return skb;
-}
-#endif /* <= 2.6.17 */
-
-/*****************************************************************************/
 #if ( LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19) )
+int _kc_skb_pad(struct sk_buff *skb, int pad)
+{
+	int ntail;
+
+        /* If the skbuff is non linear tailroom is always zero.. */
+        if(!skb_cloned(skb) && skb_tailroom(skb) >= pad) {
+		memset(skb->data+skb->len, 0, pad);
+		return 0;
+        }
+
+	ntail = skb->data_len + pad - (skb->end - skb->tail);
+	if (likely(skb_cloned(skb) || ntail > 0)) {
+		if (pskb_expand_head(skb, 0, ntail, GFP_ATOMIC));
+			goto free_skb;
+	}
+
+#ifdef MAX_SKB_FRAGS
+	if (skb_is_nonlinear(skb) &&
+	    !__pskb_pull_tail(skb, skb->data_len))
+		goto free_skb;
+
+#endif
+	memset(skb->data + skb->len, 0, pad);
+        return 0;
+
+free_skb:
+	kfree_skb(skb);
+	return -ENOMEM;
+}
+
+#if (!(RHEL_RELEASE_CODE && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(5,4)))
 int _kc_pci_save_state(struct pci_dev *pdev)
 {
 	struct net_device *netdev = pci_get_drvdata(pdev);
 	struct adapter_struct *adapter = netdev_priv(netdev);
 	int size = PCI_CONFIG_SPACE_LEN, i;
-	u16 pcie_cap_offset = pci_find_capability(pdev, PCI_CAP_ID_EXP);
-	u16 pcie_link_status;
+	u16 pcie_cap_offset, pcie_link_status;
 
+#if ( LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,0) )
+	/* no ->dev for 2.4 kernels */
+	WARN_ON(pdev->dev.driver_data == NULL);
+#endif
+	pcie_cap_offset = pci_find_capability(pdev, PCI_CAP_ID_EXP);
 	if (pcie_cap_offset) {
 		if (!pci_read_config_word(pdev,
 		                          pcie_cap_offset + PCIE_LINK_STATUS,
@@ -325,7 +756,7 @@ int _kc_pci_save_state(struct pci_dev *pdev)
 	return 0;
 }
 
-void _kc_pci_restore_state(struct pci_dev * pdev)
+void _kc_pci_restore_state(struct pci_dev *pdev)
 {
 	struct net_device *netdev = pci_get_drvdata(pdev);
 	struct adapter_struct *adapter = netdev_priv(netdev);
@@ -350,6 +781,7 @@ void _kc_pci_restore_state(struct pci_dev * pdev)
 #endif
 	}
 }
+#endif /* !(RHEL_RELEASE_CODE >= RHEL 5.4) */
 
 #ifdef HAVE_PCI_ERS
 void _kc_free_netdev(struct net_device *netdev)
@@ -371,16 +803,170 @@ void _kc_free_netdev(struct net_device *netdev)
 #endif
 }
 #endif
-#endif /* <= 2.6.18 */
+
+void *_kc_kmemdup(const void *src, size_t len, unsigned gfp)
+{
+	void *p;
+
+	p = kzalloc(len, gfp);
+	if (p)
+		memcpy(p, src, len);
+	return p;
+}
+#endif /* <= 2.6.19 */
+
+/*****************************************************************************/
+#if ( LINUX_VERSION_CODE < KERNEL_VERSION(2,6,21) )
+struct pci_dev *_kc_netdev_to_pdev(struct net_device *netdev)
+{
+	return ((struct adapter_struct *)netdev_priv(netdev))->pdev;
+}
+#endif /* < 2.6.21 */
+
+/*****************************************************************************/
+#if ( LINUX_VERSION_CODE < KERNEL_VERSION(2,6,22) )
+/* hexdump code taken from lib/hexdump.c */
+static void _kc_hex_dump_to_buffer(const void *buf, size_t len, int rowsize,
+			int groupsize, unsigned char *linebuf,
+			size_t linebuflen, bool ascii)
+{
+	const u8 *ptr = buf;
+	u8 ch;
+	int j, lx = 0;
+	int ascii_column;
+
+	if (rowsize != 16 && rowsize != 32)
+		rowsize = 16;
+
+	if (!len)
+		goto nil;
+	if (len > rowsize)		/* limit to one line at a time */
+		len = rowsize;
+	if ((len % groupsize) != 0)	/* no mixed size output */
+		groupsize = 1;
+
+	switch (groupsize) {
+	case 8: {
+		const u64 *ptr8 = buf;
+		int ngroups = len / groupsize;
+
+		for (j = 0; j < ngroups; j++)
+			lx += scnprintf((char *)(linebuf + lx), linebuflen - lx,
+				"%s%16.16llx", j ? " " : "",
+				(unsigned long long)*(ptr8 + j));
+		ascii_column = 17 * ngroups + 2;
+		break;
+	}
+
+	case 4: {
+		const u32 *ptr4 = buf;
+		int ngroups = len / groupsize;
+
+		for (j = 0; j < ngroups; j++)
+			lx += scnprintf((char *)(linebuf + lx), linebuflen - lx,
+				"%s%8.8x", j ? " " : "", *(ptr4 + j));
+		ascii_column = 9 * ngroups + 2;
+		break;
+	}
+
+	case 2: {
+		const u16 *ptr2 = buf;
+		int ngroups = len / groupsize;
+
+		for (j = 0; j < ngroups; j++)
+			lx += scnprintf((char *)(linebuf + lx), linebuflen - lx,
+				"%s%4.4x", j ? " " : "", *(ptr2 + j));
+		ascii_column = 5 * ngroups + 2;
+		break;
+	}
+
+	default:
+		for (j = 0; (j < len) && (lx + 3) <= linebuflen; j++) {
+			ch = ptr[j];
+			linebuf[lx++] = hex_asc(ch >> 4);
+			linebuf[lx++] = hex_asc(ch & 0x0f);
+			linebuf[lx++] = ' ';
+		}
+		if (j)
+			lx--;
+
+		ascii_column = 3 * rowsize + 2;
+		break;
+	}
+	if (!ascii)
+		goto nil;
+
+	while (lx < (linebuflen - 1) && lx < (ascii_column - 1))
+		linebuf[lx++] = ' ';
+	for (j = 0; (j < len) && (lx + 2) < linebuflen; j++)
+		linebuf[lx++] = (isascii(ptr[j]) && isprint(ptr[j])) ? ptr[j]
+				: '.';
+nil:
+	linebuf[lx++] = '\0';
+}
+
+void _kc_print_hex_dump(const char *level,
+			const char *prefix_str, int prefix_type,
+			int rowsize, int groupsize,
+			const void *buf, size_t len, bool ascii)
+{
+	const u8 *ptr = buf;
+	int i, linelen, remaining = len;
+	unsigned char linebuf[200];
+
+	if (rowsize != 16 && rowsize != 32)
+		rowsize = 16;
+
+	for (i = 0; i < len; i += rowsize) {
+		linelen = min(remaining, rowsize);
+		remaining -= rowsize;
+		_kc_hex_dump_to_buffer(ptr + i, linelen, rowsize, groupsize,
+				linebuf, sizeof(linebuf), ascii);
+
+		switch (prefix_type) {
+		case DUMP_PREFIX_ADDRESS:
+			printk("%s%s%*p: %s\n", level, prefix_str,
+				(int)(2 * sizeof(void *)), ptr + i, linebuf);
+			break;
+		case DUMP_PREFIX_OFFSET:
+			printk("%s%s%.8x: %s\n", level, prefix_str, i, linebuf);
+			break;
+		default:
+			printk("%s%s%s\n", level, prefix_str, linebuf);
+			break;
+		}
+	}
+}
+
+#endif /* < 2.6.22 */
 
 /*****************************************************************************/
 #if ( LINUX_VERSION_CODE < KERNEL_VERSION(2,6,24) )
 #endif /* <= 2.6.24 */
 
 /*****************************************************************************/
+#if ( LINUX_VERSION_CODE < KERNEL_VERSION(2,6,26) )
+#endif /* < 2.6.26 */
+
+/*****************************************************************************/
 #if ( LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27) )
 #ifdef HAVE_TX_MQ
 #endif /* HAVE_TX_MQ */
+
+#ifndef __WARN_printf
+void __kc_warn_slowpath(const char *file, int line, const char *fmt, ...)
+{
+	va_list args;
+
+	printk(KERN_WARNING "------------[ cut here ]------------\n");
+	printk(KERN_WARNING "WARNING: at %s:%d %s()\n", file, line);
+	va_start(args, fmt);
+	vprintk(fmt, args);
+	va_end(args);
+
+	dump_stack();
+}
+#endif /* __WARN_printf */
 #endif /* < 2.6.27 */
 
 /*****************************************************************************/
@@ -422,79 +1008,261 @@ out:
 
 /*****************************************************************************/
 #if ( LINUX_VERSION_CODE < KERNEL_VERSION(2,6,29) )
+static void __kc_pci_set_master(struct pci_dev *pdev, bool enable)
+{
+	u16 old_cmd, cmd;
+
+	pci_read_config_word(pdev, PCI_COMMAND, &old_cmd);
+	if (enable)
+		cmd = old_cmd | PCI_COMMAND_MASTER;
+	else
+		cmd = old_cmd & ~PCI_COMMAND_MASTER;
+	if (cmd != old_cmd) {
+		dev_dbg(pci_dev_to_dev(pdev), "%s bus mastering\n",
+			enable ? "enabling" : "disabling");
+		pci_write_config_word(pdev, PCI_COMMAND, cmd);
+	}
+#if ( LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,7) )
+	pdev->is_busmaster = enable;
+#endif
+}
+
+void _kc_pci_clear_master(struct pci_dev *dev)
+{
+	__kc_pci_set_master(dev, false);
+}
 #endif /* < 2.6.29 */
 
-/*****************************************************************************/
-#if ( LINUX_VERSION_CODE < KERNEL_VERSION(2,6,30) )
-#ifdef HAVE_NETDEV_SELECT_QUEUE
-#include <net/ip.h>
-static u32 _kc_simple_tx_hashrnd;
-static u32 _kc_simple_tx_hashrnd_initialized;
-
-u16 _kc_skb_tx_hash(struct net_device *dev, struct sk_buff *skb)
+#if ( LINUX_VERSION_CODE < KERNEL_VERSION(2,6,34) )
+#if (RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(6,0))
+int _kc_pci_num_vf(struct pci_dev *dev)
 {
-	u32 addr1, addr2, ports;
-	u32 hash, ihl;
-	u8 ip_proto = 0;
-
-	if (unlikely(!_kc_simple_tx_hashrnd_initialized)) {
-		get_random_bytes(&_kc_simple_tx_hashrnd, 4);
-		_kc_simple_tx_hashrnd_initialized = 1;
-	}
-
-	switch (skb->protocol) {
-	case htons(ETH_P_IP):
-		if (!(ip_hdr(skb)->frag_off & htons(IP_MF | IP_OFFSET)))
-			ip_proto = ip_hdr(skb)->protocol;
-		addr1 = ip_hdr(skb)->saddr;
-		addr2 = ip_hdr(skb)->daddr;
-		ihl = ip_hdr(skb)->ihl;
-		break;
-#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
-	case htons(ETH_P_IPV6):
-		ip_proto = ipv6_hdr(skb)->nexthdr;
-		addr1 = ipv6_hdr(skb)->saddr.s6_addr32[3];
-		addr2 = ipv6_hdr(skb)->daddr.s6_addr32[3];
-		ihl = (40 >> 2);
-		break;
+	int num_vf = 0;
+#ifndef __VMKLNX__
 #endif
-	default:
-		return 0;
-	}
-
-
-	switch (ip_proto) {
-	case IPPROTO_TCP:
-	case IPPROTO_UDP:
-	case IPPROTO_DCCP:
-	case IPPROTO_ESP:
-	case IPPROTO_AH:
-	case IPPROTO_SCTP:
-	case IPPROTO_UDPLITE:
-		ports = *((u32 *) (skb_network_header(skb) + (ihl * 4)));
-		break;
-
-	default:
-		ports = 0;
-		break;
-	}
-
-	hash = jhash_3words(addr1, addr2, ports, _kc_simple_tx_hashrnd);
-
-	return (u16) (((u64) hash * dev->real_num_tx_queues) >> 32);
+	return num_vf;
 }
-#endif /* HAVE_NETDEV_SELECT_QUEUE */
-#endif /* < 2.6.30 */
+#endif /* RHEL_RELEASE_CODE */
+#endif /* < 2.6.34 */
+
 
 /*****************************************************************************/
-#if ( LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33) )
-struct sk_buff *_kc_netdev_alloc_skb_ip_align(struct net_device *dev,
-                                              unsigned int length)
-{
-	struct sk_buff *skb = netdev_alloc_skb(dev, length + NET_IP_ALIGN);
+#if ( LINUX_VERSION_CODE < KERNEL_VERSION(2,6,36) )
+static const u32 _kc_flags_dup_features =
+	(ETH_FLAG_LRO | ETH_FLAG_NTUPLE | ETH_FLAG_RXHASH);
 
-	if (NET_IP_ALIGN && skb)
-		skb_reserve(skb, NET_IP_ALIGN);
-	return skb;
+u32 _kc_ethtool_op_get_flags(struct net_device *dev)
+{
+	return dev->features & _kc_flags_dup_features;
 }
-#endif /* < 2.6.33 */
+
+int _kc_ethtool_op_set_flags(struct net_device *dev, u32 data, u32 supported)
+{
+	if (data & ~supported)
+		return -EINVAL;
+
+	dev->features = ((dev->features & ~_kc_flags_dup_features) |
+			 (data & _kc_flags_dup_features));
+	return 0;
+}
+#endif /* < 2.6.36 */
+
+/******************************************************************************/
+#if ( LINUX_VERSION_CODE < KERNEL_VERSION(2,6,39) )
+#if (!(RHEL_RELEASE_CODE && RHEL_RELEASE_CODE > RHEL_RELEASE_VERSION(6,0)))
+
+
+
+#endif /* !(RHEL_RELEASE_CODE > RHEL_RELEASE_VERSION(6,0)) */
+#endif /* < 2.6.39 */
+
+/******************************************************************************/
+#if ( LINUX_VERSION_CODE < KERNEL_VERSION(3,4,0) )
+void _kc_skb_add_rx_frag(struct sk_buff *skb, int i, struct page *page,
+			 int off, int size, unsigned int truesize)
+{
+	skb_fill_page_desc(skb, i, page, off, size);
+	skb->len += size;
+	skb->data_len += size;
+#ifndef __VMKLNX__
+	skb->truesize += truesize;
+#endif
+}
+
+int _kc_simple_open(struct inode *inode, struct file *file)
+{
+        if (inode->i_private)
+                file->private_data = inode->i_private;
+
+        return 0;
+}
+
+#endif /* < 3.4.0 */
+
+/******************************************************************************/
+#if ( LINUX_VERSION_CODE < KERNEL_VERSION(3,7,0) )
+#if !(SLE_VERSION_CODE && SLE_VERSION_CODE >= SLE_VERSION(11,3,0))
+static inline int __kc_pcie_cap_version(struct pci_dev *dev)
+{
+	int pos;
+	u16 reg16;
+
+	pos = pci_find_capability(dev, PCI_CAP_ID_EXP);
+	if (!pos)
+		return 0;
+	pci_read_config_word(dev, pos + PCI_EXP_FLAGS, &reg16);
+	return reg16 & PCI_EXP_FLAGS_VERS;
+}
+
+static inline bool __kc_pcie_cap_has_devctl(const struct pci_dev __always_unused *dev)
+{
+	return true;
+}
+
+static inline bool __kc_pcie_cap_has_lnkctl(struct pci_dev *dev)
+{
+	int type = pci_pcie_type(dev);
+
+	return __kc_pcie_cap_version(dev) > 1 ||
+	       type == PCI_EXP_TYPE_ROOT_PORT ||
+	       type == PCI_EXP_TYPE_ENDPOINT ||
+	       type == PCI_EXP_TYPE_LEG_END;
+}
+
+static inline bool __kc_pcie_cap_has_sltctl(struct pci_dev *dev)
+{
+	int type = pci_pcie_type(dev);
+	int pos;
+	u16 pcie_flags_reg;
+
+	pos = pci_find_capability(dev, PCI_CAP_ID_EXP);
+	if (!pos)
+		return 0;
+	pci_read_config_word(dev, pos + PCI_EXP_FLAGS, &pcie_flags_reg);
+
+	return __kc_pcie_cap_version(dev) > 1 ||
+	       type == PCI_EXP_TYPE_ROOT_PORT ||
+	       (type == PCI_EXP_TYPE_DOWNSTREAM &&
+		pcie_flags_reg & PCI_EXP_FLAGS_SLOT);
+}
+
+static inline bool __kc_pcie_cap_has_rtctl(struct pci_dev *dev)
+{
+	int type = pci_pcie_type(dev);
+
+	return __kc_pcie_cap_version(dev) > 1 ||
+	       type == PCI_EXP_TYPE_ROOT_PORT ||
+	       type == PCI_EXP_TYPE_RC_EC;
+}
+
+static bool __kc_pcie_capability_reg_implemented(struct pci_dev *dev, int pos)
+{
+	if (!pci_is_pcie(dev))
+		return false;
+
+	switch (pos) {
+	case PCI_EXP_FLAGS_TYPE:
+		return true;
+	case PCI_EXP_DEVCAP:
+	case PCI_EXP_DEVCTL:
+	case PCI_EXP_DEVSTA:
+		return __kc_pcie_cap_has_devctl(dev);
+	case PCI_EXP_LNKCAP:
+	case PCI_EXP_LNKCTL:
+	case PCI_EXP_LNKSTA:
+		return __kc_pcie_cap_has_lnkctl(dev);
+	case PCI_EXP_SLTCAP:
+	case PCI_EXP_SLTCTL:
+	case PCI_EXP_SLTSTA:
+		return __kc_pcie_cap_has_sltctl(dev);
+	case PCI_EXP_RTCTL:
+	case PCI_EXP_RTCAP:
+	case PCI_EXP_RTSTA:
+		return __kc_pcie_cap_has_rtctl(dev);
+	case PCI_EXP_DEVCAP2:
+	case PCI_EXP_DEVCTL2:
+	case PCI_EXP_LNKCAP2:
+	case PCI_EXP_LNKCTL2:
+	case PCI_EXP_LNKSTA2:
+		return __kc_pcie_cap_version(dev) > 1;
+	default:
+		return false;
+	}
+}
+
+/*
+ * Note that these accessor functions are only for the "PCI Express
+ * Capability" (see PCIe spec r3.0, sec 7.8).  They do not apply to the
+ * other "PCI Express Extended Capabilities" (AER, VC, ACS, MFVC, etc.)
+ */
+int __kc_pcie_capability_read_word(struct pci_dev *dev, int pos, u16 *val)
+{
+	int ret;
+
+	*val = 0;
+	if (pos & 1)
+		return -EINVAL;
+
+	if (__kc_pcie_capability_reg_implemented(dev, pos)) {
+		ret = pci_read_config_word(dev, pci_pcie_cap(dev) + pos, val);
+		/*
+		 * Reset *val to 0 if pci_read_config_word() fails, it may
+		 * have been written as 0xFFFF if hardware error happens
+		 * during pci_read_config_word().
+		 */
+		if (ret)
+			*val = 0;
+		return ret;
+	}
+
+	/*
+	 * For Functions that do not implement the Slot Capabilities,
+	 * Slot Status, and Slot Control registers, these spaces must
+	 * be hardwired to 0b, with the exception of the Presence Detect
+	 * State bit in the Slot Status register of Downstream Ports,
+	 * which must be hardwired to 1b.  (PCIe Base Spec 3.0, sec 7.8)
+	 */
+	if (pci_is_pcie(dev) && pos == PCI_EXP_SLTSTA &&
+	    pci_pcie_type(dev) == PCI_EXP_TYPE_DOWNSTREAM) {
+		*val = PCI_EXP_SLTSTA_PDS;
+	}
+
+	return 0;
+}
+
+int __kc_pcie_capability_write_word(struct pci_dev *dev, int pos, u16 val)
+{
+	if (pos & 1)
+		return -EINVAL;
+
+	if (!__kc_pcie_capability_reg_implemented(dev, pos))
+		return 0;
+
+	return pci_write_config_word(dev, pci_pcie_cap(dev) + pos, val);
+}
+
+int __kc_pcie_capability_clear_and_set_word(struct pci_dev *dev, int pos,
+					    u16 clear, u16 set)
+{
+	int ret;
+	u16 val;
+
+	ret = __kc_pcie_capability_read_word(dev, pos, &val);
+	if (!ret) {
+		val &= ~clear;
+		val |= set;
+		ret = __kc_pcie_capability_write_word(dev, pos, val);
+	}
+
+	return ret;
+}
+#endif /* !(SLE_VERSION_CODE && SLE_VERSION_CODE >= SLE_VERSION(11,3,0)) */
+#endif /* < 3.7.0 */
+
+/******************************************************************************/
+#if ( LINUX_VERSION_CODE < KERNEL_VERSION(3,9,0) )
+#endif /* 3.9.0 */
+
+/*****************************************************************************/
+#if ( LINUX_VERSION_CODE < KERNEL_VERSION(3,10,0) )
+#endif /* 3.10.0 */

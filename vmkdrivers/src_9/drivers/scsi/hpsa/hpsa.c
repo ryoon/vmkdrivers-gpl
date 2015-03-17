@@ -1,6 +1,6 @@
 /*
  *    Disk Array driver for HP Smart Array SAS controllers
- *    Copyright 2000, 2010 Hewlett-Packard Development Company, L.P.
+ *    Copyright 2000-2012 Hewlett-Packard Development Company, L.P.
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
@@ -19,7 +19,7 @@
  *
  */
 /*    
- *    Portions Copyright 2008, 2010 VMware, Inc.
+ *    Portions Copyright 2008-2012 VMware, Inc.
  */
 
 #include <linux/module.h>
@@ -62,7 +62,6 @@
 #include "hpsa_docs.h"
 #if defined(__VMKLNX__)
 #include "hpsavm.h"
-#include "vmklinux_scsi.h"
 #endif //if defined(__VMKLNX__)
 
 /* How long to wait (in milliseconds) for board to go into simple mode */
@@ -143,7 +142,16 @@ static void calc_bucket_map(int *bucket, int num_buckets,
 	int nsgs, int *bucket_map);
 static void hpsa_put_ctlr_into_performant_mode(struct ctlr_info *h);
 static inline u32 next_command(struct ctlr_info *h);
-
+static int hpsa_vpd_lv_status_supported(struct ctlr_info *h,
+	unsigned char scsi3addr[]);
+//static void hpsa_show_volume_status(struct ctlr_info *h,
+//	unsigned char scsi3addr[], int status);
+static void hpsa_show_volume_status(struct ctlr_info *h,
+	struct hpsa_scsi_dev_t *sd);
+static int hpsa_get_volume_status(struct ctlr_info *h,
+	unsigned char scsi3addr[]);
+static unsigned char hpsa_volume_offline(struct ctlr_info *h,
+	unsigned char scsi3addr[]);
 static DEVICE_ATTR(raid_level, S_IRUGO, raid_level_show, NULL);
 static DEVICE_ATTR(lunid, S_IRUGO, lunid_show, NULL);
 static DEVICE_ATTR(unique_id, S_IRUGO, unique_id_show, NULL);
@@ -227,7 +235,8 @@ static int check_for_unit_attention(struct ctlr_info *h,
 		dev_warn(&h->pdev->dev, "hpsa%d: report LUN data "
 			"changed, action required\n", h->ctlr);
 	/*
-	 * Note: this REPORT_LUNS_CHANGED condition only occurs on the MSA2012.
+	 * Note: this REPORT_LUNS_CHANGED condition only occurs on external
+	 * target devices.
 	 */
 		break;
 	case POWER_OR_RESET:
@@ -273,7 +282,7 @@ static inline u32 next_command(struct ctlr_info *h)
 {
 	u32 a;
 
-	if (unlikely(h->transMethod != CFGTBL_Trans_Performant))
+	if (unlikely(!(h->transMethod & CFGTBL_Trans_Performant)))
 		return h->access.command_completed(h);
 
 	if ((*(h->reply_pool_head) & 1) == (h->reply_pool_wraparound)) {
@@ -297,7 +306,7 @@ static inline u32 next_command(struct ctlr_info *h)
  */
 static void set_performant_mode(struct ctlr_info *h, struct CommandList *c)
 {
-	if (likely(h->transMethod == CFGTBL_Trans_Performant))
+	if (likely(h->transMethod & CFGTBL_Trans_Performant))
 		c->busaddr |= 1 | (h->blockFetchTable[c->Header.SGList] << 1);
 }
 
@@ -350,7 +359,7 @@ static inline int is_scsi_rev_5(struct ctlr_info *h)
 }
 
 static const char *raid_label[] = { "0", "4", "1(1+0)", "5", "5+1", "ADG",
-	"UNKNOWN"
+        "1(ADM)", "UNKNOWN"
 };
 #define RAID_UNKNOWN (ARRAY_SIZE(raid_label) - 1)
 
@@ -447,16 +456,16 @@ static int hpsa_find_target_lun(struct ctlr_info *h,
 	 * assumes h->devlock is held
 	 */
 	int i, found = 0;
-	DECLARE_BITMAP(lun_taken, HPSA_MAX_SCSI_DEVS_PER_HBA);
+	DECLARE_BITMAP(lun_taken, HPSA_MAX_DEVICES);
 
-	memset(&lun_taken[0], 0, HPSA_MAX_SCSI_DEVS_PER_HBA >> 3);
+	memset(&lun_taken[0], 0, HPSA_MAX_DEVICES >> 3);
 
 	for (i = 0; i < h->ndevices; i++) {
 		if (h->dev[i]->bus == bus && h->dev[i]->target != -1)
 			set_bit(h->dev[i]->target, lun_taken);
 	}
 
-	for (i = 0; i < HPSA_MAX_SCSI_DEVS_PER_HBA; i++) {
+	for (i = 0; i < HPSA_MAX_DEVICES; i++) {
 		if (!test_bit(i, lun_taken)) {
 			/* *bus = 1; */
 			*target = i;
@@ -481,7 +490,7 @@ static int hpsa_scsi_add_entry(struct ctlr_info *h, int hostno,
 
 	hpsa_dbmsg(h, 3, "hpsa_scsi_add_entry: begin. \n");
 
-	if (n >= HPSA_MAX_SCSI_DEVS_PER_HBA) {
+	if (n >= HPSA_MAX_DEVICES) {
 		dev_err(&h->pdev->dev, "too many devices, some will be "
 			"inaccessible.\n");
 		return -1;
@@ -560,6 +569,22 @@ lun_assigned:
 	return 0;
 }
 
+/* Update an entry in h->dev[] array. */
+static void hpsa_scsi_update_entry(struct ctlr_info *h, int hostno,
+	int entry, struct hpsa_scsi_dev_t *new_entry)
+{
+	/* assumes h->devlock is held */
+	BUG_ON(entry < 0 || entry >= HPSA_MAX_DEVICES);
+
+	/* At least one of these attributes changed. update all. */
+	h->dev[entry]->raid_level = new_entry->raid_level;
+	memcpy(h->dev[entry]->revision, new_entry->revision, 
+		sizeof(new_entry->revision));
+	dev_info(&h->pdev->dev, "%s device c%db%dt%dl%d updated.\n",
+		scsi_device_type(new_entry->devtype), hostno, new_entry->bus,
+		new_entry->target, new_entry->lun);
+}
+
 /* Replace an entry from h->dev[] array. */
 static void hpsa_scsi_replace_entry(struct ctlr_info *h, int hostno,
 	int entry, struct hpsa_scsi_dev_t *new_entry,
@@ -567,7 +592,7 @@ static void hpsa_scsi_replace_entry(struct ctlr_info *h, int hostno,
 	struct hpsa_scsi_dev_t *removed[], int *nremoved)
 {
 	/* assumes h->devlock is held */
-	BUG_ON(entry < 0 || entry >= HPSA_MAX_SCSI_DEVS_PER_HBA);
+	BUG_ON(entry < 0 || entry >= HPSA_MAX_DEVICES);
 	removed[*nremoved] = h->dev[entry];
 	(*nremoved)++;
 	h->dev[entry] = new_entry;
@@ -586,7 +611,7 @@ static void hpsa_scsi_remove_entry(struct ctlr_info *h, int hostno, int entry,
 	int i;
 	struct hpsa_scsi_dev_t *sd;
 
-	BUG_ON(entry < 0 || entry >= HPSA_MAX_SCSI_DEVS_PER_HBA);
+	BUG_ON(entry < 0 || entry >= HPSA_MAX_DEVICES);
 
 	sd = h->dev[entry];
 	removed[*nremoved] = h->dev[entry];
@@ -636,11 +661,6 @@ static void fixup_botched_add(struct ctlr_info *h,
 static inline int device_is_the_same(struct hpsa_scsi_dev_t *dev1,
 	struct hpsa_scsi_dev_t *dev2)
 {
-	if ((is_logical_dev_addr_mode(dev1->scsi3addr) ||
-		(dev1->lun != -1 && dev2->lun != -1)) &&
-		dev1->devtype != 0x0C)
-		return (memcmp(dev1, dev2, sizeof(*dev1)) == 0);
-
 	/* we compare everything except lun and target as these
 	 * are not yet assigned.  Compare parts likely
 	 * to differ first
@@ -655,21 +675,31 @@ static inline int device_is_the_same(struct hpsa_scsi_dev_t *dev1,
 		return 0;
 	if (memcmp(dev1->vendor, dev2->vendor, sizeof(dev1->vendor)) != 0)
 		return 0;
-	if (memcmp(dev1->revision, dev2->revision, sizeof(dev1->revision)) != 0)
-		return 0;
 	if (dev1->devtype != dev2->devtype)
-		return 0;
-	if (dev1->raid_level != dev2->raid_level)
 		return 0;
 	if (dev1->bus != dev2->bus)
 		return 0;
 	return 1;
 }
 
+static inline int device_updated(struct hpsa_scsi_dev_t *dev1,
+	struct hpsa_scsi_dev_t *dev2)
+{
+	/* Device attributes that can change */
+	if (memcmp(dev1->revision, dev2->revision, sizeof(dev1->revision)) != 0)
+		return 1; 
+        if (dev1->raid_level != dev2->raid_level)
+		return 1;
+	return 0;
+}
+
 /* Find needle in haystack.  If exact match found, return DEVICE_SAME,
  * and return needle location in *index.  If scsi3addr matches, but not
  * vendor, model, serial num, etc. return DEVICE_CHANGED, and return needle
- * location in *index.  If needle not found, return DEVICE_NOT_FOUND.
+ * location in *index.  
+ * In the case of a minor device attribute change, such as RAID level, just
+ * return DEVICE_UPDATED, along with the updated device's location in index.
+ * If needle not found, return DEVICE_NOT_FOUND.
  */
 static int hpsa_scsi_find_entry(struct hpsa_scsi_dev_t *needle,
 	struct hpsa_scsi_dev_t *haystack[], int haystack_size,
@@ -679,19 +709,127 @@ static int hpsa_scsi_find_entry(struct hpsa_scsi_dev_t *needle,
 #define DEVICE_NOT_FOUND 0
 #define DEVICE_CHANGED 1
 #define DEVICE_SAME 2
+#define DEVICE_UPDATED 3
 	for (i = 0; i < haystack_size; i++) {
 		if (haystack[i] == NULL) /* previously removed. */
 			continue;
 		if (SCSI3ADDR_EQ(needle->scsi3addr, haystack[i]->scsi3addr)) {
 			*index = i;
-			if (device_is_the_same(needle, haystack[i]))
+			if (device_is_the_same(needle, haystack[i])) {
+				if (device_updated(needle, haystack[i]))  
+					return DEVICE_UPDATED;
 				return DEVICE_SAME;
+			}
 			else
 				return DEVICE_CHANGED;
 		}
 	}
 	*index = -1;
 	return DEVICE_NOT_FOUND;
+}
+
+#define OFFLINE_DEVICE_POLL_INTERVAL (120 * HZ)
+static int hpsa_offline_device_thread(void *v)
+{
+	struct ctlr_info *h = v;
+	unsigned long flags;
+	struct offline_device_entry *d;
+	unsigned char need_rescan = 0;
+	struct list_head *this, *tmp;
+
+	while (1) {
+		schedule_timeout_interruptible(OFFLINE_DEVICE_POLL_INTERVAL);
+		if (kthread_should_stop())
+			break;
+
+		/*Check if any of the offline devices have become ready */
+		spin_lock_irqsave(&h->offline_device_lock, flags);
+		list_for_each_safe(this, tmp, &h->offline_device_list) {
+			d = list_entry(this, struct offline_device_entry,
+				offline_list);
+			spin_unlock_irqrestore(&h->offline_device_lock, flags);
+			if (!hpsa_volume_offline(h, d->scsi3addr)) {
+				need_rescan = 1;
+				goto do_rescan;
+			}
+			spin_lock_irqsave(&h->offline_device_lock, flags);
+		}
+		spin_unlock_irqrestore(&h->offline_device_lock, flags);
+	}
+
+do_rescan:
+	/* Remove all entries from the list and rescan and exit this thread.
+	 * If there are still offline devices, the rescan will make a new list
+	 * and create a new offline device monitor thread.
+	 */
+	spin_lock_irqsave(&h->offline_device_lock, flags);
+	list_for_each_safe(this, tmp, &h->offline_device_list) {
+		d = list_entry(this, struct offline_device_entry, offline_list);
+		list_del_init(this);
+		kfree(d);
+	}
+	h->offline_device_monitor = NULL;
+	h->offline_device_thread_state = OFFLINE_DEVICE_THREAD_STOPPED;
+	spin_unlock_irqrestore(&h->offline_device_lock, flags);
+	if (need_rescan)
+		hpsa_scan_start(h->scsi_host);
+	return 0;
+}
+
+static void hpsa_monitor_offline_device(struct ctlr_info *h,
+		unsigned char scsi3addr[])
+{
+	struct offline_device_entry *device;
+	unsigned long flags;
+
+        /*Check to see if device is already on the list */
+	spin_lock_irqsave(&h->offline_device_lock, flags);
+	list_for_each_entry(device, &h->offline_device_list, offline_list) {
+		if (memcmp(device->scsi3addr, scsi3addr,
+			sizeof(device->scsi3addr)) == 0 ) {
+			spin_unlock_irqrestore(&h->offline_device_lock, flags);
+			return;
+		}
+	}
+	spin_unlock_irqrestore(&h->offline_device_lock, flags);
+
+	/* Device is not on the list, add it. */
+	device = kmalloc(sizeof(*device) , GFP_KERNEL);
+	if (!device) {
+		dev_warn(&h->pdev->dev, "out of memory in %s\n", __func__);
+		return;
+	}
+	memcpy(device->scsi3addr, scsi3addr, sizeof(device->scsi3addr));
+	spin_lock_irqsave(&h->offline_device_lock, flags);
+	list_add_tail(&device->offline_list, &h->offline_device_list);
+	if (h->offline_device_thread_state == OFFLINE_DEVICE_THREAD_STOPPED) {
+		h->offline_device_thread_state = OFFLINE_DEVICE_THREAD_RUNNING;
+		spin_unlock_irqrestore(&h->offline_device_lock, flags);
+		h->offline_device_monitor =
+			kthread_run(hpsa_offline_device_thread, h, HPSA "-odm");
+		spin_lock_irqsave(&h->offline_device_lock, flags);
+	}
+	if (!h->offline_device_monitor) {
+		dev_warn(&h->pdev->dev, "failed to start offline device monitor thread.\n");
+		h->offline_device_thread_state = OFFLINE_DEVICE_THREAD_STOPPED;
+	}
+	spin_unlock_irqrestore(&h->offline_device_lock, flags);
+}
+
+static void stop_offline_device_monitor(struct ctlr_info *h)
+{
+	unsigned long flags;
+	int stop_thread;
+
+	spin_lock_irqsave(&h->offline_device_lock, flags);
+	stop_thread = (h->offline_device_thread_state ==
+		OFFLINE_DEVICE_THREAD_RUNNING);
+	if (stop_thread)
+		h->offline_device_thread_state =
+			OFFLINE_DEVICE_THREAD_STOPPING; /* blocks new starts */
+	spin_unlock_irqrestore(&h->offline_device_lock, flags);
+	if (stop_thread)
+		kthread_stop(h->offline_device_monitor);
 }
 
 static void adjust_hpsa_scsi_table(struct ctlr_info *h, int hostno,
@@ -709,9 +847,9 @@ static void adjust_hpsa_scsi_table(struct ctlr_info *h, int hostno,
 	int nadded, nremoved;
 	struct Scsi_Host *sh = NULL;
 
-	added = kzalloc(sizeof(*added) * HPSA_MAX_SCSI_DEVS_PER_HBA,
+	added = kzalloc(sizeof(*added) * HPSA_MAX_DEVICES,
 		GFP_KERNEL);
-	removed = kzalloc(sizeof(*removed) * HPSA_MAX_SCSI_DEVS_PER_HBA,
+	removed = kzalloc(sizeof(*removed) * HPSA_MAX_DEVICES,
 		GFP_KERNEL);
 
 	if (!added || !removed) {
@@ -726,6 +864,8 @@ static void adjust_hpsa_scsi_table(struct ctlr_info *h, int hostno,
 	 * sd[] and remove them from h->dev[], and for any
 	 * devices which have changed, remove the old device
 	 * info and add the new device info.
+	 * If minor device attributes change, just update
+	 * the existing device structure.
 	 */
 	i = 0;
 	nremoved = 0;
@@ -749,6 +889,9 @@ static void adjust_hpsa_scsi_table(struct ctlr_info *h, int hostno,
 			 * at the bottom of hpsa_update_scsi_devices()
 			 */
 			sd[entry] = NULL;
+		} else if (device_change == DEVICE_UPDATED) {
+			hpsa_db_dev("adjust_hpsa_scsi_table: Update", h, h->dev[i], i);
+			hpsa_scsi_update_entry(h, hostno, i, sd[entry]);
 		}
 		i++;
 	}
@@ -760,6 +903,22 @@ static void adjust_hpsa_scsi_table(struct ctlr_info *h, int hostno,
 	for (i = 0; i < nsds; i++) {
 		if (!sd[i]) /* if already added above. */
 			continue;
+
+		/* Don't add devices which are in one of several NOT READY
+		 * states (rapid parity init, erase, encryption actions, etc),
+		 * as the SCSI mid-layer does not handle such devices well.
+		 * It relentlessly loops, sending TUR at 3 Hz, then READ(10)
+		 * at 160Hz, and prevents the system from coming up.
+		 */
+		if (sd[i]->volume_offline) {
+			hpsa_show_volume_status(h, sd[i]);
+			dev_info(&h->pdev->dev,
+				"C%d:B%d:T%d:L%d Temporarily offline\n",
+				h->scsi_host->host_no,
+				sd[i]->bus, sd[i]->target, sd[i]->lun);
+				continue;
+		}
+
 		device_change = hpsa_scsi_find_entry(sd[i], h->dev,
 					h->ndevices, &entry);
 		if (device_change == DEVICE_NOT_FOUND) {
@@ -781,6 +940,17 @@ static void adjust_hpsa_scsi_table(struct ctlr_info *h, int hostno,
 	}
 	spin_unlock_irqrestore(&h->devlock, flags);
 
+
+	/* Monitor devices which are in one of several NOT READY states, to be
+	 * brought online later. This must be done without holding h->devlock,
+	 * so don't touch h->dev[].
+	 */
+	for (i = 0; i < nsds; i++ ) {
+		if (!sd[i]) /* if already added above */
+			continue;
+		if (sd[i]->volume_offline)
+			hpsa_monitor_offline_device(h, sd[i]->scsi3addr);
+	}
 	/* Don't notify scsi mid layer of any changes the first time through
 	 * (or if there are no changes) scsi_scan_host will do it later the
 	 * first time through.
@@ -809,7 +979,7 @@ static void adjust_hpsa_scsi_table(struct ctlr_info *h, int hostno,
 			 * timeout as if the device was gone.
 			 */
 			dev_warn(&h->pdev->dev, "didn't find c%db%dt%dl%d "
-				" for removal.", h->scsi_host->host_no, 
+				" for removal.\n", h->scsi_host->host_no, 
 				removed[i]->bus, removed[i]->target, 
 				removed[i]->lun);
 		}
@@ -945,12 +1115,12 @@ static int hpsa_allocate_sg_chain_blocks(struct ctlr_info *h)
 		if (!h->cmd_sg_list[i])
 			goto clean;
 	}
-//#ifdef HPSA_DEBUG
+#ifdef HPSA_DEBUG
 	hpsa_dbmsg(h, 0, "DEBUG: allocate %d bytes for cmd_sg_list array\n",
 			(sizeof(*h->cmd_sg_list) * h->nr_cmds));
 	hpsa_dbmsg(h, 0, "DEBUG: allocate %d bytes for cmd_sg_list chains.\n",
 			(sizeof(*h->cmd_sg_list[1])* h->chainsize * h->nr_cmds));
-//#endif /* HPSA_DEBUG */
+#endif /* HPSA_DEBUG */
 	return 0;
 
 clean:
@@ -1007,10 +1177,8 @@ static void complete_scsi_command(struct CommandList *cp,
 	char dmsg[256];		/* for dev_warn messaging */
 	int dl = 0;
 
-
 	char msg[256];		/* for debug messaging */
 	int ml = 0;
-
 	int orig;		/* remember original scsi status */
 
 	ei = cp->err_info;
@@ -1409,6 +1577,7 @@ static int hpsa_scsi_detect(struct ctlr_info *h)
 	sh->hostdata[0] = (unsigned long) h;
 	sh->irq = h->intr[PERF_MODE_INT];
 	sh->unique_id = sh->irq;
+
 	hpsa_dbmsg(h, 1, "hpsa_scsi_detect: " 
 		"maxsgentries = %d.\n", h->maxsgentries);
 #if defined(__VMKLNX__)
@@ -1418,10 +1587,11 @@ static int hpsa_scsi_detect(struct ctlr_info *h)
 	if (error)
 		goto fail_host_put;
 
-#if defined(__VMKLNX__)                                                                   
-	vmklnx_scsi_register_poll_handler(sh, h->intr[PERF_MODE_INT],                         
-		do_hpsa_intr, h);                                                   
-#endif /* defined(__VMKLNX__) */
+#if (defined(__VMKLNX__) && (defined(HPSA_ESX5_0) || defined(HPSA_ESX5_1) || defined(HPSA_ESX6_0)))
+
+	vmklnx_scsi_register_poll_handler(sh, h->intr[PERF_MODE_INT],
+		do_hpsa_intr, h);
+#endif /* defined(__VMKLNX__) && defined(HPSA_ESX5_0) || defined(HPSA_ESX5_1) || defined(HPSA_ESX6_0) */
 
 	hpsa_dbmsg(h, 1, "hpsa_scsi_detect: Calling scsi_scan_host.\n");
 	scsi_scan_host(sh);
@@ -1661,8 +1831,8 @@ static void hpsa_scsi_interpret_error(struct CommandList *cp)
 }
 
 static int hpsa_scsi_do_inquiry(struct ctlr_info *h, unsigned char *scsi3addr,
-			unsigned char page, unsigned char *buf,
-			unsigned char bufsize)
+		unsigned char is_vpd, unsigned char page, unsigned char *buf,
+		unsigned char bufsize)
 {
 	int rc = IO_OK;
 	struct CommandList *c;
@@ -1675,7 +1845,10 @@ static int hpsa_scsi_do_inquiry(struct ctlr_info *h, unsigned char *scsi3addr,
 		return -ENOMEM;
 	}
 
-	fill_cmd(c, HPSA_INQUIRY, h, buf, bufsize, page, scsi3addr, TYPE_CMD);
+	if (is_vpd)
+		fill_cmd(c, HPSA_VPD_INQUIRY, h, buf, bufsize, page, scsi3addr, TYPE_CMD);
+	else
+		fill_cmd(c, HPSA_INQUIRY, h, buf, bufsize, page, scsi3addr, TYPE_CMD);
 	hpsa_scsi_do_simple_cmd_with_retry(h, c, PCI_DMA_FROMDEVICE);
 	ei = c->err_info;
 	if (ei->CommandStatus != 0 && ei->CommandStatus != CMD_DATA_UNDERRUN) {
@@ -1762,7 +1935,7 @@ static void hpsa_get_raid_level(struct ctlr_info *h,
 	buf = kzalloc(64, GFP_KERNEL);
 	if (!buf)
 		return;
-	rc = hpsa_scsi_do_inquiry(h, scsi3addr, 0xC1, buf, 64);
+	rc = hpsa_scsi_do_inquiry(h, scsi3addr, HPSA_IS_VPD, HPSA_VPD_LV_DEVICE_GEOMETRY, buf, 64);
 	if (rc == 0)
 		*raid_level = buf[8];
 	if (*raid_level > RAID_UNKNOWN)
@@ -1783,7 +1956,7 @@ static int hpsa_get_device_id(struct ctlr_info *h, unsigned char *scsi3addr,
 	buf = kzalloc(64, GFP_KERNEL);
 	if (!buf)
 		return -1;
-	rc = hpsa_scsi_do_inquiry(h, scsi3addr, 0x83, buf, 64);
+	rc = hpsa_scsi_do_inquiry(h, scsi3addr, HPSA_IS_VPD, HPSA_VPD_LV_DEVICE_ID, buf, 64);
 	if (rc == 0)
 		memcpy(device_id, &buf[8], buflen);
 	kfree(buf);
@@ -1873,6 +2046,250 @@ static inline void hpsa_set_bus_target_lun(struct hpsa_scsi_dev_t *device,
 	device->lun = lun;
 }
 
+/* Does controller support VPD for logical volume status? */
+static int hpsa_vpd_lv_status_supported(struct ctlr_info *h,
+	unsigned char scsi3addr[])
+{
+        int rc;
+	int i;
+	int pages;
+        unsigned char *buf;
+
+        buf = kzalloc(64, GFP_KERNEL);
+        if (!buf)
+		return 0;
+
+	/* Get the size of the page list first */
+        rc = hpsa_scsi_do_inquiry(h, scsi3addr, HPSA_IS_VPD,
+		HPSA_VPD_SUPPORTED_PAGES, buf, HPSA_VPD_HEADER_SZ);
+        if (rc != 0)
+		goto exit_unsupported;
+	pages = buf[3];
+
+	/* Get the whole VPD page list */
+        rc = hpsa_scsi_do_inquiry(h, scsi3addr, HPSA_IS_VPD,
+		HPSA_VPD_SUPPORTED_PAGES, buf, pages + HPSA_VPD_HEADER_SZ);
+        if (rc != 0)
+		goto exit_unsupported;
+
+	pages = buf[3];
+	for (i = 1; i <= pages; i++ ) {
+		if ( buf[3 + i] == HPSA_VPD_LV_STATUS )
+			goto exit_supported;
+	}
+exit_unsupported:
+	dev_warn(&h->pdev->dev, "Could not retrieve list of supported VPD pages.\n");
+	kfree(buf);
+	return 0;
+exit_supported:
+	kfree(buf);
+	return 1;
+}
+
+
+/* Print a message explaining various volume states */
+static void hpsa_show_volume_status(struct ctlr_info *h,
+	struct hpsa_scsi_dev_t *sd)
+{
+	switch (sd->volume_offline) {
+		case HPSA_VPD_LV_STATUS_UNSUPPORTED:
+	                dev_info(&h->pdev->dev,
+				"C%d:B%d:T%d:L%d Volume status is not "
+				"available through vital product data pages.\n",
+				h->scsi_host->host_no,
+	                        sd->bus, sd->target, sd->lun);
+			break;
+		case HPSA_LV_OK:
+			break;
+		case HPSA_LV_UNDERGOING_ERASE:
+			dev_info(&h->pdev->dev,
+				"C%d:B%d:T%d:L%d Volume is undergoing "
+				"background erase process.\n",
+				h->scsi_host->host_no,
+				sd->bus, sd->target, sd->lun);
+			break;
+		case HPSA_LV_UNDERGOING_RPI:
+			dev_info(&h->pdev->dev,
+				"C%d:B%d:T%d:L%d Volume is undergoing "
+				"rapid parity initialization process.\n",
+				h->scsi_host->host_no,
+				sd->bus, sd->target, sd->lun);
+			break;
+		case HPSA_LV_PENDING_RPI:
+			dev_info(&h->pdev->dev,
+				"C%d:B%d:T%d:L%d Volume is queued for "
+				"rapid parity initialization process.\n",
+				h->scsi_host->host_no,
+				sd->bus, sd->target, sd->lun);
+			break;
+		case HPSA_LV_ENCRYPTED_NO_KEY:
+			dev_info(&h->pdev->dev,
+				"C%d:B%d:T%d:L%d "
+				"Volume is encrypted and cannot be accessed because "
+				"key is not present.\n",
+				h->scsi_host->host_no,
+				sd->bus, sd->target, sd->lun);
+			break;
+		case HPSA_LV_PLAINTEXT_IN_ENCRYPT_ONLY_CONTROLLER:
+			dev_info(&h->pdev->dev,
+				"C%d:B%d:T%d:L%d Volume is not encrypted "
+				"and cannot be accessed because "
+				"controller is in encryption-only mode.\n",
+				h->scsi_host->host_no,
+				sd->bus, sd->target, sd->lun);
+			break;
+		case HPSA_LV_UNDERGOING_ENCRYPTION:
+			dev_info(&h->pdev->dev,
+				"C%d:B%d:T%d:L%d Volume is undergoing "
+				"encryption process.\n",
+				h->scsi_host->host_no,
+				sd->bus, sd->target, sd->lun);
+			break;
+		case HPSA_LV_UNDERGOING_ENCRYPTION_REKEYING:
+			dev_info(&h->pdev->dev,
+				"C%d:B%d:T%d:L%d Volume is undergoing "
+				"encryption re-keying process.\n",
+				h->scsi_host->host_no,
+				sd->bus, sd->target, sd->lun);
+			break;
+		case HPSA_LV_ENCRYPTED_IN_NON_ENCRYPTED_CONTROLLER:
+			dev_info(&h->pdev->dev,
+				"C%d:B%d:T%d:L%d Volume is encrypted "
+				"and cannot be accessed because "
+				"controller does not have encryption enabled.\n",
+				h->scsi_host->host_no,
+				sd->bus, sd->target, sd->lun);
+			break;
+		case HPSA_LV_PENDING_ENCRYPTION:
+			dev_info(&h->pdev->dev,
+				"C%d:B%d:T%d:L%d Volume is pending migration "
+				"to encrypted state, but process has not "
+				"started.\n",
+				h->scsi_host->host_no,
+				sd->bus, sd->target, sd->lun);
+			break;
+		case HPSA_LV_PENDING_ENCRYPTION_REKEYING:
+			dev_info(&h->pdev->dev,
+				"C%d:B%d:T%d:L%d Volume is encrypted "
+				"and is pending encryption rekeying.\n",
+				h->scsi_host->host_no,
+				sd->bus, sd->target, sd->lun);
+			break;
+
+
+	}
+}
+
+/* Use VPD inquiry to get details of volume status */
+static int hpsa_get_volume_status(struct ctlr_info *h,
+	unsigned char scsi3addr[])
+{
+	int rc;
+        int status;
+	int size;
+        unsigned char *buf;
+
+        buf = kzalloc(64, GFP_KERNEL);
+        if (!buf)
+		return HPSA_VPD_LV_STATUS_UNSUPPORTED;
+
+	/* Does controller have VPD for logical volume status? */
+	if ( !hpsa_vpd_lv_status_supported(h, scsi3addr)) {
+		dev_warn(&h->pdev->dev, "Logical volume status VPD page is unsupported.\n");
+		goto exit_failed;
+	}
+
+	/* Get the size of the VPD return buffer */
+        rc = hpsa_scsi_do_inquiry(h, scsi3addr, HPSA_IS_VPD,
+		HPSA_VPD_LV_STATUS, buf, HPSA_VPD_HEADER_SZ);
+        if (rc != 0) {
+		dev_warn(&h->pdev->dev, "Logical volume status VPD inquiry failed.\n");
+		goto exit_failed;
+	}
+	size = buf[3];
+
+	/* Now get the whole VPD buffer */
+        rc = hpsa_scsi_do_inquiry(h, scsi3addr, HPSA_IS_VPD,
+		HPSA_VPD_LV_STATUS, buf, size + HPSA_VPD_HEADER_SZ);
+        if (rc != 0) {
+		dev_warn(&h->pdev->dev, "Logical volume status VPD inquiry failed.\n");
+		goto exit_failed;
+	}
+	status = buf[4]; /* status byte */
+
+	kfree(buf);
+	return status;
+exit_failed:
+        kfree(buf);
+	return HPSA_VPD_LV_STATUS_UNSUPPORTED;
+}
+
+/* Determine offline status of a volume.
+ * Return either:
+ *  0 (not offline)
+ * -1 (offline for unknown reasons)
+ *  # (integer code indicating one of several NOT READY states
+ *     describing why a volume is to be kept offline)
+ */
+static unsigned char hpsa_volume_offline(struct ctlr_info *h,
+	unsigned char scsi3addr[])
+{
+	struct CommandList *c;
+	unsigned char *sense, sense_key, asc, ascq;
+	u8 ldstat = 0;
+#define ASC_LUN_NOT_READY 0x04
+#define ASCQ_LUN_NOT_READY_FORMAT_IN_PROGRESS 0x04
+#define ASCQ_LUN_NOT_READY_INITIALIZING_CMD_REQ 0x02
+	c= cmd_special_alloc(h);
+	if (!c)
+		return 0;
+	fill_cmd(c, TEST_UNIT_READY, h, NULL, 0, 0, scsi3addr, TYPE_CMD);
+	hpsa_scsi_do_simple_cmd_core(h, c);
+	sense = c->err_info->SenseInfo;
+	sense_key = sense[2];
+	asc = sense[12];
+	ascq = sense[13];
+	/* Is the volume 'not ready'? */
+	if (c->err_info->CommandStatus == CMD_TARGET_STATUS &&
+		c->err_info->ScsiStatus == SAM_STAT_CHECK_CONDITION &&
+		sense_key == NOT_READY &&
+		asc == ASC_LUN_NOT_READY ) {
+
+		/* Determine the reason for not ready state. */
+		ldstat = hpsa_get_volume_status(h, scsi3addr);
+
+		/* If VPD status page isn't available,
+		 * use ASC/ASCQ to determine state
+		 */
+		if (ldstat == HPSA_VPD_LV_STATUS_UNSUPPORTED) {
+			if ( (ascq == ASCQ_LUN_NOT_READY_FORMAT_IN_PROGRESS) ||
+				(ascq == ASCQ_LUN_NOT_READY_INITIALIZING_CMD_REQ) )
+				goto exit_offline;
+			else
+				goto exit_online;
+		}
+		/* Keep volume offline in certain cases: */
+		switch (ldstat) {
+			case HPSA_LV_UNDERGOING_ERASE:
+			case HPSA_LV_UNDERGOING_RPI:
+			case HPSA_LV_PENDING_RPI:
+			case HPSA_LV_ENCRYPTED_NO_KEY:
+			case HPSA_LV_PLAINTEXT_IN_ENCRYPT_ONLY_CONTROLLER:
+			case HPSA_LV_UNDERGOING_ENCRYPTION:
+			case HPSA_LV_UNDERGOING_ENCRYPTION_REKEYING:
+			case HPSA_LV_ENCRYPTED_IN_NON_ENCRYPTED_CONTROLLER:
+				goto exit_offline;
+				break;
+		}
+	}
+exit_online:
+	cmd_special_free(h, c);
+	return 0;
+exit_offline:
+	cmd_special_free(h, c);
+	return ldstat;
+}
+
 static int hpsa_update_device_info(struct ctlr_info *h,
 	unsigned char scsi3addr[], struct hpsa_scsi_dev_t *this_device)
 {
@@ -1886,7 +2303,7 @@ static int hpsa_update_device_info(struct ctlr_info *h,
 	hpsa_dbmsg(h, 1, "hpsa_update_device_info: begin.\n");
 
 	/* Do an inquiry to the device to see what it is. */
-	if (hpsa_scsi_do_inquiry(h, scsi3addr, 0, inq_buff,
+	if (hpsa_scsi_do_inquiry(h, scsi3addr, HPSA_NOT_VPD, 0, inq_buff,
 		(unsigned char) OBDR_TAPE_INQ_SIZE) != 0) {
 		/* Inquiry failed (msg printed already) */
 		hpsa_dbmsg(h, 1, "hpsa_update_device_info: "
@@ -1916,10 +2333,14 @@ static int hpsa_update_device_info(struct ctlr_info *h,
 		sizeof(this_device->device_id));
 
 	if (this_device->devtype == TYPE_DISK &&
-		is_logical_dev_addr_mode(scsi3addr))
+		is_logical_dev_addr_mode(scsi3addr)) {
 		hpsa_get_raid_level(h, scsi3addr, &this_device->raid_level);
-	else
+		this_device->volume_offline =
+			hpsa_volume_offline(h, scsi3addr);
+	} else {
 		this_device->raid_level = RAID_UNKNOWN;
+		this_device->volume_offline = 0;
+	}
 
 	kfree(inq_buff);
 	return 0;
@@ -1929,31 +2350,33 @@ bail_out:
 	return 1;
 }
 
-static unsigned char *msa2xxx_model[] = {
+static unsigned char *ext_target_model[] = {
 	"MSA2012",
 	"MSA2024",
 	"MSA2312",
 	"MSA2324",
+	"P2000 G3 SAS",
 	NULL,
 };
 
-static int is_msa2xxx(struct ctlr_info *h, struct hpsa_scsi_dev_t *device)
+static int is_ext_target(struct ctlr_info *h, struct hpsa_scsi_dev_t *device)
 {
 	int i;
 
-	for (i = 0; msa2xxx_model[i]; i++)
-		if (strncmp(device->model, msa2xxx_model[i],
-			strlen(msa2xxx_model[i])) == 0)
+	for (i = 0; ext_target_model[i]; i++)
+		if (strncmp(device->model, ext_target_model[i],
+			strlen(ext_target_model[i])) == 0)
 			return 1;
 	return 0;
 }
 
 /* Helper function to assign bus, target, lun mapping of devices.
- * Puts non-msa2xxx logical volumes on bus 0, msa2xxx logical
+ * Puts non-external target logical volumes on bus 0, external target logical
  * volumes on bus 1, physical devices on bus 2. and the hba on bus 3.
  * Logical drive target and lun are assigned at this time, but
  * physical device lun and target assignment are deferred (assigned
  * in hpsa_find_target_lun, called by hpsa_scsi_add_entry.)
+ * VMware behavior is altered in that all devices reside on bus 0.
  */
 static void figure_bus_target_lun(struct ctlr_info *h,
 	u8 *lunaddrbytes, int *bus, int *target, int *lun,
@@ -1963,33 +2386,32 @@ static void figure_bus_target_lun(struct ctlr_info *h,
 
 	if (is_logical_dev_addr_mode(lunaddrbytes)) {
 		/* logical device */
-		if (unlikely(is_scsi_rev_5(h))) {
-			/* SCSI Revision 5 devs: logical drive lun assignments
-			 * match SCSI REPORT LUNS data.
+		lunid = le32_to_cpu(*((__le32 *) lunaddrbytes));
+		if (unlikely(is_ext_target(h, device))) {
+			/* External arrays assign lunids. 
+			 * Target ids are embedded in them,
+			 * linked to ports on array controller
 			 */
 			hpsa_dbmsg(h, 3, "figure_bus_target_lun: "
-				"SCSI Revision 5 logical device\n");
-			lunid = le32_to_cpu(*((__le32 *) lunaddrbytes));
-			*bus = 0;
-			*target = 0;
-			*lun = (lunid & 0x3fff) + 1;
+				"External array logical device\n");
+#if defined (__VMKLNX__)
+			*bus = 0;	/* Only one bus with VMware */
+#else /* NOT defined (__VMKLNX__) */
+			*bus = 1;
+#endif
+			*target = (lunid >> 16) & 0x3fff;
+			*lun = lunid & 0x00ff;
+
 		} else {
-			/* not SCSI Revision 5... */
-			lunid = le32_to_cpu(*((__le32 *) lunaddrbytes));
-			if (is_msa2xxx(h, device)) {
-				/* msa2xxx way, put logicals on bus 1
-				 * and match target/lun numbers box
-				 * reports.
+			if (is_scsi_rev_5(h)) {
+				/* SCSI Revision 5: lun ids
+				 * match SCSI REPORT LUNS data.
 				 */
 				hpsa_dbmsg(h, 3, "figure_bus_target_lun: "
-					"MSA logical device\n");
-#if defined (__VMKLNX__)
+					"SCSI Revision 5 logical device\n");
 				*bus = 0;
-#else /* NOT defined (__VMKLNX__) */
-				*bus = 1;
-#endif
-				*target = (lunid >> 16) & 0x3fff;
-				*lun = lunid & 0x00ff;
+				*target = 0;
+				*lun = (lunid & 0x3fff) + 1;
 			} else {
 				/* Traditional smart array way. */
 				hpsa_dbmsg(h, 3, "figure_bus_target_lun: " 
@@ -2005,7 +2427,7 @@ static void figure_bus_target_lun(struct ctlr_info *h,
 			if (unlikely(is_scsi_rev_5(h))) {
 				hpsa_dbmsg(h, 3, "figure_bus_target_lun: "
 					"SCSI Revision 5 physical device\n");
-				*bus = 0; /* put p1210m ctlr at 0,0,0 */
+				*bus = 0; 
 				*target = 0;
 				*lun = 0;
 				return;
@@ -2041,7 +2463,7 @@ static void figure_bus_target_lun(struct ctlr_info *h,
 
 /*
  * If there is no lun 0 on a target, linux won't find any devices.
- * For the MSA2xxx boxes, we have to manually detect the enclosure
+ * For the external targets (arrays), we have to manually detect the enclosure
  * which is at lun zero, as CCISS_REPORT_PHYSICAL_LUNS doesn't report
  * it for some reason.  *tmpdevice is the target we're adding,
  * this_device is a pointer into the current element of currentsd[]
@@ -2050,11 +2472,11 @@ static void figure_bus_target_lun(struct ctlr_info *h,
  * lun 0 assigned.
  * Returns 1 if an enclosure was added, 0 if not.
  */
-static int add_msa2xxx_enclosure_device(struct ctlr_info *h,
+static int add_ext_target_dev(struct ctlr_info *h,
 	struct hpsa_scsi_dev_t *tmpdevice,
 	struct hpsa_scsi_dev_t *this_device, u8 *lunaddrbytes,
 	int bus, int target, int lun, unsigned long lunzerobits[],
-	int *nmsa2xxx_enclosures)
+	int *num_ext_target_devs)
 {
 	unsigned char scsi3addr[8];
 
@@ -2072,11 +2494,11 @@ static int add_msa2xxx_enclosure_device(struct ctlr_info *h,
 		return 0; /* It's the logical targets that may lack lun 0. */
 	}
 
-	if (!is_msa2xxx(h, tmpdevice)) {
+	if (!is_ext_target(h, tmpdevice)) {
 		hpsa_dbmsg(h, 3, "add_enclosure_device: "
-			"T%d:L%d is not on an MSA2xxx device.\n",
+			"T%d:L%d is not on an external target device.\n",
 			target, lun);
-		return 0; /* It's only the MSA2xxx that have this problem. */
+		return 0; /* Only external target devices have this problem. */
 	}
 
 	if (lun == 0) { /* if lun is 0, then obviously we have a lun 0. */
@@ -2110,10 +2532,9 @@ static int add_msa2xxx_enclosure_device(struct ctlr_info *h,
 		return 0; /* p1210m doesn't need to do this. */
 	}
 
-#define MAX_MSA2XXX_ENCLOSURES 32
-	if (*nmsa2xxx_enclosures >= MAX_MSA2XXX_ENCLOSURES) {
-		dev_warn(&h->pdev->dev, "Maximum number of MSA2XXX "
-			"enclosures exceeded.  Check your hardware "
+	if (*num_ext_target_devs >= MAX_EXT_TARGETS) {
+		dev_warn(&h->pdev->dev, "Maximum number of external "
+			"target devices exceeded.  Check your hardware "
 			"configuration.");
 		return 0;
 	}
@@ -2125,7 +2546,7 @@ static int add_msa2xxx_enclosure_device(struct ctlr_info *h,
 			bus, target, lun);
 		return 0;
 	}	
-	(*nmsa2xxx_enclosures)++;
+	(*num_ext_target_devs)++;
 	hpsa_set_bus_target_lun(this_device, bus, target, 0);
 	set_bit(target, lunzerobits);
 	hpsa_db_dev("add_enclosure_device", h, this_device, -1);
@@ -2227,12 +2648,12 @@ static void hpsa_update_scsi_devices(struct ctlr_info *h, int hostno)
 	int ncurrent = 0;
 	int reportlunsize = sizeof(*physdev_list) + HPSA_MAX_PHYS_LUN * 8;
 	int extended_phys_size = sizeof(*extended_phys_list) + HPSA_MAX_PHYS_LUN * 24;
-	int i, nmsa2xxx_enclosures, ndevs_to_allocate;
+	int i, num_ext_target_devs, ndevs_to_allocate;
 	int bus, target, lun;
 	int raid_ctlr_position;
-	DECLARE_BITMAP(lunzerobits, HPSA_MAX_TARGETS_PER_CTLR);
+	DECLARE_BITMAP(lunzerobits, MAX_EXT_TARGETS);
 
-	currentsd = kzalloc(sizeof(*currentsd) * HPSA_MAX_SCSI_DEVS_PER_HBA,
+	currentsd = kzalloc(sizeof(*currentsd) * HPSA_MAX_DEVICES,
 		GFP_KERNEL);
 	physdev_list = kzalloc(reportlunsize, GFP_KERNEL);
 	logdev_list = kzalloc(reportlunsize, GFP_KERNEL);
@@ -2260,14 +2681,21 @@ static void hpsa_update_scsi_devices(struct ctlr_info *h, int hostno)
 			logdev_list, &nlogicals))
 		goto out;
 
-	/* We might see up to 32 MSA2xxx enclosures, actually 8 of them
-	 * but each of them 4 times through different paths.  The plus 1
-	 * is for the RAID controller.
+	/* We might see up to the maximum number of logical and physical disks
+	 * plus external target devices, and a device for the local RAID 
+	 * controller.
 	 */
-	ndevs_to_allocate = nphysicals + nlogicals + MAX_MSA2XXX_ENCLOSURES + 1;
+	ndevs_to_allocate = nphysicals + nlogicals + MAX_EXT_TARGETS + 1;
 
 	/* Allocate the per device structures */
 	for (i = 0; i < ndevs_to_allocate; i++) {
+		if ( i > HPSA_MAX_DEVICES ) {
+			dev_warn(&h->pdev->dev, "maximum devices (%d) exceeded."
+				" %d devices ignored.\n", HPSA_MAX_DEVICES,
+				ndevs_to_allocate - HPSA_MAX_DEVICES);
+			break;
+		}
+
 		currentsd[i] = kzalloc(sizeof(*currentsd[i]), GFP_KERNEL);
 		if (!currentsd[i]) {
 			dev_warn(&h->pdev->dev, "out of memory at %s:%d\n",
@@ -2283,7 +2711,7 @@ static void hpsa_update_scsi_devices(struct ctlr_info *h, int hostno)
 		raid_ctlr_position = nphysicals + nlogicals;
 
 	/* adjust our table of devices */
-	nmsa2xxx_enclosures = 0;
+	num_ext_target_devs = 0;
 	for (i = 0; i < nphysicals + nlogicals + 1; i++) {
 		u8 *lunaddrbytes;
 
@@ -2322,15 +2750,15 @@ static void hpsa_update_scsi_devices(struct ctlr_info *h, int hostno)
 		this_device = currentsd[ncurrent];
 
 		/*
-		 * For the msa2xxx boxes, we have to insert a LUN 0 which
+		 * For the external target devices, we have to insert a LUN 0 which
 		 * doesn't show up in CCISS_REPORT_PHYSICAL data, but there
 		 * is nonetheless an enclosure device there.  We have to
 		 * present that otherwise linux won't find anything if
 		 * there is no lun 0.
 		 */
-		if (add_msa2xxx_enclosure_device(h, tmpdevice, this_device,
+		if (add_ext_target_dev(h, tmpdevice, this_device,
 				lunaddrbytes, bus, target, lun, lunzerobits,
-				&nmsa2xxx_enclosures)) {
+				&num_ext_target_devs)) {
 			ncurrent++;
 			this_device = currentsd[ncurrent];
 		}
@@ -2398,7 +2826,7 @@ static void hpsa_update_scsi_devices(struct ctlr_info *h, int hostno)
 		default:
 			break;
 		}
-		if (ncurrent >= HPSA_MAX_SCSI_DEVS_PER_HBA)
+		if (ncurrent >= HPSA_MAX_DEVICES)
 			break;
 	}
 	adjust_hpsa_scsi_table(h, hostno, currentsd, ncurrent);
@@ -2510,10 +2938,9 @@ static int hpsa_scsi_queue_command(struct scsi_cmnd *cmd,
 		done(cmd);
 		return 0;
 	}
+
 	memcpy(scsi3addr, dev->scsi3addr, sizeof(scsi3addr));
 
-
-		
 	/* investigate Commands */
 	if(h->debug_msg >= 5) {
 		hpsa_db_sdev("hpsa_scsi_queue_command: scsi_device", h, cmd->device);
@@ -2767,6 +3194,7 @@ static int hpsa_eh_device_reset_handler(struct scsi_cmnd *scsicmd)
 		return FAILED;
 	}
 
+
 	if (is_logical_dev_addr_mode(dev->scsi3addr)) {
 		/* For logicals, use logical unit reset */
 		reset_type = HPSA_DEVICE_RESET_MSG;
@@ -2815,6 +3243,7 @@ static int hpsa_eh_bus_reset_handler(struct scsi_cmnd *scsicmd)
 	}
 	dev_warn(&h->pdev->dev, "Bus reset on device hpsa:%d:B%d:T%d:L%d\n",
 		h->scsi_host->host_no, dev->bus, dev->target, dev->lun);
+
 	rc = hpsa_send_reset(h, dev->scsi3addr, HPSA_BUS_RESET_MSG);
 	if (rc == 0 && wait_for_device_to_become_ready(h, dev->scsi3addr) == 0)
 		return SUCCESS;
@@ -2850,6 +3279,7 @@ static int hpsa_eh_abort_handler(struct scsi_cmnd *sc)
 	struct scsi_cmnd *as;	/* ptr to scsi cmd inside aborted command. */
 	char msg[256];		/* For debug messaging. */		
 	int ml=0;
+
 	memset(msg, 0, sizeof(msg));
 
 
@@ -2903,7 +3333,7 @@ static int hpsa_eh_abort_handler(struct scsi_cmnd *sc)
 		&&
 		(h->TMFSupportFlags & HPSATMF_PHYS_TASK_ABORT)
 		&&
-		(is_msa2xxx(h, dev))
+		(is_ext_target(h, dev))
 	) 
 		emulated=0; /* not emulated, do real */
 
@@ -2916,7 +3346,6 @@ static int hpsa_eh_abort_handler(struct scsi_cmnd *sc)
 			"Command already returned)\n", msg);
 		return FAILED;
 	}
-
 
 	/* For emulated aborts (resets):
 	 * Delay a while;  maybe the controller
@@ -3565,7 +3994,6 @@ static void fill_cmd(struct CommandList *c, u8 cmd, struct ctlr_info *h,
 	if (cmd_type == TYPE_CMD) {
 		switch (cmd) {
 		case HPSA_INQUIRY:
-			/* are we trying to read a vital product page */
 			hpsa_dbmsg(h, 5, "fill_cmd: INQUIRY: scsi3addr: "
 				"0x%02x%02x%02x%02x %02x%02x%02x%02x "
 				"size: %lu pgcode: 0x%x\n",
@@ -3574,11 +4002,25 @@ static void fill_cmd(struct CommandList *c, u8 cmd, struct ctlr_info *h,
 				scsi3addr[4], scsi3addr[5],
 				scsi3addr[6], scsi3addr[7],
 				size, page_code);
-
-			if (page_code != 0) {
-				c->Request.CDB[1] = 0x01;
-				c->Request.CDB[2] = page_code;
-			}
+			c->Request.CDBLen = 6;
+			c->Request.Type.Attribute = ATTR_SIMPLE;
+			c->Request.Type.Direction = XFER_READ;
+			c->Request.Timeout = 0;
+			c->Request.CDB[0] = HPSA_INQUIRY;
+			c->Request.CDB[4] = size & 0xFF;
+			break;
+		case HPSA_VPD_INQUIRY:
+			/* we are trying to read a vital product page */
+			hpsa_dbmsg(h, 5, "fill_cmd: VPD INQUIRY: scsi3addr: "
+				"0x%02x%02x%02x%02x %02x%02x%02x%02x "
+				"size: %lu pgcode: 0x%x\n",
+				scsi3addr[0], scsi3addr[1],
+				scsi3addr[2], scsi3addr[3],
+				scsi3addr[4], scsi3addr[5],
+				scsi3addr[6], scsi3addr[7],
+				size, page_code);
+			c->Request.CDB[1] = 0x01; /* turn on the EVPD bit */
+			c->Request.CDB[2] = page_code;
 			c->Request.CDBLen = 6;
 			c->Request.Type.Attribute = ATTR_SIMPLE;
 			c->Request.Type.Direction = XFER_READ;
@@ -3839,9 +4281,9 @@ static inline u32 hpsa_tag_discard_error_bits(struct ctlr_info *h, u32 tag)
 {
 #define HPSA_PERF_ERROR_BITS ((1 << DIRECT_LOOKUP_SHIFT) -1)
 #define HPSA_SIMPLE_ERROR_BITS 0x03
-	if (likely(h->transMethod == CFGTBL_Trans_Performant))
-		return tag & ~HPSA_PERF_ERROR_BITS;
-	return tag & ~HPSA_SIMPLE_ERROR_BITS;
+	if (unlikely(!(h->transMethod & CFGTBL_Trans_Performant)))
+		return tag & ~HPSA_SIMPLE_ERROR_BITS;
+	return tag & ~HPSA_PERF_ERROR_BITS;
 }
 
 /* process completion of an indexed ("direct lookup") command */
@@ -4392,11 +4834,11 @@ static int __devinit hpsa_pci_init(struct ctlr_info *h, struct pci_dev *pdev)
 		h->maxsgentries = 31; /* default to traditional values */
 		h->chainsize = 0;
 	}
-//#ifdef HPSA_DEBUG
-	hpsa_dbmsg(h, 0, "DEBUG: SGs: maxsgentries(%d)= in-cmd-sgs(%d) + "
+#ifdef HPSA_DEBUG
+	hpsa_dbmsg(h, 0, "DEBUG: SGs: maxsgentries(%d) in-cmd-sgs(%d)  "
 		"chainsize(%d).\n", h->maxsgentries, h->max_cmd_sg_entries,
 		h->chainsize);
-//#endif /* HPSA_DEBUG */
+#endif /* HPSA_DEBUG */
 
 	h->product_name = products[prod_index].product_name;
 	h->access = *(products[prod_index].access);
@@ -4436,6 +4878,7 @@ static int __devinit hpsa_pci_init(struct ctlr_info *h, struct pci_dev *pdev)
 		err = -ENODEV;
 		goto err_out_free_res;
 	}
+	h->transMethod = CFGTBL_Trans_Simple;
 	return 0;
 
 err_out_free_res:
@@ -4455,7 +4898,7 @@ static void __devinit hpsa_hba_inquiry(struct ctlr_info *h)
 	h->hba_inquiry_data = kmalloc(HBA_INQUIRY_BYTE_COUNT, GFP_KERNEL);
 	if (!h->hba_inquiry_data)
 		return;
-	rc = hpsa_scsi_do_inquiry(h, RAID_CTLR_LUNID, 0,
+	rc = hpsa_scsi_do_inquiry(h, RAID_CTLR_LUNID, HPSA_NOT_VPD, 0,
 		h->hba_inquiry_data, HBA_INQUIRY_BYTE_COUNT);
 	if (rc != 0) {
 		kfree(h->hba_inquiry_data);
@@ -4510,6 +4953,8 @@ static int __devinit hpsa_init_one(struct pci_dev *pdev,
 	h->busy_initializing = 1;
 	INIT_LIST_HEAD(&h->cmpQ);
 	INIT_LIST_HEAD(&h->reqQ);
+	INIT_LIST_HEAD(&h->offline_device_list);
+	spin_lock_init(&h->offline_device_lock);
 	rc = hpsa_pci_init(h, pdev);
 	if (rc != 0)
 		goto clean1;
@@ -4518,6 +4963,7 @@ static int __devinit hpsa_init_one(struct pci_dev *pdev,
 	h->ctlr = number_of_controllers;
 	cch_devs[number_of_controllers].h = h; /* enable char device lookup */
 	number_of_controllers++;
+	h->offline_device_thread_state = OFFLINE_DEVICE_THREAD_STOPPED;
 	h->pdev = pdev;
 
 	/* configure PCI DMA stuff */
@@ -4544,6 +4990,10 @@ static int __devinit hpsa_init_one(struct pci_dev *pdev,
 		goto clean2;
 	}
 
+#if ( ( defined(HPSA_ESX4_0) || ( defined(HPSA_ESX4_1))) && defined(__VMKLNX__) )
+        hpsa_set_irq(h, pdev);
+#endif /*if defined(HPSA_ESX4_0 or HPSA_ESX4_1) and defined(__VMKLNX__) */
+
 	dev_info(&pdev->dev, "%s: <0x%x> at IRQ %d%s using DAC\n",
 	       h->devname, pdev->device,
 	       h->intr[PERF_MODE_INT], dac ? "" : " not");
@@ -4564,12 +5014,12 @@ static int __devinit hpsa_init_one(struct pci_dev *pdev,
 		rc = -ENOMEM;
 		goto clean4;
 	}
-//#ifdef HPSA_DEBUG
+#ifdef HPSA_DEBUG
 	hpsa_dbmsg(h, 0, "DEBUG: allocate %d bytes for cmd_pool (%d cmds)\n", 
 		(h->nr_cmds * sizeof(*h->cmd_pool)), h->nr_cmds);
 	hpsa_dbmsg(h, 0, "DEBUG: allocate %d bytes for errinfo_pool\n", 
 		(h->nr_cmds * sizeof(*h->errinfo_pool)));
-//#endif /* HPSA_DEBUG */
+#endif /* HPSA_DEBUG */
 	if (hpsa_allocate_sg_chain_blocks(h))
 		goto clean4;
 	spin_lock_init(&h->lock);
@@ -4676,6 +5126,7 @@ static void __devexit hpsa_remove_one(struct pci_dev *pdev)
 	}
 	h = pci_get_drvdata(pdev);
 	hpsa_unregister_scsi(h);	/* unhook from SCSI subsystem */
+	stop_offline_device_monitor(h);
 	hpsa_stop_rescan(h);		/* kill the rescan thread */
 	remove_proc_entry(h->devname, proc_hpsa);
 	hpsa_shutdown(pdev);
@@ -4788,12 +5239,12 @@ static void hpsa_put_ctlr_into_performant_mode(struct ctlr_info *h)
 	/* Need a block fetch table for performant mode */
 	h->blockFetchTable = kmalloc(((h->max_sg_entries+1) *
 				sizeof(u32)), GFP_KERNEL);
-//#ifdef HPSA_DEBUG 
+#ifdef HPSA_DEBUG 
 	hpsa_dbmsg(h, 0, "DEBUG: allocate %d bytes for reply_pool\n", 
 		h->reply_pool_size);
 	hpsa_dbmsg(h, 0, "DEBUG: allocate %d bytes for blockFetchTable\n", 
 		((h->max_sg_entries+1) * sizeof(u32)));
-//#endif /* HPSA_DEBUG */
+#endif /* HPSA_DEBUG */
 	if ((h->reply_pool == NULL)
 		|| (h->blockFetchTable == NULL))
 		goto clean_up;
@@ -4817,7 +5268,7 @@ static void hpsa_put_ctlr_into_performant_mode(struct ctlr_info *h)
 	writel(0, &h->transtable->RepQCtrAddrHigh32);
 	writel(h->reply_pool_dhandle, &h->transtable->RepQAddr0Low32);
 	writel(0, &h->transtable->RepQAddr0High32);
-	writel(CFGTBL_Trans_Performant,
+	writel(CFGTBL_Trans_Performant | CFGTBL_Trans_use_short_tags,
 		&(h->cfgtable->HostWrite.TransportRequest));
 	writel(CFGTBL_ChangeReq, h->vaddr + SA5_DOORBELL);
 	/* under certain very rare conditions, this can take awhile.

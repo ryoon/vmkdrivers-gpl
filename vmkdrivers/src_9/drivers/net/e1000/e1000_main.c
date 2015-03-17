@@ -1,5 +1,5 @@
 /*
- * Portions Copyright 2008, 2009 VMware, Inc.
+ * Portions Copyright 2012, 2011, 2008, 2009 VMware, Inc.
  */
 /*******************************************************************************
 
@@ -521,6 +521,14 @@ void e1000_down(struct e1000_adapter *adapter)
 	E1000_WRITE_REG(&adapter->hw, E1000_RCTL, rctl & ~E1000_RCTL_EN);
 	/* flush and sleep below */
 
+#ifdef __VMKLNX__
+	/* Avoid watchdog bark by updating jiffies.
+	 * Also set carrier off before stopping all queues to avoid
+	 * potential race in netdev_watchdog. */
+	netdev->trans_start = jiffies;
+	netif_carrier_off(netdev);
+#endif
+
 #ifdef NETIF_F_LLTX
 #ifdef CONFIG_NETDEVICES_MULTIQUEUE
 	netif_stop_subqueue(netdev, 0);
@@ -548,7 +556,9 @@ void e1000_down(struct e1000_adapter *adapter)
 	del_timer_sync(&adapter->phy_info_timer);
 
 	netdev->tx_queue_len = adapter->tx_queue_len;
+#ifndef __VMKLNX__
 	netif_carrier_off(netdev);
+#endif
 	adapter->link_speed = 0;
 	adapter->link_duplex = 0;
 
@@ -559,6 +569,7 @@ void e1000_down(struct e1000_adapter *adapter)
 
 void e1000_reinit_locked(struct e1000_adapter *adapter)
 {
+	ASSERT_RTNL();
 	WARN_ON(in_interrupt());
 	while (test_and_set_bit(__E1000_RESETTING, &adapter->state))
 		msleep(1);
@@ -892,11 +903,16 @@ static int __devinit e1000_probe(struct pci_dev *pdev,
 #ifdef NETIF_F_LLTX
 	netdev->features |= NETIF_F_LLTX;
 #endif
-#ifdef __VMKLNX__
-#ifdef NETIF_F_TSO_CSUM_8OFFSET
-	netdev->features |= NETIF_F_TSO_CSUM_8OFFSET;
-#endif
-#endif // __VMKLNX__
+
+#if defined(__VMKLNX__)
+#if defined (NETIF_F_TSO) && defined (NETIF_F_TSO6) 
+	/* PR 820630: Only report the TSO offload capability for those NICs that support 
+	 * both IPV4 and IPV6 TSO capabilities */
+	if ((netdev->features & NETIF_F_TSO) && (netdev->features & NETIF_F_TSO6)) {
+		netdev->features |= NETIF_F_OFFLOAD_8OFFSET;
+	}
+#endif /* ifdef NETIF_F_TSO && NETIF_F_TSO6 */
+#endif /* ifdef (__VMKLNX__) */
 
 	/* Hardware features, flags and workarounds */
 	if (adapter->hw.mac.type >= e1000_82540) {
@@ -1061,8 +1077,8 @@ static int __devinit e1000_probe(struct pci_dev *pdev,
 	return 0;
 
 err_register:
-err_hw_init:
 err_eeprom:
+err_hw_init:
 	if (!e1000_check_reset_block(&adapter->hw))
 		e1000_phy_hw_reset(&adapter->hw);
 
@@ -1072,6 +1088,7 @@ err_eeprom:
 	e1000_remove_device(&adapter->hw);
 	kfree(adapter->tx_ring);
 	kfree(adapter->rx_ring);
+	netif_napi_del(&adapter->napi);
 err_sw_init:
 	iounmap(adapter->hw.hw_addr);
 err_ioremap:
@@ -2495,7 +2512,12 @@ static void e1000_watchdog_task(struct work_struct *work)
 			/* tweak tx_queue_len according to speed/duplex
 			 * and adjust the timeout factor */
 			netdev->tx_queue_len = adapter->tx_queue_len;
+#ifdef __VMKLNX__
+			/* extend factor to 4 * HZ to avoid false alarm in nested ESXi.*/
+			adapter->tx_timeout_factor = 4;
+#else
 			adapter->tx_timeout_factor = 1;
+#endif
 			switch (adapter->link_speed) {
 			case SPEED_10:
 				txb2b = 0;
@@ -3402,9 +3424,13 @@ static void e1000_reset_task(struct work_struct *work)
 {
 	struct e1000_adapter *adapter;
 	adapter = container_of(work, struct e1000_adapter, reset_task);
-
+#if defined(__VMKLNX__)
+	rtnl_lock();
+#endif
 	e1000_reinit_locked(adapter);
-
+#if defined(__VMKLNX__)
+	rtnl_unlock();
+#endif
 }
 
 /**
@@ -3733,14 +3759,14 @@ static irqreturn_t e1000_intr(int irq, void *data)
 	}
 
 #ifdef CONFIG_E1000_NAPI
-	/* XXX only using ring 0 for napi */
 #if !defined(__VMKLNX__)
+	/* XXX only using ring 0 for napi */
 	if (likely(netif_rx_schedule_prep(netdev, &adapter->rx_ring[0].napi))) {
 #else /* defined(__VMKLNX__) */
+	/* disable interrupts, without the synchronize_irq bit */
+	E1000_WRITE_REG(hw, E1000_IMC, ~0);
+	E1000_WRITE_FLUSH(&adapter->hw);
 	if (likely(netif_rx_schedule_prep(netdev, &adapter->napi))) {
-		/* disable interrupts, without the synchronize_irq bit */
-		E1000_WRITE_REG(hw, E1000_IMC, ~0);
-		E1000_WRITE_FLUSH(&adapter->hw);
 #endif /* !defined(__VMKLNX__) */
 		adapter->total_tx_bytes = 0;
 		adapter->total_tx_packets = 0;
@@ -3750,9 +3776,14 @@ static irqreturn_t e1000_intr(int irq, void *data)
 		__netif_rx_schedule(netdev, &adapter->rx_ring[0].napi);
 #else /* defined(__VMKLNX__) */
 		__netif_rx_schedule(netdev, &adapter->napi);
+	} else {
+		/* this really should not happen! if it does it is basically a
+		 * bug, but not a hard error, so enable ints and continue */
+		if (!test_bit(__E1000_DOWN, &adapter->flags))
+			e1000_irq_enable(adapter);
 #endif /* !defined(__VMKLNX__) */
 	}
-#else
+#else /* CONFIG_E1000_NAPI */
 	/* Writing IMC and IMS is needed for 82547.
 	 * Due to Hub Link bus being occupied, an interrupt
 	 * de-assertion message is not able to be sent.
@@ -3888,7 +3919,11 @@ static bool e1000_clean_tx_irq(struct e1000_adapter *adapter,
 			buffer_info = &tx_ring->buffer_info[i];
 			cleaned = (i == eop);
 
+#ifdef __VMKLNX__
+			if (cleaned && buffer_info->skb) {
+#else
 			if (cleaned) {
+#endif
 				struct sk_buff *skb = buffer_info->skb;
 #ifdef NETIF_F_TSO
 				unsigned int segs, bytecount;

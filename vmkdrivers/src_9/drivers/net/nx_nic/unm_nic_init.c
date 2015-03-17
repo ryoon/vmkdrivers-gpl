@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2003 - 2009 NetXen, Inc.
+ * Copyright (C) 2009 - QLogic Corporation.
  * All rights reserved.
  * 
  * This program is free software; you can redistribute it and/or
@@ -20,22 +21,16 @@
  * The full GNU General Public License is included in this distribution
  * in the file called LICENSE.
  * 
- * Contact Information:
- * licensing@netxen.com
- * NetXen, Inc.
- * 18922 Forge Drive
- * Cupertino, CA 95014
  */
 /*
  * Source file for NIC routines to initialize the Phantom Hardware
  *
- * $Id: //depot/vmkdrivers/bfg-main-stage/src_9/drivers/net/nx_nic/unm_nic_init.c#2 $
+ * $Id: unm_nic_init.c,v 1.4 2012/04/12 10:49:19 narender Exp $
  *
  */
 #include <linux/netdevice.h>
 #include <linux/delay.h>
 #include <linux/pci.h>
-#include "queue.h"
 #include "unm_nic.h"
 #include "unm_nic_hw.h"
 #include "nic_cmn.h"
@@ -44,16 +39,11 @@
 #include "nic_phan_reg.h"
 #include "unm_version.h"
 #include "unm_brdcfg.h"
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,4,28)
 #include <linux/firmware.h>
-#endif
-#if (defined(NX_FUSED_FW) || defined(ESX_3X_COS))
-#include "p2_nx_fw_hdr.h"
 #include "p3_cut_thru_nx_fw_hdr.h"
 #include "p3_legacy_nx_fw_hdr.h"
-#endif
 
-
+#define HP_CLOCK_FIX_FW NX_FW_VERSION(4, 0, 554)
 
 struct crb_addr_pair {
         long addr;
@@ -136,27 +126,27 @@ crb_addr_transform_setup(void)
 unsigned long
 decode_crb_addr (unsigned long addr)
 {
-        int i;
-        unsigned long base_addr, offset, pci_base;
+	int i;
+	unsigned long base_addr, offset, pci_base;
 
 	if (!crb_table_initialized)
-        	crb_addr_transform_setup();
+		crb_addr_transform_setup();
 
-        pci_base = ADDR_ERROR;
-        base_addr = addr & 0xfff00000;
-        offset = addr & 0x000fffff;
+	pci_base = ADDR_ERROR;
+	base_addr = addr & 0xfff00000;
+	offset = addr & 0x000fffff;
 
-        for (i=0; i< MAX_CRB_XFORM; i++) {
-                if (crb_addr_xform[i] == base_addr) {
-                        pci_base = i << 20;
-                        break;
-                }
-        }
-        if (pci_base == ADDR_ERROR) {
-                return pci_base;
-        } else {
-                return (pci_base + offset);
-        }
+	for (i=0; i< MAX_CRB_XFORM; i++) {
+		if (crb_addr_xform[i] == base_addr) {
+			pci_base = i << 20;
+			break;
+		}
+	}
+	if (pci_base == ADDR_ERROR) {
+		return pci_base;
+	} else {
+		return (pci_base + offset);
+	}
 }
 
 unsigned long
@@ -174,34 +164,30 @@ static long rom_lock_timeout= 10000;
 int
 rom_lock(unm_adapter *adapter)
 {
-    int i;
-    int done = 0, timeout = 0;
+	int i;
+	int done = 0, timeout = 0;
 
-    while (!done) {
-        /* acquire semaphore2 from PCI HW block */
-        done = NXRD32(adapter, UNM_PCIE_REG(PCIE_SEM2_LOCK));
-        if (done == 1)
-            break;
-        if (timeout >= rom_lock_timeout) {
-            return -1;
-        }
-        timeout++;
-        /*
-         * Yield CPU
-         */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,0)
-        if(!in_atomic())
-                schedule();
-        else {
-#endif
-                for(i = 0; i < 20; i++)
-                        cpu_relax();    /*This a nop instr on i386*/
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,0)
-        }
-#endif
-    }
-    NXWR32(adapter, UNM_ROM_LOCK_ID, ROM_LOCK_DRIVER);
-    return 0;
+	while (!done) {
+		/* acquire semaphore2 from PCI HW block */
+		done = NXRD32(adapter, UNM_PCIE_REG(PCIE_SEM2_LOCK));
+		if (done == 1)
+			break;
+		if (timeout >= rom_lock_timeout) {
+			return -1;
+		}
+		timeout++;
+		/*
+		 * Yield CPU
+		 */
+		if(!in_atomic())
+			schedule();
+		else {
+			for(i = 0; i < 20; i++)
+				cpu_relax();    /*This a nop instr on i386*/
+		}
+	}
+	NXWR32(adapter, UNM_ROM_LOCK_ID, ROM_LOCK_DRIVER);
+	return 0;
 }
 
 int
@@ -256,6 +242,44 @@ do_rom_fast_read (unm_adapter *adapter, int addr, int *valp)
         *valp = NXRD32(adapter, UNM_ROMUSB_ROM_RDATA);
         return 0;
 }
+
+static int do_rom_fast_read_words(unm_adapter *adapter, int addr,
+                  u8 *bytes, size_t size)
+{
+    int addridx;
+    int ret = 0;
+
+    for (addridx = addr; addridx < (addr + size); addridx += 4) {
+        int v;
+        ret = do_rom_fast_read(adapter, addridx, &v);
+        if (ret != 0)
+            break;
+
+        if (bytes) {
+            *(__le32 *)bytes = cpu_to_le32(v);
+            bytes += 4;
+        }
+    }
+
+    return ret;
+}
+
+int
+nx_nic_rom_fast_read_words(unm_adapter *adapter, int addr,
+                u8 *bytes, size_t size)
+{
+    int ret;
+
+    ret = rom_lock(adapter);
+    if (ret < 0)
+        return ret;
+
+    ret = do_rom_fast_read_words(adapter, addr, bytes, size);
+
+    rom_unlock(adapter);
+    return ret;
+}
+
 
 int
 rom_fast_read (struct unm_adapter_s *adapter, int addr, int *valp)
@@ -563,208 +587,184 @@ void nx_msleep(unsigned long msecs)
 
 int pinit_from_rom(unm_adapter *adapter, int verbose)
 {
-        int addr, val,status;
-        int i ;
-        int init_delay=0;
-        struct crb_addr_pair *buf;
-        unsigned long off;
-        unsigned offset, n;
+	int addr, val,status;
+	int i ;
+	int init_delay=0;
+	struct crb_addr_pair *buf;
+	unsigned long off;
+	unsigned offset, n;
 
-        struct crb_addr_pair {
-                long addr;
-                long data;
-        };
+	struct crb_addr_pair {
+		long addr;
+		long data;
+	};
 
-        // resetall
-        status = unm_nic_get_board_info(adapter);
-        if (status)
-                printk ("%s: pinit_from_rom: Error getting board info\n",
+	// resetall
+	status = unm_nic_get_board_info(adapter);
+	if (status)
+		printk ("%s: pinit_from_rom: Error getting board info\n",
 				unm_nic_driver_name);
 
 	rom_lock(adapter);	/* Grab the lock so that no one can read
-				 * flash when we reset the chip. */
+						 * flash when we reset the chip. */
 	NXWR32(adapter, UNM_ROMUSB_GLB_SW_RESET, 0xffffffff);
 	rom_unlock(adapter);	/* Just in case it was held when we
-				 * reset the chip */
+							 * reset the chip */
 
-        if (verbose) {
-                int val;
-                if (rom_fast_read(adapter, 0x4008, &val) == 0)
-                        printk("ROM board type: 0x%08x\n", val);
-                else
-                        printk("Could not read board type\n");
-                if (rom_fast_read(adapter, 0x400c, &val) == 0)
-                        printk("ROM board  num: 0x%08x\n", val);
-                else
-                        printk("Could not read board number\n");
-                if (rom_fast_read(adapter, 0x4010, &val) == 0)
-                        printk("ROM chip   num: 0x%08x\n", val);
-                else
-                        printk("Could not read chip number\n");
-        }
-
-	if (NX_IS_REVISION_P3(adapter->ahw.revision_id)) {
-		if (rom_fast_read(adapter, 0, &n) != 0 || n != 0xcafecafeUL ||
-		    rom_fast_read(adapter, 4, &n) != 0) {
-			printk("NX_NIC: ERROR Reading crb_init area: "
-			       "n: %08x\n", n);
-			return -1;
-		}
-
-		offset = n & 0xffffU;
-		n = (n >> 16) & 0xffffU;
-	} else {
-		if (rom_fast_read(adapter, 0, &n) == 0 &&
-		    (n & 0x800000000ULL)) {
-			printk("NX_NIC: ERROR Reading crb_init area: "
-			       "n: %08x\n", n);
-			return -1;
-		}
-		offset = 1;
-		n &= ~0x80000000U;
+	if (verbose) {
+		int val;
+		if (rom_fast_read(adapter, 0x4008, &val) == 0)
+			printk("ROM board type: 0x%08x\n", val);
+		else
+			printk("Could not read board type\n");
+		if (rom_fast_read(adapter, 0x400c, &val) == 0)
+			printk("ROM board  num: 0x%08x\n", val);
+		else
+			printk("Could not read board number\n");
+		if (rom_fast_read(adapter, 0x4010, &val) == 0)
+			printk("ROM chip   num: 0x%08x\n", val);
+		else
+			printk("Could not read chip number\n");
 	}
 
-        if (n  >= 1024) {
-                printk("%s: %s:n=0x%x Error! UNM card flash not initialized.\n",
-                        unm_nic_driver_name,__FUNCTION__, n);
-                return -1;
-        }
-        if (verbose)
-                printk("%s: %d CRB init values found in ROM.\n",
-                        unm_nic_driver_name, n);
+	if (rom_fast_read(adapter, 0, &n) != 0 || n != 0xcafecafeUL ||
+			rom_fast_read(adapter, 4, &n) != 0) {
+		printk("NX_NIC: ERROR Reading crb_init area: "
+				"n: %08x\n", n);
+		return -1;
+	}
 
-        buf = kmalloc(n*sizeof(struct crb_addr_pair), GFP_KERNEL);
-        if (buf==NULL) {
-                printk("%s: pinit_from_rom: Unable to malloc memory.\n",
-                        unm_nic_driver_name);
-                return -1;
-        }
-        for (i=0; i< n; i++) {
-                if (rom_fast_read(adapter, 8*i + 4*offset, &val) != 0 ||
-                    rom_fast_read(adapter, 8*i + 4*offset + 4, &addr) != 0) {
-                        kfree(buf);
-                        return -1;
-                }
+	offset = n & 0xffffU;
+	n = (n >> 16) & 0xffffU;
 
-                buf[i].addr=addr;
-                buf[i].data=val;
+	if (n  >= 1024) {
+		printk("%s: %s:n=0x%x Error! UNM card flash not initialized.\n",
+				unm_nic_driver_name,__FUNCTION__, n);
+		return -1;
+	}
+	if (verbose)
+		printk("%s: %d CRB init values found in ROM.\n",
+				unm_nic_driver_name, n);
 
-                if (verbose)
-                        printk("%s: PCI:     0x%08x == 0x%08x\n",
-                               unm_nic_driver_name,
-                               (unsigned int)decode_crb_addr(
-                                        (unsigned long)addr), val);
-        }
-
-        for (i=0; i< n; i++) {
-                off = decode_crb_addr((unsigned long)buf[i].addr) +
-                        UNM_PCI_CRBSPACE;
-                /* skipping cold reboot MAGIC */
-                if (off == UNM_CAM_RAM(0x1fc)) {
-                        continue;
-                }
-
-		if (NX_IS_REVISION_P3(adapter->ahw.revision_id)) {
-			/* do not reset PCI */
-			if (off == (ROMUSB_GLB + 0xbc)) {
-				continue;
-			}
-			if (off == (UNM_CRB_PEG_NET_1 + 0x18)) {
-				buf[i].data = 0x1020;
-			}
-			/* skip the function enable register */
-			if (off == UNM_PCIE_REG(PCIE_SETUP_FUNCTION)) {
-				continue;
-			}
-			if (off == UNM_PCIE_REG(PCIE_SETUP_FUNCTION2)) {
-				continue;
-			}
-                        if ((off & 0x0ff00000) == UNM_CRB_SMB) {
-                                continue;
-                        }
-#if 1
-			if ((off & 0x0ff00000) == UNM_CRB_DDR_NET) {
-				continue;
-			}
-#endif
+	buf = kmalloc(n*sizeof(struct crb_addr_pair), GFP_KERNEL);
+	if (buf==NULL) {
+		printk("%s: pinit_from_rom: Unable to malloc memory.\n",
+				unm_nic_driver_name);
+		return -1;
+	}
+	for (i=0; i< n; i++) {
+		if (rom_fast_read(adapter, 8*i + 4*offset, &val) != 0 ||
+				rom_fast_read(adapter, 8*i + 4*offset + 4, &addr) != 0) {
+			kfree(buf);
+			return -1;
 		}
 
-                if (off == ADDR_ERROR) {
-                        printk("%s: Err: Unknown addr: 0x%08lx\n",
-                               unm_nic_driver_name, buf[i].addr);
-                        continue;
-                }
+		buf[i].addr=addr;
+		buf[i].data=val;
 
-                /* After writing this register, HW needs time for CRB */
-                /* to quiet down (else crb_window returns 0xffffffff) */
-                if (off == UNM_ROMUSB_GLB_SW_RESET) {
-                        init_delay=1;
+		if (verbose)
+			printk("%s: PCI:     0x%08x == 0x%08x\n",
+					unm_nic_driver_name,
+					(unsigned int)decode_crb_addr(
+						(unsigned long)addr), val);
+	}
 
-			if (NX_IS_REVISION_P2(adapter->ahw.revision_id)) {
-				/* hold xdma in reset also */
-				buf[i].data = 0x8000ff;
-			}
-                }
+	for (i=0; i< n; i++) {
+		off = decode_crb_addr((unsigned long)buf[i].addr) +
+			UNM_PCI_CRBSPACE;
+		/* skipping cold reboot MAGIC */
+		if (off == UNM_CAM_RAM(0x1fc)) {
+			continue;
+		}
+
+		/* do not reset PCI */
+		if (off == (ROMUSB_GLB + 0xbc)) {
+			continue;
+		}
+		if (off == (UNM_CRB_PEG_NET_1 + 0x18)) {
+			buf[i].data = 0x1020;
+		}
+		/* skip the function enable register */
+		if (off == UNM_PCIE_REG(PCIE_SETUP_FUNCTION)) {
+			continue;
+		}
+		if (off == UNM_PCIE_REG(PCIE_SETUP_FUNCTION2)) {
+			continue;
+		}
+		if ((off & 0x0ff00000) == UNM_CRB_SMB) {
+			continue;
+		}
+		if ((off & 0x0ff00000) == UNM_CRB_DDR_NET) {
+			continue;
+		}
+
+		if (off == ADDR_ERROR) {
+			printk("%s: Err: Unknown addr: 0x%08lx\n",
+					unm_nic_driver_name, buf[i].addr);
+			continue;
+		}
+
+		/* After writing this register, HW needs time for CRB */
+		/* to quiet down (else crb_window returns 0xffffffff) */
+		if (off == UNM_ROMUSB_GLB_SW_RESET) {
+			init_delay=1;
+		}
 
 		NXWR32(adapter, off, buf[i].data);
-                
+
 		if (init_delay==1) {
 			nx_msleep(1000);
 			init_delay=0;
-                }
+		}
 
-                nx_msleep(1);
-        }
-        kfree(buf);
-
-        // disable_peg_cache_all
-        // unreset_net_cache
-	if (NX_IS_REVISION_P2(adapter->ahw.revision_id)) {
-		val = NXRD32(adapter, UNM_ROMUSB_GLB_SW_RESET);
-		NXWR32(adapter, UNM_ROMUSB_GLB_SW_RESET, (val & 0xffffff0f));
+		nx_msleep(1);
 	}
+	kfree(buf);
 
-        // p2dn replyCount
-        NXWR32(adapter, UNM_CRB_PEG_NET_D+0xec, 0x1e);
-        // disable_peg_cache 0
-        NXWR32(adapter, UNM_CRB_PEG_NET_D+0x4c,8);
-        // disable_peg_cache 1
-        NXWR32(adapter, UNM_CRB_PEG_NET_I+0x4c,8);
+	// p2dn replyCount
+	NXWR32(adapter, UNM_CRB_PEG_NET_D+0xec, 0x1e);
+	// disable_peg_cache 0
+	NXWR32(adapter, UNM_CRB_PEG_NET_D+0x4c,8);
+	// disable_peg_cache 1
+	NXWR32(adapter, UNM_CRB_PEG_NET_I+0x4c,8);
 
-        // peg_clr_all
-        // peg_clr 0
-        NXWR32(adapter, UNM_CRB_PEG_NET_0+0x8,0);
-        NXWR32(adapter, UNM_CRB_PEG_NET_0+0xc,0);
-        // peg_clr 1
-        NXWR32(adapter, UNM_CRB_PEG_NET_1+0x8,0);
-        NXWR32(adapter, UNM_CRB_PEG_NET_1+0xc,0);
-        // peg_clr 2
-        NXWR32(adapter, UNM_CRB_PEG_NET_2+0x8,0);
-        NXWR32(adapter, UNM_CRB_PEG_NET_2+0xc,0);
-        // peg_clr 3
-        NXWR32(adapter, UNM_CRB_PEG_NET_3+0x8,0);
-        NXWR32(adapter, UNM_CRB_PEG_NET_3+0xc,0);
+	// peg_clr_all
+	// peg_clr 0
+	NXWR32(adapter, UNM_CRB_PEG_NET_0+0x8,0);
+	NXWR32(adapter, UNM_CRB_PEG_NET_0+0xc,0);
+	// peg_clr 1
+	NXWR32(adapter, UNM_CRB_PEG_NET_1+0x8,0);
+	NXWR32(adapter, UNM_CRB_PEG_NET_1+0xc,0);
+	// peg_clr 2
+	NXWR32(adapter, UNM_CRB_PEG_NET_2+0x8,0);
+	NXWR32(adapter, UNM_CRB_PEG_NET_2+0xc,0);
+	// peg_clr 3
+	NXWR32(adapter, UNM_CRB_PEG_NET_3+0x8,0);
+	NXWR32(adapter, UNM_CRB_PEG_NET_3+0xc,0);
 
-        return 0;
+	return 0;
 }
 
 
 int check_for_bad_spd(struct unm_adapter_s *adapter)
 {
 	u32 val = 0;
-
+	uint64_t cur_fn = (uint64_t) check_for_bad_spd;
 
 	val = NXRD32(adapter,
 			BOOT_LOADER_DIMM_STATUS) & NX_BOOT_LOADER_MN_ISSUE;
 	if (val & NX_PEG_TUNE_MN_SPD_ZEROED) {
 		nx_nic_print1(NULL,
 			"Memory DIMM SPD not programmed.  Assumed valid.\n");
+		NX_NIC_TRC_FN(adapter, cur_fn, 1);
 		return 1;
 	} else if (val) {
 		nx_nic_print1(NULL,
 			"Memory DIMM type incorrect.  Info:%08X.\n", val);
+		NX_NIC_TRC_FN(adapter, cur_fn, 2);
 		return 2;
 	}
+	NX_NIC_TRC_FN(adapter, cur_fn, 0);
 	return 0;
 }
 
@@ -776,8 +776,10 @@ int nx_phantom_init(struct unm_adapter_s *adapter, int pegtune_val)
 {
 	u32 val = 0;
 	int retries = 60;
+	uint64_t cur_fn = (uint64_t) nx_phantom_init;
 
 	if (!pegtune_val) {
+		NX_NIC_TRC_FN(adapter, cur_fn, pegtune_val);
 		do {
 			val = NXRD32(adapter,
 					CRB_CMDPEG_STATE);
@@ -785,13 +787,7 @@ int nx_phantom_init(struct unm_adapter_s *adapter, int pegtune_val)
 			    (val == PHAN_INITIALIZE_ACK))
 				return 0;
 
-#if ((LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,7)) || defined(ESX))
 			msleep(500);
-#else
-			set_current_state(TASK_UNINTERRUPTIBLE);
-			schedule_timeout(500);
-#endif
-
 
 		} while (--retries);
 
@@ -802,10 +798,12 @@ int nx_phantom_init(struct unm_adapter_s *adapter, int pegtune_val)
 					UNM_ROMUSB_GLB_PEGTUNE_DONE);
 			printk(KERN_WARNING "%s: init failed, "
 				"pegtune_val = %x\n", __FUNCTION__, pegtune_val);
+			NX_NIC_TRC_FN(adapter, cur_fn, pegtune_val);
 			return -1;
 		}
 	}
 
+	NX_NIC_TRC_FN(adapter, cur_fn, 0);
 	return 0;
 }
 
@@ -818,46 +816,37 @@ load_from_flash(struct unm_adapter_s *adapter)
 	u64 data;
 	u32 high, low;
 	size = (IMAGE_START - BOOTLD_START)/8;
+	int rv = 0;
 
-	if (NX_IS_REVISION_P2(adapter->ahw.revision_id)) {
-		read_lock(&adapter->adapter_lock);
-		UNM_NIC_PCI_WRITE_32(1, CRB_NORMALIZE(adapter,
-						      UNM_ROMUSB_GLB_CAS_RST));
-		read_unlock(&adapter->adapter_lock);
-	}
 	for (i = 0; i < size; i++) {
 		if (rom_fast_read(adapter, flashaddr, (int *)&low) != 0) {
-                        DPRINTK(1,ERR, "Error in rom_fast_read(). Will skip"
-                                "loading flash image\n");
-                        return -1;
-                }
-                if (rom_fast_read(adapter, flashaddr + 4, (int *)&high) != 0) {
-                        DPRINTK(1,ERR, "Error in rom_fast_read(). Will skip"
-                                "loading flash image\n");
-                        return -1;
-                }
+			DPRINTK(1,ERR, "Error in rom_fast_read(). Will skip"
+					"loading flash image\n");
+			return -1;
+		}
+		if (rom_fast_read(adapter, flashaddr + 4, (int *)&high) != 0) {
+			DPRINTK(1,ERR, "Error in rom_fast_read(). Will skip"
+					"loading flash image\n");
+			return -1;
+		}
 		data = ((u64)high << 32 ) | low ;
-                adapter->unm_nic_pci_mem_write(adapter, memaddr, &data, 8);
-                flashaddr += 8;
-                memaddr   += 8;
+		rv = adapter->unm_nic_pci_mem_write(adapter, memaddr, &data, 8);
+		if(rv != 0) {
+			return rv;
+		}
+		flashaddr += 8;
+		memaddr   += 8;
 		if(i%0x1000==0){
 			nx_msleep(1);
 		}
-        }
+	}
 	udelay(100);
 	read_lock(&adapter->adapter_lock);
 
-	if (NX_IS_REVISION_P3(adapter->ahw.revision_id)) {
-		NXWR32(adapter, UNM_ROMUSB_GLB_SW_RESET, 
-						0x80001d);
-	} else {
-	       UNM_NIC_PCI_WRITE_32(0x3fff, CRB_NORMALIZE(adapter,
-						UNM_ROMUSB_GLB_CHIP_CLK_CTRL));
-	       UNM_NIC_PCI_WRITE_32(0, CRB_NORMALIZE(adapter,
-						UNM_ROMUSB_GLB_CAS_RST));
-       }
-       read_unlock(&adapter->adapter_lock);
-       return 0;
+	NXWR32(adapter, UNM_ROMUSB_GLB_SW_RESET, 0x80001d);
+
+	read_unlock(&adapter->adapter_lock);
+	return 0;
 }
 
 /*
@@ -901,30 +890,23 @@ static inline int nx_fw_hw_version_check(nic_version_t *version)
         return -1;
 }
 
-#if (defined(NX_FUSED_FW) || defined(ESX_3X_COS))
-
 static int nx_request_fw(struct unm_adapter_s *adapter,
 		__uint32_t fwtype, char *fname)
 {
 	struct nx_firmware *nx_fw = &adapter->nx_fw;
 	switch(fwtype) {
-		case NX_P2_MN_TYPE_ROMIMAGE :
-			nx_fw->bootld = (uint64_t *)&p2_bootld;
-			nx_fw->fw_img = (uint64_t *)&p2_fw_img;
-			nx_fw->size = sizeof(p2_fw_img);
-			nx_fw->fw_version = P2_FUSED_FW_VER;
-			break;
-
 		case NX_P3_MN_TYPE_ROMIMAGE :
 			nx_fw->bootld = (uint64_t *)&p3_legacy_bootld;
 			nx_fw->fw_img = (uint64_t *)&p3_legacy_fw_img;
 			nx_fw->size = sizeof(p3_legacy_fw_img);
+			adapter->bootld_size = sizeof(p3_legacy_bootld);
 			nx_fw->fw_version = P3_LEGACY_FUSED_FW_VER;
 			break;
 		case NX_P3_CT_TYPE_ROMIMAGE :
 			nx_fw->bootld = (uint64_t *)&p3_cut_thru_bootld;
 			nx_fw->fw_img = (uint64_t *)&p3_cut_thru_fw_img;
 			nx_fw->size = sizeof(p3_cut_thru_fw_img);
+			adapter->bootld_size = sizeof(p3_cut_thru_bootld);
 			nx_fw->fw_version = P3_CUT_THRU_FUSED_FW_VER;
 			break;
 		default                    :
@@ -944,7 +926,7 @@ static inline void fwfile_read_version(const struct nx_firmware *fw,
 		__uint32_t offset,
 		nic_version_t *version)
 {
-	__uint32_t      file_ver = 0;
+	__uint32_t      file_ver;
 	if(offset == FW_VERSION_OFFSET)
 		file_ver = fw->fw_version;
 	else if (offset == FW_BIOS_VERSION_OFFSET)
@@ -954,57 +936,6 @@ static inline void fwfile_read_version(const struct nx_firmware *fw,
 	version->minor = (file_ver >> 8) & 0xff;
 	version->sub   = file_ver >> 16;
 }
-#else
-static int nx_request_fw(struct unm_adapter_s *adapter,
-		__uint32_t fwtype, char *fname)
-{
-	const struct firmware   *fw = NULL;
-	int                     rv = 0;
-	rv = request_firmware(&fw, fname, &(adapter->pdev->dev));
-	if (rv < 0) {
-		return rv;
-	}
-
-	if (fw->size <  0x3fffff) {
-		nx_nic_print4(NULL, "File firmware[%s] size mismatch\n",
-				fname);
-		release_firmware(fw);
-		adapter->nx_fw.fw = NULL;
-		rv = -1;
-		return rv;
-	}
-	adapter->nx_fw.fw = fw;
-	adapter->nx_fw.bootld =  (uint64_t*)(adapter->nx_fw.fw->data + BOOTLD_START);
-	adapter->nx_fw.fw_img =  (uint64_t*)(adapter->nx_fw.fw->data + IMAGE_START);
-	adapter->nx_fw.size =    *((uint32_t *) &adapter->nx_fw.fw->data[FW_SIZE_OFFSET]);
-	adapter->nx_fw.file_fw_state = NX_FILE_FW_READ;
-	return 0;
-}
-
-void nx_release_fw(struct nx_firmware *nx_fw)
-{
-	if(nx_fw->fw) {
-		release_firmware(nx_fw->fw);
-        }
-	nx_fw->fw = NULL;
-	nx_fw->file_fw_state = NX_FILE_FW_RELEASED;
-}
-
-static inline void fwfile_read_version(const struct nx_firmware *nx_fw,
-		__uint32_t offset,
-		nic_version_t *version)
-{
-	__uint32_t      file_ver;
-
-	memcpy(&file_ver, (nx_fw->fw->data + offset), 4);
-	file_ver = cpu_to_le32(file_ver);
-	version->major = file_ver & 0xff;
-	version->minor = (file_ver >> 8) & 0xff;
-	version->sub   = file_ver >> 16;
-}
-
-
-#endif
 
 static int do_load_fw_file(struct unm_adapter_s *adapter,
 			    struct nx_firmware *nx_fw)
@@ -1013,27 +944,30 @@ static int do_load_fw_file(struct unm_adapter_s *adapter,
 	long	memaddr = BOOTLD_START;
 	long	imgaddr = IMAGE_START;
 	u64	data;
+	int	rv = 0;
 
-	size = IMAGE_START - BOOTLD_START;
+	size = adapter->bootld_size;
 
-	if (NX_IS_REVISION_P2(adapter->ahw.revision_id)) {
-		read_lock(&adapter->adapter_lock);
-		UNM_NIC_PCI_WRITE_32(1, CRB_NORMALIZE(adapter,
-						      UNM_ROMUSB_GLB_CAS_RST));
-		read_unlock(&adapter->adapter_lock);
-	}
+	UNM_ROUNDUP(size, 8);
 	for (i = 0; i < (size/8); i++) {
 		data = nx_fw->bootld[i]; //read 8 bytes as an u64
 		data = cpu_to_le64(data);
-		adapter->unm_nic_pci_mem_write(adapter, memaddr, &data, 8);
+		rv = adapter->unm_nic_pci_mem_write(adapter, memaddr, &data, 8);
+		if(rv != 0) {
+			return rv;
+		}
 		memaddr   += 8;
 	}
+
 	size = nx_fw->size;//read 4 bytes into size
 	size = cpu_to_le32(size);
 	for(i = 0; i < (size/8); i++) {
 		data = nx_fw->fw_img[i];
 		data = cpu_to_le64(data);
-		adapter->unm_nic_pci_mem_write(adapter, imgaddr, &data, 8);
+		rv = adapter->unm_nic_pci_mem_write(adapter, imgaddr, &data, 8);
+		if(rv != 0) {
+			return rv;
+		}
 		imgaddr += 8;
 	}
 	//The size of firmware may not be a multiple of 8
@@ -1041,21 +975,18 @@ static int do_load_fw_file(struct unm_adapter_s *adapter,
 	if(size){
 		data = nx_fw->fw_img[i];
 		data = cpu_to_le64(data);
-		adapter->unm_nic_pci_mem_write(adapter, imgaddr, &data, 8);
+		rv = adapter->unm_nic_pci_mem_write(adapter, imgaddr, &data, 8);
+		if(rv != 0) {
+			return rv;
+		}
 	}
 	udelay(100);
 	read_lock(&adapter->adapter_lock);
 	NXWR32(adapter, UNM_CAM_RAM(0x1fc), UNM_BDINFO_MAGIC);
 
-	if (NX_IS_REVISION_P3(adapter->ahw.revision_id)) {
-		NXWR32(adapter, UNM_ROMUSB_GLB_SW_RESET,
-					     0x80001d);
-	} else {
-		UNM_NIC_PCI_WRITE_32(0x3fff, CRB_NORMALIZE(adapter,
-						UNM_ROMUSB_GLB_CHIP_CLK_CTRL));
-		UNM_NIC_PCI_WRITE_32(0, CRB_NORMALIZE(adapter,
-						UNM_ROMUSB_GLB_CAS_RST));
-	}
+	NXWR32(adapter, UNM_ROMUSB_GLB_SW_RESET,
+			0x80001d);
+
 	read_unlock(&adapter->adapter_lock);
 	return 0;
 }
@@ -1081,11 +1012,18 @@ static int nx_get_file_firmware(struct unm_adapter_s *adapter,
 	fwfile_read_version(nx_fw, FW_VERSION_OFFSET, version);
 	fwfile_read_version(nx_fw, FW_BIOS_VERSION_OFFSET, &file_bios_ver);
 
+	/* If file version is >= 4.0.554 */
 	if (NX_FW_VERSION(version->major, version->minor,
-			  version->sub) >= NX_FW_VERSION(4, 0, 222)) {
-#if (!defined (ESX) && !defined(ESX_3X_COS)) 
-		memcpy(&version->build, (nx_fw->fw->data + FW_BUILD_NUM_OFFSET), 4);
-#endif
+                          version->sub) >= HP_CLOCK_FIX_FW) {	
+		/* If flash version is < 4.0.554 */
+		if (NX_FW_VERSION(adapter->flash_ver.major, adapter->flash_ver.minor,
+		 	adapter->flash_ver.sub) < HP_CLOCK_FIX_FW) {
+			nx_nic_print3(NULL, "Incompatibility detected between driver and firmware version on flash \n"); 
+			nx_nic_print3(NULL, "This configuration is  not recommended \n");
+			nx_nic_print3(NULL, "Please update the firmware on flash immediately .\n");	
+			nx_release_fw(nx_fw);
+			return -1;
+		}
 	}
 
 	if (nx_fw_hw_version_check(version) == -1) {
@@ -1097,21 +1035,6 @@ static int nx_get_file_firmware(struct unm_adapter_s *adapter,
 		nx_release_fw(nx_fw);
 		return -1;
 	}
-#if (!defined (ESX) && !defined(ESX_3X_COS))
-	if (bios_ver->major != file_bios_ver.major ||
-	    bios_ver->minor != file_bios_ver.minor) {
-		nx_nic_print4(NULL, "Incompatible Flash BIOS[%u.%u.%u] for "
-			      "file FW[%s] version[%u.%u.%u:%u], "
-			      "BIOS[%u.%u.%u]\n",
-			      bios_ver->major, bios_ver->minor, bios_ver->sub,
-			      fname, version->major, version->minor,
-			      version->sub, version->build,
-			      file_bios_ver.major, file_bios_ver.minor,
-			      file_bios_ver.sub);
-		nx_release_fw(nx_fw);
-		return -1;
-	}
-#endif
 
 	nx_nic_print7(NULL, "File FW[%s] version[%u.%u.%u:%u], "
 		      "BIOS[%u.%u.%u]\n",
@@ -1140,10 +1063,12 @@ int load_fw(struct unm_adapter_s *adapter, int cmp_versions)
 {
 	int		rv = 0, flash = 0;
 	int		flash_compatible = 0;
-        nic_version_t	file_ver = {0};
-        nic_version_t	file_bios_ver;
+	nic_version_t	file_ver = {0};
+	nic_version_t	file_bios_ver;
 	unsigned int	mn_present;
 	__uint32_t	fwtype = NX_P3_CT_TYPE_ROMIMAGE;
+	__uint32_t rst;
+	uint64_t cur_fn = (uint64_t) load_fw;
 
 	struct nx_firmware *nx_fw = &adapter->nx_fw;
 
@@ -1151,112 +1076,98 @@ int load_fw(struct unm_adapter_s *adapter, int cmp_versions)
 		fwtype = adapter->fwtype;
 		fwfile_read_version(nx_fw, FW_VERSION_OFFSET, &file_ver);
 		fwfile_read_version(nx_fw, FW_BIOS_VERSION_OFFSET,
-				    &file_bios_ver);
+				&file_bios_ver);
 		nx_nic_print3(adapter, "Load stored FW\n");
+		NX_NIC_TRC_FN(adapter, cur_fn, nx_fw->file_fw_state);
 		goto do_load;
 	}
 
 	if (nx_fw_hw_version_check(&adapter->flash_ver) == 0) {
 		flash_compatible = 1;
+		NX_NIC_TRC_FN(adapter, cur_fn, flash_compatible);
 	}
 
 	nx_nic_print4(NULL, "Flash Version: Firmware[%u.%u.%u], "
-		      "BIOS[%u.%u.%u]\n",
-		      adapter->flash_ver.major, adapter->flash_ver.minor,
-		      adapter->flash_ver.sub,
-		      adapter->bios_ver.major, adapter->bios_ver.minor,
-		      adapter->bios_ver.sub);
+			"BIOS[%u.%u.%u]\n",
+			adapter->flash_ver.major, adapter->flash_ver.minor,
+			adapter->flash_ver.sub,
+			adapter->bios_ver.major, adapter->bios_ver.minor,
+			adapter->bios_ver.sub);
 
-	if ((cmp_versions == LOAD_FW_FROM_FLASH) ||
-			(adapter->ahw.boardcfg.board_type ==
-			 UNM_BRDTYPE_P2_SB31_10G_IMEZ)) {
+	if ((cmp_versions == LOAD_FW_FROM_FLASH)) {
 		flash = 1;
+		NX_NIC_TRC_FN(adapter, cur_fn, flash);
 		goto do_load;
 	}      
 
-/*	if (cmp_versions == LOAD_FW_FROM_FLASH) {
-                flash = 1;
-		goto do_load;
-        }
-*/
-
-	if (NX_IS_REVISION_P2(adapter->ahw.revision_id)) {
-		fwtype = NX_P2_MN_TYPE_ROMIMAGE;
-        } else if (cmp_versions != LOAD_FW_CUT_THROUGH) {
+	if (cmp_versions != LOAD_FW_CUT_THROUGH) {
 		// Checking for presence of MN
-		mn_present = NXRD32(adapter,
-						NX_PEG_TUNE_CAPABILITY);
+		mn_present = NXRD32(adapter, NX_PEG_TUNE_CAPABILITY);
 		if (mn_present & NX_PEG_TUNE_MN_PRESENT) {
 			fwtype = NX_P3_MN_TYPE_ROMIMAGE;
+			NX_NIC_TRC_FN(adapter, cur_fn, fwtype);
 		} else {
 			nx_nic_print4(NULL, "No memory on card. "
-				      "Load Cut through.\n");
+					"Load Cut through.\n");
 			fwtype = NX_P3_CT_TYPE_ROMIMAGE;
-			}
-        }
+			NX_NIC_TRC_FN(adapter, cur_fn, fwtype);
+		}
+	}
 
 	rv = nx_get_file_firmware(adapter, fwtype, &adapter->bios_ver, &file_ver);
 	if (!rv) {
 		if (cmp_versions == LOAD_FW_WITH_COMPARISON &&
-		    flash_compatible) {
+				flash_compatible) {
 			if (compare_fw_version(&file_ver,
-					       &adapter->flash_ver) < 0) {
-                        	flash = 1;
-                	}
-        	}
-        } else {
+						&adapter->flash_ver) < 0) {
+				flash = 1;
+				NX_NIC_TRC_FN(adapter, cur_fn, flash);
+			}
+		}
+	} else {
 		flash = 1;
-        }
+		NX_NIC_TRC_FN(adapter, cur_fn, flash);
+	}
 
 do_load:
-        NXWR32(adapter, CRB_CMDPEG_STATE, 0);
+	NXWR32(adapter, CRB_CMDPEG_STATE, 0);
 	pinit_from_rom(adapter, 0);
-        udelay(500);
+	udelay(500);
 
 	/* at this point, QM is in reset. This could be a problem if there are
 	 * incoming d* transition queue messages. QM/PCIE could wedge.
 	 * To get around this, QM is brought out of reset.
 	 */
-	if (NX_IS_REVISION_P3(adapter->ahw.revision_id)) {
-		__uint32_t rst;
+	rst = NXRD32(adapter,
+			UNM_ROMUSB_GLB_SW_RESET);
 
-		rst = NXRD32(adapter,
-					UNM_ROMUSB_GLB_SW_RESET);
-
-		/* unreset qm */
-		rst &= ~(1 << 28);
-		NXWR32(adapter, UNM_ROMUSB_GLB_SW_RESET,
-						rst);
-	}
+	/* unreset qm */
+	rst &= ~(1 << 28);
+	NXWR32(adapter, UNM_ROMUSB_GLB_SW_RESET,
+			rst);
 
 	if (flash) {
 		if (nx_fw->file_fw_state == NX_FILE_FW_READ)
 			nx_release_fw(nx_fw);
 		if (!flash_compatible) {
 			nx_nic_print3(NULL, "Flash version[%u.%u.%u] is "
-				      "incompatible with the driver.\n",
-				      adapter->flash_ver.major,
-				      adapter->flash_ver.minor,
-				      adapter->flash_ver.sub);
+					"incompatible with the driver.\n",
+					adapter->flash_ver.major,
+					adapter->flash_ver.minor,
+					adapter->flash_ver.sub);
 			adapter->driver_mismatch = 1;
+			NX_NIC_TRC_FN(adapter, cur_fn, flash_compatible);
 		}
 		nx_nic_print4(NULL, "Loading the firmware from flash.\n");
-                load_from_flash(adapter);
-		return 0;
-        } else {
-#if (!defined (ESX) && !defined(ESX_3X_COS))		
-		nx_nic_print4(NULL, "File FW[%s] "
-			      "version[%u.%u.%u:%u]\n",
-			      ((char *[])NX_ROMIMAGE_NAME_ARRAY)[fwtype],
-			      file_ver.major, file_ver.minor, file_ver.sub,
-			      file_ver.build);
-#else
+		rv = load_from_flash(adapter);
+		NX_NIC_TRC_FN(adapter, cur_fn, rv);
+		return rv;
+	} else {
 		nx_nic_print4(NULL, "Loading firmware from file , version = %u.%u.%u\n",
 				file_ver.major, file_ver.minor, file_ver.sub);
-#endif
 		rv = do_load_fw_file(adapter, &adapter->nx_fw);
 		adapter->fwtype = fwtype;
+		NX_NIC_TRC_FN(adapter, cur_fn, rv);
 		return (rv);
-        }
-
+	}
 }

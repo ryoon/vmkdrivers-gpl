@@ -1,7 +1,7 @@
 /*******************************************************************************
 
   Intel 10 Gigabit PCI Express Linux driver
-  Copyright(c) 1999 - 2010 Intel Corporation.
+  Copyright(c) 1999 - 2011 Intel Corporation.
 
   This program is free software; you can redistribute it and/or modify it
   under the terms and conditions of the GNU General Public License,
@@ -29,6 +29,7 @@
 #include "ixgbe.h"
 #include "ixgbe_cna.h"
 #include "ixgbe_vmdq.h"
+#include <scsi/libfcoe.h>
 
 static int ixgbe_cna_open(struct net_device *cnadev)
 {
@@ -68,7 +69,8 @@ int ixgbe_cna_enable(struct ixgbe_adapter *adapter)
 	struct net_device *cnadev;
 	struct net_device *netdev;
 	int i, err;
-
+	u64 wwpn;
+	u64 wwnn;
 	u16 device_caps;
 
 	/*
@@ -107,18 +109,51 @@ int ixgbe_cna_enable(struct ixgbe_adapter *adapter)
 	cnadev->mtu = netdev->mtu;
 	cnadev->pdev = netdev->pdev;
 	cnadev->gso_max_size = GSO_MAX_SIZE;
-#ifdef __VMKLNX__
-	cnadev->features = netdev->features | NETIF_F_CNA |
-                        NETIF_F_HW_VLAN_FILTER;
-#else
-   cnadev->features = netdev->features | NETIF_F_CNA;
-#endif /*__VMKLNX__*/
+	cnadev->features = netdev->features | NETIF_F_CNA | NETIF_F_HW_VLAN_FILTER;
 
 	/* set the MAC address to SAN mac address */
 	if (ixgbe_validate_mac_addr(adapter->hw.mac.san_addr) == 0)
 		memcpy(cnadev->dev_addr,
 		       adapter->hw.mac.san_addr,
 		       cnadev->addr_len);
+
+	/* ESX does not support net_dev_ops. As a result there is no way
+	   for the fcoe module to accurately obtain WWPN and WWNN info
+	   from ixgbe without resorting to default prefix info.
+
+	   Currently the cnadev->perm_addr is not used by ESX. Compute
+	   and store both the WWPN and WWNN into this field for use by
+	   the fcoe driver for Intel adapters
+	 */
+
+	if (adapter->hw.mac.wwpn_prefix != 0xffff) {
+	        wwpn = ((u64) adapter->hw.mac.wwpn_prefix << 48) |
+	               ((u64) cnadev->dev_addr[0] << 40) |
+	               ((u64) cnadev->dev_addr[1] << 32) |
+	               ((u64) cnadev->dev_addr[2] << 24) |
+	               ((u64) cnadev->dev_addr[3] << 16) |
+	               ((u64) cnadev->dev_addr[4] << 8)  |
+	               ((u64) cnadev->dev_addr[5]);
+	        memcpy(cnadev->perm_addr, &wwpn, WWN_LENGTH_BYTES);
+	} else {
+	        cnadev->perm_addr[0] = 0x0;
+	        cnadev->perm_addr[1] = '\0';
+	}
+
+	if (adapter->hw.mac.wwnn_prefix != 0xffff) {
+	        wwnn = ((u64) adapter->hw.mac.wwnn_prefix << 48) |
+	               ((u64) cnadev->dev_addr[0] << 40) |
+	               ((u64) cnadev->dev_addr[1] << 32) |
+	               ((u64) cnadev->dev_addr[2] << 24) |
+	               ((u64) cnadev->dev_addr[3] << 16) |
+	               ((u64) cnadev->dev_addr[4] << 8)  |
+	               ((u64) cnadev->dev_addr[5]);
+	        memcpy((cnadev->perm_addr + WWN_LENGTH_BYTES), &wwnn, WWN_LENGTH_BYTES);
+	        cnadev->perm_addr[16] = '\0';
+	} else {
+	        cnadev->perm_addr[0] = 0x0;
+	        cnadev->perm_addr[1] = '\0';
+	}
 
 	if (adapter->hw.mac.type == ixgbe_mac_82599EB) {
 		if (adapter->flags & IXGBE_FLAG_FCOE_ENABLED) {
@@ -154,22 +189,21 @@ err_register:
 err_alloc_etherdev:
 	DPRINTK(PROBE, INFO, "CNA cannot be enabled on %s\n", netdev->name);
 	adapter->flags2 &= ~IXGBE_FLAG2_CNA_ENABLED;
+	adapter->flags &= ~IXGBE_FLAG_FCOE_ENABLED;
+	adapter->ring_feature[RING_F_FCOE].indices = 0;
 	return err;
 }
 
 void ixgbe_cna_disable(struct ixgbe_adapter *adapter)
 {
-       adapter->flags2 &= ~IXGBE_FLAG2_CNA_ENABLED;
-       adapter->flags &= ~IXGBE_FLAG_FCOE_ENABLED;
-       adapter->ring_feature[RING_F_FCOE].indices = 0;
-       adapter->num_tx_cna_queues = 0;
-       adapter->num_rx_cna_queues = 0;
-
-       if (adapter->cnadev) {
+	adapter->flags2 &= ~IXGBE_FLAG2_CNA_ENABLED;
+	adapter->flags &= ~IXGBE_FLAG_FCOE_ENABLED;
+	adapter->ring_feature[RING_F_FCOE].indices = 0;
+       
+	if (adapter->cnadev) {
 		unregister_netdev(adapter->cnadev);
 		DPRINTK(PROBE, INFO, "CNA pseudo device unregistered %s\n",
-                       adapter->cnadev->name);
-    
+			adapter->cnadev->name);
 		free_netdev(adapter->cnadev);
 		adapter->cnadev = NULL;
 	}

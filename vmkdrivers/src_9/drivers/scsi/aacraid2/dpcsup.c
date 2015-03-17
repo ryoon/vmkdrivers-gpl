@@ -125,13 +125,19 @@ unsigned int aac_response_normal(struct aac_queue * q)
 			fib->callback(fib->callback_data, fib);
 		} else {
 			unsigned long flagv;
+			int complete = 0;
 			spin_lock_irqsave(&fib->event_lock, flagv);
-			if (!fib->done)
+			if (fib->done == 2) {
+				dprintk((KERN_INFO "complete fib with pending wait status\n"));
 				fib->done = 1;
-			up(&fib->event_wait);
+				complete = 1;
+			} else {
+				fib->done = 1;
+				up(&fib->event_wait);
+			}
 			spin_unlock_irqrestore(&fib->event_lock, flagv);
 			FIB_COUNTER_INCREMENT(aac_config.NormalRecved);
-			if (fib->done == 2) {
+			if (complete) {
 				aac_fib_complete(fib);
 				aac_fib_free(fib);
 			}

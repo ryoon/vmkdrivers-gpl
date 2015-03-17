@@ -3,7 +3,7 @@
  * controllers
  *
  * This code is based on drivers/scsi/mpt2sas/mpt2_ctl.h
- * Copyright (C) 2007-2010  LSI Corporation
+ * Copyright (C) 2007-2013  LSI Corporation
  *  (mailto:DL-MPTFusionLinux@lsi.com)
  *
  * This program is free software; you can redistribute it and/or
@@ -71,6 +71,8 @@
  */
 #define MPT2IOCINFO	_IOWR(MPT2_MAGIC_NUMBER, 17, \
     struct mpt2_ioctl_iocinfo)
+#define MPT2PCICONFIG _IOWR(MPT2_MAGIC_NUMBER, 17, \
+    struct mpt2_ioctl_pci_config)
 #define MPT2COMMAND	_IOWR(MPT2_MAGIC_NUMBER, 20, \
     struct mpt2_ioctl_command)
 #ifdef CONFIG_COMPAT
@@ -141,13 +143,13 @@ struct mpt2_ioctl_pci_info {
 };
 
 
-#define MPT2_IOCTL_INTERFACE_SCSI	(0x00)
-#define MPT2_IOCTL_INTERFACE_FC		(0x01)
-#define MPT2_IOCTL_INTERFACE_FC_IP	(0x02)
-#define MPT2_IOCTL_INTERFACE_SAS	(0x03)
-#define MPT2_IOCTL_INTERFACE_SAS2	(0x04)
+#define MPT2_IOCTL_INTERFACE_SCSI		(0x00)
+#define MPT2_IOCTL_INTERFACE_FC			(0x01)
+#define MPT2_IOCTL_INTERFACE_FC_IP		(0x02)
+#define MPT2_IOCTL_INTERFACE_SAS		(0x03)
+#define MPT2_IOCTL_INTERFACE_SAS2		(0x04)
 #define MPT2_IOCTL_INTERFACE_SAS2_SSS6200	(0x05)
-#define MPT2_IOCTL_VERSION_LENGTH	(32)
+#define MPT2_IOCTL_VERSION_LENGTH		(32)
 
 /**
  * struct mpt2_ioctl_iocinfo - generic controller info
@@ -185,6 +187,17 @@ struct mpt2_ioctl_iocinfo {
 	struct mpt2_ioctl_pci_info pci_information;
 };
 
+/**
+ * struct mpt2_ioctl_pci_config - pci config space data
+ * @hdr - generic header
+ * @reserved - reserved
+ * @pci_info - Initial 256 bytes of pci config space
+ */
+struct mpt2_ioctl_pci_config {
+	struct mpt2_ioctl_header hdr;
+	uint32_t reserved[3];
+	uint8_t pci_info[256];
+};
 
 /* number of event log entries */
 #define MPT2SAS_CTL_EVENT_LOG_SIZE (50)
@@ -428,4 +441,6 @@ struct mpt2_diag_read_buffer {
 	uint32_t diagnostic_data[1];
 };
 
+/* Chunk size to use when doing a FW Download */
+#define FW_DL_CHUNK_SIZE 0x4000
 #endif /* MPT2SAS_CTL_H_INCLUDED */

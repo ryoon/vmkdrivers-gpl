@@ -1,6 +1,6 @@
-/* cnic_if.h: Broadcom CNIC core network driver.
+/* cnic_if.h: QLogic CNIC core network driver.
  *
- * Copyright (c) 2006 - 2009 Broadcom Corporation
+ * Copyright (c)   2009-2014 QLogic Corporation
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -12,22 +12,35 @@
 #ifndef CNIC_IF_H
 #define CNIC_IF_H
 
-#define CNIC_MODULE_VERSION	"1.10.2j.v50.9"
-#define CNIC_MODULE_RELDATE	"April 22, 2010"
+#include "bnx2x_mfw_req.h"
 
 #define CNIC_ULP_RDMA		0
 #define CNIC_ULP_ISCSI		1
-#define CNIC_ULP_L4		2
-#define MAX_CNIC_ULP_TYPE_EXT	2
-#define MAX_CNIC_ULP_TYPE	3
+#define CNIC_ULP_FCOE		2
+#define CNIC_ULP_L4		3
+#define MAX_CNIC_ULP_TYPE_EXT	3
+#define MAX_CNIC_ULP_TYPE	4
+
+#ifndef VLAN_TAG_PRESENT
+#define VLAN_TAG_PRESENT	0x1000
+#endif
 
 struct kwqe {
 	u32 kwqe_op_flag;
 
+#define KWQE_QID_SHIFT		8
 #define KWQE_OPCODE_MASK	0x00ff0000
 #define KWQE_OPCODE_SHIFT	16
 #define KWQE_FLAGS_LAYER_SHIFT	28
 #define KWQE_OPCODE(x)		((x & KWQE_OPCODE_MASK) >> KWQE_OPCODE_SHIFT)
+#define KWQE_LAYER_MASK		0x70000000
+#define KWQE_LAYER_SHIFT	28
+#define KWQE_FLAGS_LAYER_MASK_L2	(2<<28)
+#define KWQE_FLAGS_LAYER_MASK_L3	(3<<28)
+#define KWQE_FLAGS_LAYER_MASK_L4	(4<<28)
+#define KWQE_FLAGS_LAYER_MASK_L5_RDMA	(5<<28)
+#define KWQE_FLAGS_LAYER_MASK_L5_ISCSI	(6<<28)
+#define KWQE_FLAGS_LAYER_MASK_L5_FCOE	(7<<28)
 
 	u32 kwqe_info0;
 	u32 kwqe_info1;
@@ -62,6 +75,7 @@ struct kcqe {
 		#define KCQE_FLAGS_LAYER_MASK_L4	(4<<28)
 		#define KCQE_FLAGS_LAYER_MASK_L5_RDMA	(5<<28)
 		#define KCQE_FLAGS_LAYER_MASK_L5_ISCSI	(6<<28)
+		#define KCQE_FLAGS_LAYER_MASK_L5_FCOE	(7<<28)
 		#define KCQE_FLAGS_NEXT 		(1<<31)
 		#define KCQE_FLAGS_OPCODE_MASK		(0xff<<16)
 		#define KCQE_FLAGS_OPCODE_SHIFT		(16)
@@ -72,9 +86,12 @@ struct kcqe {
 #define MAX_CNIC_CTL_DATA	64
 #define MAX_DRV_CTL_DATA	64
 
-#define CNIC_CTL_STOP_CMD		1
-#define CNIC_CTL_START_CMD		2
-#define CNIC_CTL_COMPLETION_CMD		3
+#define CNIC_CTL_STOP_CMD			1
+#define CNIC_CTL_START_CMD			2
+#define CNIC_CTL_COMPLETION_CMD			3
+#define CNIC_CTL_STOP_ISCSI_CMD			4
+#define CNIC_CTL_FCOE_STATS_GET_CMD		5
+#define CNIC_CTL_ISCSI_STATS_GET_CMD		6
 
 #define DRV_CTL_IO_WR_CMD		0x101
 #define DRV_CTL_IO_RD_CMD		0x102
@@ -88,10 +105,18 @@ struct kcqe {
 #define DRV_CTL_COMP_OOO_TX_PKTS	0x10a
 #define DRV_CTL_REUSE_OOO_PKT		0x10b
 #define DRV_CTL_RET_L2_SPQ_CREDIT_CMD	0x10c
-
+#define DRV_CTL_ISCSI_STOPPED_CMD	0x10d
+#define DRV_CTL_ULP_REGISTER_CMD	0x10e
+#define DRV_CTL_ULP_UNREGISTER_CMD	0x10f
+#if defined(__VMKLNX__)
+#define DRV_CTL_START_NPAR_CMD		0x110
+#define DRV_CTL_STOP_NPAR_CMD		0x111
+#endif
 
 struct cnic_ctl_completion {
 	u32	cid;
+	u8	opcode;
+	u8	error;
 };
 
 struct drv_ctl_spq_credit {
@@ -124,11 +149,12 @@ enum {
 };
 
 enum {
-	OOO_OPCODE_ADD_RIGHT,
-        OOO_OPCODE_ADD_LEFT,
-	OOO_OPCODE_JOIN,
+	OOO_OPCODE_ADD_PEN,
 	OOO_OPCODE_ADD_NEW,
-        OOO_OPCODE_ADD_PENN
+	OOO_OPCODE_ADD_RIGHT,
+	OOO_OPCODE_ADD_LEFT,
+	OOO_OPCODE_JOIN,
+	OOO_OPCODE_NOP
 };
 
 struct cnic_ooo_cqe {
@@ -161,15 +187,22 @@ struct drv_ctl_ooo_pkt {
 	struct sk_buff *skb;
 };
 
+struct drv_ctl_register_data {
+	int ulp_type;
+	struct fcoe_capabilities fcoe_features;
+};
+
 struct drv_ctl_info {
 	int	cmd;
 	union {
 		struct drv_ctl_spq_credit credit;
 		struct drv_ctl_io io;
 		struct drv_ctl_l2_ring ring;
+		int ulp_type;
+		char bytes[MAX_DRV_CTL_DATA];
 		struct drv_ctl_ooo_cqe ooo_cqe;
 		struct drv_ctl_ooo_pkt pkt_desc;
-		char bytes[MAX_DRV_CTL_DATA];
+		struct drv_ctl_register_data register_data;
 	} data;
 };
 
@@ -196,13 +229,16 @@ struct cnic_irq {
 
 struct cnic_eth_dev {
 	u32		version;
-	#define CNIC_ETH_DEV_VER 0x12340001 /* Change this when the structure changes */
+	#define CNIC_ETH_DEV_VER 0x07800002 /* Change this when the structure changes */
 
 	struct module	*drv_owner;
 	u32		drv_state;
 #define CNIC_DRV_STATE_REGD		0x00000001
 #define CNIC_DRV_STATE_USING_MSIX	0x00000002
 #define CNIC_DRV_STATE_NO_ISCSI_OOO	0x00000004
+#define CNIC_DRV_STATE_NO_ISCSI		0x00000008
+#define CNIC_DRV_STATE_NO_FCOE		0x00000010
+#define CNIC_DRV_STATE_HANDLES_IRQ	0x00000020
 	u32		chip_id;
 	u32		max_kwqe_pending;
 	struct pci_dev	*pdev;
@@ -212,17 +248,24 @@ struct cnic_eth_dev {
 	void __iomem	*io_base2;
 #endif
 #endif
-
 	u32		ctx_tbl_offset;
 	u32		ctx_tbl_len;
 	int		ctx_blk_size;
 	u32		starting_cid;
 	u32		max_iscsi_conn;
 	u32		max_fcoe_conn;
+	u32		max_fcoe_exchanges;
 	u32		max_rdma_conn;
+
 	u32		fcoe_init_cid;
+	u32		fcoe_wwn_port_name_hi;
+	u32		fcoe_wwn_port_name_lo;
+	u32		fcoe_wwn_node_name_hi;
+	u32		fcoe_wwn_node_name_lo;
+
 	u16		iscsi_l2_client_id;
 	u16		iscsi_l2_cid;
+	u8		iscsi_mac[ETH_ALEN];
 
 	int		num_irq;
 	struct cnic_irq	irq_arr[MAX_CNIC_VEC];
@@ -235,6 +278,15 @@ struct cnic_eth_dev {
 					       struct kwqe_16 *[], u32);
 	int		(*drv_ctl)(struct net_device *, struct drv_ctl_info *);
 	unsigned long	reserved1[2];
+
+#if defined(__VMKLNX__)
+	u32		mf_mode;
+	u32		e1hov_tag;
+#if (VMWARE_ESX_DDK_VERSION >= 50000)
+	struct vlan_group	**cna_vlgrp;
+#endif
+#endif
+	union drv_info_to_mcp	*addr_drv_info_to_mcp;
 };
 
 struct cnic_sockaddr {
@@ -294,6 +346,7 @@ struct cnic_sock {
 #define SK_F_IPV6		5
 #define SK_F_NDISC_WAITING	6
 #define SK_F_CLOSING		7
+#define SK_F_HW_ERR		8
 
 	atomic_t ref_count;
 	u32 state;
@@ -303,10 +356,13 @@ struct cnic_sock {
 };
 
 struct cnic_dev {
+	struct list_head	list;
+	u32		version;
+#define CNIC_DEV_VER 0x07800002 /* Change this when the structure changes */
+
 	struct net_device	*netdev;
 	struct pci_dev		*pcidev;
 	void __iomem		*regview;
-	struct list_head	list;
 
 	int (*register_device)(struct cnic_dev *dev, int ulp_type,
 			       void *ulp_ctx);
@@ -334,6 +390,7 @@ struct cnic_dev {
 #define CNIC_F_IF_GOING_DOWN	2
 #define CNIC_F_BNX2_CLASS	3
 #define CNIC_F_BNX2X_CLASS	4
+#define CNIC_F_ISCSI_OOO_ENABLE	8
 	atomic_t	ref_count;
 	int		use_count;
 	u8		mac_addr[6];
@@ -342,7 +399,24 @@ struct cnic_dev {
 	int		max_fcoe_conn;
 	int		max_rdma_conn;
 
+	union drv_info_to_mcp	*stats_addr;
+	struct fcoe_capabilities	*fcoe_cap;
+
 	void		*cnic_priv;
+	unsigned int	ooo_tx_count;
+
+#if defined(__VMKLNX__)
+	u64		fcoe_wwnn;
+	u64		fcoe_wwpn;
+
+	u32		pmtu_fails;
+	u32		mf_mode;
+	u32		e1hov_tag;
+
+#if (VMWARE_ESX_DDK_VERSION >= 50000)
+	struct vlan_group	**cna_vlgrp;
+#endif
+#endif  /* defined (__VMKLNX__) */
 };
 
 #define CNIC_WR(dev, off, val)		writel(val, dev->regview + off)
@@ -352,6 +426,9 @@ struct cnic_dev {
 #define CNIC_RD16(dev, off)		readw(dev->regview + off)
 
 struct cnic_ulp_ops {
+	u32             version;
+	#define CNIC_ULP_OPS_VER 0x07000002 /* Change this when the structure changes */
+
 	/* Calls to these functions are protected by RCU.  When
 	 * unregistering, we wait for any calls to complete before
 	 * continuing.
@@ -370,6 +447,7 @@ struct cnic_ulp_ops {
 	void (*cm_abort_complete)(struct cnic_sock *);
 	void (*cm_remote_close)(struct cnic_sock *);
 	void (*cm_remote_abort)(struct cnic_sock *);
+	int (*cnic_get_stats)(void *ulp_ctx);
 	struct module *owner;
 	atomic_t ref_count;
 };
@@ -377,8 +455,4 @@ struct cnic_ulp_ops {
 extern int cnic_register_driver(int ulp_type, struct cnic_ulp_ops *ulp_ops);
 
 extern int cnic_unregister_driver(int ulp_type);
-
-extern struct cnic_eth_dev *bnx2_cnic_probe(struct net_device *dev);
-extern struct cnic_eth_dev *bnx2x_cnic_probe(struct net_device *dev);
-
 #endif

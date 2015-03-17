@@ -1,6 +1,6 @@
 /*
  *    Disk Array driver for HP Smart Array SAS controllers
- *    Copyright 2000, 2010 Hewlett-Packard Development Company, L.P.
+ *    Copyright 2000-2012 Hewlett-Packard Development Company, L.P.
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
@@ -19,7 +19,7 @@
  *
  */
 /*    
- *    Portions Copyright 2008, 2010 VMware, Inc.
+ *    Portions Copyright 2008-2012 VMware, Inc.
  */
 #ifndef HPSA_CMD_H
 #define HPSA_CMD_H
@@ -153,11 +153,42 @@
 
 #define CFGTBL_Trans_Simple     0x00000002l
 #define CFGTBL_Trans_Performant 0x00000004l
+#define CFGTBL_Trans_use_short_tags 0x20000000l
 
 #define CFGTBL_BusType_Ultra2   0x00000001l
 #define CFGTBL_BusType_Ultra3   0x00000002l
 #define CFGTBL_BusType_Fibre1G  0x00000100l
 #define CFGTBL_BusType_Fibre2G  0x00000200l
+
+/* VPD Inquiry types */
+#define HPSA_VPD_SUPPORTED_PAGES       0x00
+#define HPSA_VPD_LV_DEVICE_ID          0x83
+#define HPSA_VPD_PHYS_DEVICE_ID                0xC0
+#define HPSA_VPD_LV_DEVICE_GEOMETRY    0xC1
+#define HPSA_VPD_LV_IOACCEL_STATUS     0xC2
+#define HPSA_VPD_LV_STATUS             0xC3
+#define HPSA_IS_VPD                    1
+#define HPSA_NOT_VPD                   0
+#define HPSA_VPD_HEADER_SZ             4
+
+/* distinguish from regular inquiry */
+#define HPSA_VPD_INQUIRY 0xCC
+
+/* Logical volume states */
+#define HPSA_VPD_LV_STATUS_UNSUPPORTED                 -1
+#define HPSA_LV_OK                                     0x0
+#define HPSA_LV_UNDERGOING_ERASE                       0x0F
+#define HPSA_LV_UNDERGOING_RPI                         0x12
+#define HPSA_LV_PENDING_RPI                            0x13
+#define HPSA_LV_ENCRYPTED_NO_KEY                       0x14
+#define HPSA_LV_PLAINTEXT_IN_ENCRYPT_ONLY_CONTROLLER   0x15
+#define HPSA_LV_UNDERGOING_ENCRYPTION                  0x16
+#define HPSA_LV_UNDERGOING_ENCRYPTION_REKEYING         0x17
+#define HPSA_LV_ENCRYPTED_IN_NON_ENCRYPTED_CONTROLLER  0x18
+#define HPSA_LV_PENDING_ENCRYPTION                     0x19
+#define HPSA_LV_PENDING_ENCRYPTION_REKEYING            0x1A
+
+
 struct vals32 {
 	u32   lower;
 	u32   upper;
@@ -168,9 +199,10 @@ union u64bit {
 	u64 val;
 };
 
-#define HPSA_MAX_TARGETS_PER_CTLR 16
-#define HPSA_MAX_LUN 256
+#define HPSA_MAX_LUN 1024
 #define HPSA_MAX_PHYS_LUN 1024
+#define MAX_EXT_TARGETS 32
+#define HPSA_MAX_DEVICES (HPSA_MAX_PHYS_LUN + HPSA_MAX_LUN + MAX_EXT_TARGETS + 1)
 
 /* SCSI-3 Commands */
 #pragma pack(1)

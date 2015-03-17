@@ -15,7 +15,6 @@
  * SOFTWARE.
  *
  */
-#ident "$Id$"
 
 #ifndef _ENIC_IOCTL_H_
 #define _ENIC_IOCTL_H_
@@ -55,6 +54,11 @@ enum enic_drvcmd_cmd {
 	 * out:	(u64)a0= Num of INTRs this enic owns.
 	 * */
 	DRVCMD_GET_NUM_INTRS = 4,
+
+	/*
+	 * out: (u64)a0= BDF of this enic.
+	 * */
+	DRVCMD_GET_SBDF = 5,
 };
 
 union enic_ioctl {
