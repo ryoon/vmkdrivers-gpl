@@ -537,7 +537,8 @@ static int usb_stor_control_thread(void * __us)
 			us->srb->result = CHECK_CONDITION << 1;
 		} 
 		else if (unlikely(us->srb->cmnd[0] == SERVICE_ACTION_IN &&
-				(us->srb->cmnd[1] & 0x1f) == SAI_READ_CAPACITY_16)) {
+				(us->srb->cmnd[1] & 0x1f) == SAI_READ_CAPACITY_16 &&
+				(us->fflags & US_FL_EN_READ_CAPACITY_16) == 0)) {
 			// See PR 561296 for why this is needed
 			_VMKLNX_USB_STOR_MSG("Failing READ_CAPACITY16 command\n",
 						us->srb);

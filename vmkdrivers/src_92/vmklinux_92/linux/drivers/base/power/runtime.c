@@ -259,11 +259,6 @@ int __pm_runtime_suspend(struct device *dev, bool from_wq)
 			dev->power2->runtime_error = 0;
 		}
 	} else {
-#if defined(__VMKLNX__)
-                if (dev->power2->runtime_status != RPM_SUSPENDED) {
-                        dev_info(dev, "suspended\n");
-                }
-#endif 
 		dev->power2->runtime_status = RPM_SUSPENDED;
 
 		if (dev->parent) {
@@ -446,11 +441,6 @@ int __pm_runtime_resume(struct device *dev, bool from_wq)
 		dev->power2->runtime_status = RPM_SUSPENDED;
 		pm_runtime_cancel_pending(dev);
 	} else {
-#if defined(__VMKLNX__)
-                if (dev->power2->runtime_status != RPM_ACTIVE) {
-                        dev_info(dev, "resumed\n");
-                }
-#endif
 		dev->power2->runtime_status = RPM_ACTIVE;
 		if (parent)
 			atomic_inc(&parent->power2->child_count);

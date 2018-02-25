@@ -9647,7 +9647,8 @@ ixgbe_passthru_ops(struct net_device *netdev, vmk_NetPTOP op, void *pargs)
 {
 	struct ixgbe_adapter *adapter = netdev_priv(netdev);
 	VMK_ReturnStatus ret;
-	
+	int vid;
+
 	switch (op) {
 	case VMK_NETPTOP_VF_SET_MAC:
 	{
@@ -9695,17 +9696,22 @@ ixgbe_passthru_ops(struct net_device *netdev, vmk_NetPTOP op, void *pargs)
 		DPRINTK(PROBE, ERR, "Passthru OP to set guest VLAN %d-%d"
 			" received for VF %d\n", (int)args->first,
 			(int)args->last, (u32)args->vf);
-		ret = ixgbe_set_vf_vlan(adapter, 1, args->first, args->vf);
+                for (vid = args->first; vid <= args->last; vid++) {
+			ret = ixgbe_set_vf_vlan(adapter, 1, vid, args->vf);
+                }
 		break;
 	}
 	case VMK_NETPTOP_VF_DEL_VLAN_RANGE:
 	{
 		vmk_NetPTOPVFVlanRangeArgs *args = pargs;
-		DPRINTK(PROBE, ERR, "Passthru OP to remove guest VLAN %d"
-		" received for VF %d\n", (int)args->first, (u32)args->vf);
-		ret = ixgbe_set_vf_vlan(adapter, 0, args->first, args->vf);
-		break;                           
-	}                                        
+		DPRINTK(PROBE, ERR, "Passthru OP to remove guest VLAN %d-%d"
+			" received for VF %d\n", (int)args->first,
+			(int)args->last, (u32)args->vf);
+                for (vid = args->first; vid <= args->last; vid++) {
+			ret = ixgbe_set_vf_vlan(adapter, 0, vid, args->vf);
+		}
+		break;
+	}
 	case VMK_NETPTOP_VF_GET_QUEUE_STATS:
 	{
 		vmk_NetPTOPVFGetQueueStatsArgs *args = pargs;

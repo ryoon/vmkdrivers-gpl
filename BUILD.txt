@@ -14,7 +14,7 @@ To build this package please execute the following commands:
     sh ./build-vmkdrivers.sh
     mv collect-drivers.sh BLD/build/collect-drivers.sh
     cd BLD/build
-    ./collect-drivers.sh
+    sh collect-drivers.sh
 
 If you would like to verify the installation of this package, please
 create the binary disclosure file for this package using the command:

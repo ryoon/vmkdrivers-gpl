@@ -522,6 +522,10 @@ static const struct usb_device_id	products [] = {
 	USB_DEVICE(0x413c, 0xa102),
 	.driver_info = (unsigned long) &cdc_info,
 },
+{
+	USB_DEVICE(0x17ef, 0xb001),
+	.driver_info = (unsigned long) &cdc_info,
+},
 #else
 /*
  * BLACKLIST !!

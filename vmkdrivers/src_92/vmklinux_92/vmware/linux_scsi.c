@@ -918,7 +918,6 @@ SCSILinuxProcessCompletions(scsiLinuxTLS_t *tls,       // IN
                         scmd->device->channel, scmd->device->id,
                         scmd->device->lun, 
                         scmd->device->host->hostt->name);
-            VMK_ASSERT_BUG(VMK_FALSE); /* See PR 503363 */
          }
          hostStatus = DID_NO_CONNECT;
       }

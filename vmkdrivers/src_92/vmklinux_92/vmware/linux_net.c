@@ -12078,7 +12078,7 @@ EXPORT_SYMBOL(vmklnx_skb_real_size);
  */
 static void
 LinNetEvent_cb_workq(struct work_struct *work)
-{ 
+{
    struct LinNetEventCB_Task *eventCB_task, *eventCB_temp;
    struct list_head temp_list;
    struct LinNetEventCB *eventCB;
@@ -12092,10 +12092,9 @@ LinNetEvent_cb_workq(struct work_struct *work)
    // First remove all entries from LinNetEventCB_WorkQ_List and put them
    // in the temporary list.
    spin_lock(&LinNetEventCB_WorkQ_List.lock);
-   list_for_each_entry_safe(eventCB_task, eventCB_temp, 
+   list_for_each_entry_safe(eventCB_task, eventCB_temp,
                             &LinNetEventCB_WorkQ_List.head, head) {
       eventCB = eventCB_task->eventCB;
-      vmk_AtomicInc64(&eventCB->refCount);
       list_del(&eventCB_task->head);
       list_add(&eventCB_task->head, &temp_list);
    }
@@ -12206,6 +12205,11 @@ LinNetVswitch_cb(vmk_Name            *uplinkName,
       return;
    }
 
+   /*
+    * increase the refCount of eventCB, so that it won't be freed while it's
+    * pending on delayed work queue
+    */
+   vmk_AtomicInc64(&eventCB->refCount);
    eventCB_task->eventCB = eventCB;
    eventCB_task->port_id = port_id;
 
@@ -12311,10 +12315,12 @@ vmklnx_unregister_event_callback(void *cdHdl)
    }
 
    spin_lock(&LinNetEventCB_WorkQ_List.lock);
-   list_for_each_entry_safe(eventCB_task, eventCB_temp, 
+   list_for_each_entry_safe(eventCB_task, eventCB_temp,
                             &LinNetEventCB_WorkQ_List.head, head) {
       if (eventCB_task->eventCB == eventCB) {
+         vmk_AtomicDec64(&eventCB->refCount);
          list_del(&eventCB_task->head);
+         kfree(eventCB_task);
       }
    }
    spin_unlock(&LinNetEventCB_WorkQ_List.lock);
@@ -12324,8 +12330,10 @@ vmklnx_unregister_event_callback(void *cdHdl)
     * temporary list in LinNetEvent_cb_workq have completed and
     * can be freed safely.
     */
-   if (vmk_AtomicRead64(&eventCB->refCount)) {
+   while (vmk_AtomicRead64(&eventCB->refCount)) {
       flush_workqueue(LinNetEventCB_WorkQ);
+      // sleep 100 ms, wait for the completion of the delayed task
+      msleep(100);
    }
    kfree(eventCB);
 

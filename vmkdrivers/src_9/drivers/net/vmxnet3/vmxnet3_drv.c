@@ -39,7 +39,7 @@ static const struct pci_device_id vmxnet3_pciid_table[] = {
 MODULE_DEVICE_TABLE(pci, vmxnet3_pciid_table);
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 24)
-static int disable_lro;
+static int disable_lro = 1;
 #endif
 
 /* drop checker settings */
@@ -699,8 +699,8 @@ vmxnet3_rq_alloc_rx_buf(struct vmxnet3_rx_queue *rq, u32 ring_idx,
 
 		if (rbi->buf_type == VMXNET3_RX_BUF_SKB) {
 			if (rbi->skb == NULL) {
-				rbi->skb = dev_alloc_skb(
-					 	rbi->len + NET_IP_ALIGN);
+				rbi->skb = netdev_alloc_skb(adapter->netdev, 
+                                                         rbi->len + NET_IP_ALIGN);
 				if (unlikely(rbi->skb == NULL)) {
 					rq->stats.rx_buf_alloc_failure++;
                                         /* starvation prevention */
@@ -1682,7 +1682,7 @@ vmxnet3_rq_init(struct vmxnet3_rx_queue *rq,
 	}
 
         /* allocate ring starvation protection */
-        rq->spare_skb = dev_alloc_skb(PAGE_SIZE);
+        rq->spare_skb = netdev_alloc_skb(adapter->netdev,PAGE_SIZE);
         if (rq->spare_skb == NULL) {
 		return -ENOMEM;
         }
@@ -4277,7 +4277,7 @@ MODULE_VERSION(VMXNET3_DRIVER_VERSION_STRING);
  */
 MODULE_INFO(supported, "external");
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 24)
-module_param(disable_lro, int, 1);
+module_param(disable_lro, int, 0);
 #endif
 
 #if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 25) || \
