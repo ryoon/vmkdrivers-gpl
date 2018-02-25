@@ -20,6 +20,8 @@
 #ifndef _ENIC_H_
 #define _ENIC_H_
 
+#include <linux/types.h>
+
 #include "vnic_enet.h"
 #include "vnic_dev.h"
 #include "vnic_wq.h"
@@ -30,10 +32,11 @@
 #include "vnic_nic.h"
 #include "vnic_rss.h"
 #include "enic_upt.h"
+#include "enic_res.h"
 
 #define DRV_NAME		"enic"
 #define DRV_DESCRIPTION		"Cisco VIC Ethernet NIC Driver"
-#define DRV_VERSION		"2.1.2.38"
+#define DRV_VERSION		"2.1.2.71"
 #define DRV_COPYRIGHT		"Copyright 2008-2011 Cisco Systems, Inc"
 
 #define ENIC_BARS_MAX		6
@@ -43,6 +46,8 @@
 #define ENIC_CQ_MAX		(ENIC_WQ_MAX + ENIC_RQ_MAX)
 #define ENIC_INTR_MAX		(ENIC_CQ_MAX + 2)
 
+#define ENIC_AIC_LARGE_PKT_DIFF 3
+
 struct enic_msix_entry {
 	int requested;
 	char devname[IFNAMSIZ];
@@ -50,9 +55,11 @@ struct enic_msix_entry {
 	void *devid;
 };
 
+
 /* priv_flags */
 #define ENIC_SRIOV_ENABLED		(1 << 0)
 #define ENIC_RESET_INPROGRESS		(1 << 1)
+#define ENIC_NETQ_ENABLED		(1 << 2)
 
 /* enic port profile set flags */
 #define ENIC_PORT_REQUEST_APPLIED	(1 << 0)
@@ -60,6 +67,24 @@ struct enic_msix_entry {
 #define ENIC_SET_NAME			(1 << 2)
 #define ENIC_SET_INSTANCE		(1 << 3)
 #define ENIC_SET_HOST			(1 << 4)
+
+#define ring_is_allocated(ring)\
+		test_bit(__ENIC_Q_ALLOCATED, &(ring.state))
+#define set_ring_allocated(ring)\
+		set_bit(__ENIC_Q_ALLOCATED, &(ring.state))
+#define clear_ring_allocated(ring)\
+		clear_bit(__ENIC_Q_ALLOCATED, &(ring.state))
+
+enum enic_q_state {
+	__ENIC_Q_ALLOCATED
+};
+
+/* VXLAN APIs */
+extern unsigned short vmklnx_netdev_get_vxlan_port(void);
+typedef void (*vmklnx_netdev_vxlan_port_update_callback)(struct net_device *dev,
+	unsigned short vxlan_udp_port_number);
+extern void vmklnx_netdev_set_vxlan_port_update_callback(struct net_device *dev,
+	vmklnx_netdev_vxlan_port_update_callback vxlan_port_update_callback);
 
 struct enic_port_profile {
 	u32 set;
@@ -77,6 +102,44 @@ enum ownership_type {
 	/* ... */
 };
 
+
+/*
+ * enic_rfs_fltr_node - rfs filter node in hash table
+ *	@keys: IPv4 5 tuple
+ *	@flow_id: flow_id of clsf filter provided by kernel
+ *	@fltr_id: filter id of clsf filter returned by adaptor
+ *	@rq_id: desired rq index
+ *	@node: hlist_node
+ */
+struct enic_rfs_fltr_node {
+	struct flow_keys keys;
+	u32 flow_id;
+	u16 fltr_id;
+	u16 rq_id;
+	struct hlist_node node;
+};
+
+/*
+ * enic_rfs_flw_tbl - rfs flow table
+ *	@max: Maximum number of filters vNIC supports
+ *	@free: Number of free filters available
+ *	@toclean: hash table index to clean next
+ *	@ht_head: hash table list head
+ *	@lock: spin lock
+ *	@rfs_may_expire: timer function for enic_rps_may_expire_flow
+ */
+struct enic_rfs_flw_tbl {
+	u16 max;	/* Max clsf filters vNIC supports */
+	int free;	/* number of free clsf filters */
+
+#define ENIC_RFS_FLW_BITSHIFT	(10)
+#define ENIC_RFS_FLW_MASK	((1 << ENIC_RFS_FLW_BITSHIFT) - 1)
+	u16 toclean:ENIC_RFS_FLW_BITSHIFT;
+	struct hlist_head ht_head[1 << ENIC_RFS_FLW_BITSHIFT];
+	spinlock_t lock;
+	struct timer_list rfs_may_expire;
+};
+
 /* Per-instance private data structure */
 struct enic {
 	struct net_device *netdev;
@@ -92,7 +155,6 @@ struct enic {
 	struct enic_msix_entry msix[ENIC_INTR_MAX];
 	u32 msg_enable;
 	spinlock_t devcmd_lock;
-	atomic_t in_stop;
 	u8 mac_addr[ETH_ALEN];
 	u8 mc_addr[ENIC_MULTICAST_PERFECT_FILTERS][ETH_ALEN];
 	u8 uc_addr[ENIC_UNICAST_PERFECT_FILTERS][ETH_ALEN];
@@ -107,7 +169,13 @@ struct enic {
 	u32 rx_coalesce_usecs;
 	u32 tx_coalesce_usecs;
 	struct enic_port_profile *pp;
+	unsigned int netq_allocated_wqs;
+	unsigned int netq_allocated_rqs;
+	spinlock_t netq_wq_lock;
+	spinlock_t netq_rq_lock;
+	unsigned short vxlan_udp_port_number;
 	enum ownership_type owner;
+	atomic_t in_stop;
 	int upt_mode;
 	int upt_resources_alloced;
 	int upt_active;
@@ -145,7 +213,7 @@ struct enic {
 	unsigned int rq_count;
 	u64 rq_truncated_pkts;
 	u64 rq_bad_fcs;
-	struct napi_struct napi[ENIC_RQ_MAX];
+	struct napi_struct napi[ENIC_RQ_MAX + ENIC_WQ_MAX];
 
 	/* interrupt resource cache line section */
 	____cacheline_aligned struct vnic_intr intr[ENIC_INTR_MAX];
@@ -155,6 +223,7 @@ struct enic {
 	/* completion queue cache line section */
 	____cacheline_aligned struct vnic_cq cq[ENIC_CQ_MAX];
 	unsigned int cq_count;
+	struct enic_rfs_flw_tbl rfs_h;	/* for accel rfs */
 };
 
 static inline struct device *enic_get_dev(struct enic *enic)
@@ -208,6 +277,7 @@ static inline unsigned int enic_msix_notify_intr(struct enic *enic)
 {
 	return enic->rq_count + enic->wq_count + 1;
 }
+
 
 void enic_reset_addr_lists(struct enic *enic);
 int enic_is_dynamic(struct enic *enic);

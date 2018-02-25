@@ -28,6 +28,7 @@ enum enic_upt_oob {
 	ENIC_UPT_OOB_MAX
 };
 
+struct enic;
 void enic_upt_link_down(struct enic *enic);
 void enic_upt_prepare_for(struct enic *enic);
 int enic_upt_recover_from(struct enic *enic);

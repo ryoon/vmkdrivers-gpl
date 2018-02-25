@@ -25,7 +25,7 @@
 /*
  * Source file for NIC routines to access the Phantom hardware
  *
- * $Id: //depot/vmkdrivers/vsphere60u3/src_9/drivers/net/nx_nic/unm_nic_hw.c#1 $
+ * $Id: //depot/vmkdrivers/super-main/src_9/drivers/net/nx_nic/unm_nic_hw.c#2 $
  *
  */
 #include <linux/delay.h>

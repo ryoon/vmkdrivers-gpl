@@ -72,6 +72,7 @@ struct vnic_rq_buf {
 	unsigned int len;
 	unsigned int index;
 	void *desc;
+	uint64_t wr_id;
 };
 
 struct vnic_rq {
@@ -84,8 +85,13 @@ struct vnic_rq {
 	struct vnic_rq_buf *to_clean;
 	void *os_buf_head;
 	unsigned int pkts_outstanding;
+	unsigned int state;
 	int enabled;
 	unsigned int rxcons2;
+#if defined(__LIBUSNIC__)
+	uint32_t qp_num;
+#endif
+
 };
 
 static inline unsigned int vnic_rq_desc_avail(struct vnic_rq *rq)
@@ -112,7 +118,8 @@ static inline unsigned int vnic_rq_next_index(struct vnic_rq *rq)
 
 static inline void vnic_rq_post(struct vnic_rq *rq,
 	void *os_buf, unsigned int os_buf_index,
-	dma_addr_t dma_addr, unsigned int len)
+	dma_addr_t dma_addr, unsigned int len,
+	uint64_t wrid)
 {
 	struct vnic_rq_buf *buf = rq->to_use;
 
@@ -120,6 +127,7 @@ static inline void vnic_rq_post(struct vnic_rq *rq,
 	buf->os_buf_index = os_buf_index;
 	buf->dma_addr = dma_addr;
 	buf->len = len;
+	buf->wr_id = wrid;
 
 	buf = buf->next;
 	rq->to_use = buf;
@@ -127,6 +135,9 @@ static inline void vnic_rq_post(struct vnic_rq *rq,
 
 	/* Move the posted_index every nth descriptor
 	 */
+#if defined(__LIBUSNIC__)
+#define VNIC_RQ_RETURN_RATE		0x0
+#endif
 
 #ifndef VNIC_RQ_RETURN_RATE
 #define VNIC_RQ_RETURN_RATE		0xf	/* keep 2^n - 1 */
@@ -213,4 +224,32 @@ int vnic_rq_disable(struct vnic_rq *rq);
 void vnic_rq_clean(struct vnic_rq *rq,
 	void (*buf_clean)(struct vnic_rq *rq, struct vnic_rq_buf *buf));
 
+static inline void enic_busy_poll_init_lock(struct vnic_rq *UNUSED(rq))
+{
+}
+
+static inline bool enic_poll_lock_napi(struct vnic_rq *UNUSED(rq))
+{
+	return true;
+}
+
+static inline bool enic_poll_unlock_napi(struct vnic_rq *UNUSED(rq))
+{
+	return false;
+}
+
+static inline bool enic_poll_lock_poll(struct vnic_rq *UNUSED(rq))
+{
+	return false;
+}
+
+static inline bool enic_poll_unlock_poll(struct vnic_rq *UNUSED(rq))
+{
+	return false;
+}
+
+static inline bool enic_poll_busy_polling(struct vnic_rq *UNUSED(rq))
+{
+	return false;
+}
 #endif /* _VNIC_RQ_H_ */

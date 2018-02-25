@@ -60,6 +60,7 @@ typedef enum vmknetddi_queueops_filter_class {
 	VMKNETDDI_QUEUEOPS_FILTER_VLANMACADDR = 0x4,/* Vlan tag + 
                                                        Mac addr filter */
 	VMKNETDDI_QUEUEOPS_FILTER_VXLAN = 0x8,      /* VXLAN filter */
+	VMKNETDDI_QUEUEOPS_FILTER_GENEVE = 0x10,    /* Geneve filter */
 } vmknetddi_queueops_filter_class_t;
 
 typedef enum vmknetddi_queueops_queue_type {
@@ -90,6 +91,8 @@ typedef enum {
         VMKNETDDI_QUEUEOPS_QUEUE_FEAT_DYNAMIC      = 0x20,
         /** Pre-emptilbel queue feature */
         VMKNETDDI_QUEUEOPS_QUEUE_FEAT_PREEMPTIBLE  = 0x40,
+        /* Geneve OAM RX queue */
+        VMKNETDDI_QUEUEOPS_QUEUE_FEAT_GENEVE_OAM   = 0x80,
 } vmknetddi_queueops_queue_features_t;
 
 typedef struct vmknetddi_queueops_queueattr
@@ -136,6 +139,12 @@ typedef struct vmknetddi_queueops_vxlan_filter {
 	u32 vxlan_id;
 } vmknetddi_queueops_vxlan_filter_t;
 
+typedef struct vmknetddi_queueops_geneve_filter {
+	u8 inner_macaddr[ETH_ALEN];   /* inner MAC address */
+	u8 outer_macaddr[ETH_ALEN];   /* outer MAC address */
+	u32 vni;
+} vmknetddi_queueops_geneve_filter_t;
+
 typedef struct vmknetddi_queueops_filter {
 	vmknetddi_queueops_filter_class_t class; /* Filter class */
 	u8 active;                                /* Is active? */
@@ -149,6 +158,7 @@ typedef struct vmknetddi_queueops_filter {
 			u16 vlan_id;              /* VLAN id */
 		} vlanmac;
 		vmknetddi_queueops_vxlan_filter_t *vxlan_filter;   /* VXLAN filter */
+		vmknetddi_queueops_geneve_filter_t *geneve_filter; /* Geneve filter */
 	} u;
 
 	u8 pad2[2];
@@ -510,6 +520,16 @@ vmknetddi_queueops_set_filter_vxlan(vmknetddi_queueops_filter_t *f,
    memcpy(f->u.vxlan_filter->inner_macaddr, imacaddr, ETH_ALEN);
    memcpy(f->u.vxlan_filter->outer_macaddr, omacaddr, ETH_ALEN);
    f->u.vxlan_filter->vxlan_id = vxlanid;
+}
+
+static inline void
+vmknetddi_queueops_set_filter_geneve(vmknetddi_queueops_filter_t *f,
+                                     u8 *imacaddr, u8 *omacaddr, u16 vni)
+{
+   f->class = VMKNETDDI_QUEUEOPS_FILTER_GENEVE;
+   memcpy(f->u.geneve_filter->inner_macaddr, imacaddr, ETH_ALEN);
+   memcpy(f->u.geneve_filter->outer_macaddr, omacaddr, ETH_ALEN);
+   f->u.geneve_filter->vni = vni;
 }
 
 /**

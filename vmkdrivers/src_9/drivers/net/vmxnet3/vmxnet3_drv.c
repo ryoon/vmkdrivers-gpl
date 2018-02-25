@@ -699,8 +699,8 @@ vmxnet3_rq_alloc_rx_buf(struct vmxnet3_rx_queue *rq, u32 ring_idx,
 
 		if (rbi->buf_type == VMXNET3_RX_BUF_SKB) {
 			if (rbi->skb == NULL) {
-				rbi->skb = netdev_alloc_skb(adapter->netdev, 
-                                                         rbi->len + NET_IP_ALIGN);
+				rbi->skb = dev_alloc_skb(
+					 	rbi->len + NET_IP_ALIGN);
 				if (unlikely(rbi->skb == NULL)) {
 					rq->stats.rx_buf_alloc_failure++;
                                         /* starvation prevention */
@@ -1681,19 +1681,19 @@ vmxnet3_rq_init(struct vmxnet3_rx_queue *rq,
 		rq->rx_ring[i].gen = VMXNET3_INIT_GEN;
 	}
 
-        /* allocate ring starvation protection */
-        rq->spare_skb = netdev_alloc_skb(adapter->netdev,PAGE_SIZE);
-        if (rq->spare_skb == NULL) {
+	/* allocate ring starvation protection */
+	rq->spare_skb = dev_alloc_skb(PAGE_SIZE);
+	if (rq->spare_skb == NULL) {
 		return -ENOMEM;
-        }
+	}
 
         /* populate initial ring */
 	if (vmxnet3_rq_alloc_rx_buf(rq, 0, rq->rx_ring[0].size - 1,
 				    adapter) == 0) {
 		/* at least has 1 rx buffer for the 1st ring */
+
 		kfree_skb(rq->spare_skb);
 		rq->spare_skb = NULL;
-
 		return -ENOMEM;
 	}
 	vmxnet3_rq_alloc_rx_buf(rq, 1, rq->rx_ring[1].size - 1, adapter);

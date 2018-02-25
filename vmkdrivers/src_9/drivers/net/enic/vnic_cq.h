@@ -20,6 +20,7 @@
 #ifndef _VNIC_CQ_H_
 #define _VNIC_CQ_H_
 
+
 #include "cq_desc.h"
 #include "vnic_dev.h"
 
@@ -49,6 +50,7 @@ struct vnic_cq_ctrl {
 	u64 cq_message_addr;		/* 0x58 */
 	u32 pad10;
 };
+
 
 struct vnic_cq {
 	unsigned int index;

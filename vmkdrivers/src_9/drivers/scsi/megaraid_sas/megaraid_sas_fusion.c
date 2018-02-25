@@ -90,7 +90,7 @@ u8 MR_ValidateMapInfo(struct megasas_instance *instance);
 u16 get_updated_dev_handle(PLD_LOAD_BALANCE_INFO lbInfo, struct IO_REQUEST_INFO *in_info);
 int megasas_transition_to_ready(struct megasas_instance* instance, int ocr);
 void megaraid_sas_kill_hba(struct megasas_instance *instance);
-inline void UpdateIOMetric(struct megasas_instance *instance, u8 TargetId, u8 isRead, u64 startBlock, u32 NumBlocks);
+void UpdateIOMetric(struct megasas_instance *instance, u8 TargetId, u8 isRead, u64 startBlock, u32 NumBlocks);
 
 extern u32 megasas_dbg_lvl;
 

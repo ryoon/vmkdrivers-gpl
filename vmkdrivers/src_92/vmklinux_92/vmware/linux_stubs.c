@@ -1,5 +1,5 @@
 /* ****************************************************************
- * Portions Copyright 1998, 2009-2013 VMware, Inc.
+ * Portions Copyright 1998, 2009-2013, 2015 VMware, Inc.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -1786,7 +1786,8 @@ Linux_BHInternal(void (*routine)(void *), void *data, vmk_ModuleID modID)
       d->modID = modID;
       d->staticAlloc = VMK_FALSE;
       Linux_SetBHList(d);
-      vmk_BHSchedulePCPU(linuxBHNum, vmk_GetPCPUNum()); /* schedule Linux_BHHandler for this PCPU */
+      // schedule Linux_BHHandler for this PCPU
+      vmk_BHSchedulePCPU(linuxBHNum, vmk_GetPCPUNum());
       vmk_CPUSetFlags(eflags);
    }
 }
@@ -1807,7 +1808,8 @@ Linux_BHInternal_static(LinuxBHData *d, vmk_ModuleID modID)
    d->next = Linux_GetBHList();
    d->modID = modID;
    Linux_SetBHList(d);
-   vmk_BHSchedulePCPU(linuxBHNum, vmk_GetPCPUNum()); /* schedule LinuxBHHandler for this PCPU */
+   // schedule Linux_BHHandler for this PCPU 
+   vmk_BHSchedulePCPU(linuxBHNum, vmk_GetPCPUNum());
    vmk_CPUSetFlags(eflags);
 }
 
@@ -2148,7 +2150,8 @@ init_module(void)
    VMK_ASSERT(status == VMK_OK);
 
    
-   status = vmk_SemaCreate(&pci_bus_sem, vmklinuxModID, "PCI_BUS_SEMA", 1);
+   status = vmk_SemaCreate(&pci_bus_sem, vmk_ModuleCurrentID,
+                           "PCI_BUS_SEMA", 1);
    if (status != VMK_OK) {
       VMKLNX_WARN("vmklinux: init_module: vmk_SemaCreate for pci_bus_sem failed: %s", 
                   vmk_StatusToString(status));
@@ -3260,7 +3263,7 @@ vmklnx_mod_init(void)
    VMK_ReturnStatus status;
 
    vmk_ListInit(&module_head);
-   status = vmk_SemaCreate(&module_lock, vmklinuxModID,
+   status = vmk_SemaCreate(&module_lock, vmk_ModuleCurrentID,
                            "vmklinux-module-list-lock", 1);
 
    if (status != VMK_OK) {

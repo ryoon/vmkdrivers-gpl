@@ -3177,7 +3177,8 @@ mptscsih_copy_sense_data(struct scsi_cmnd *sc, MPT_SCSI_HOST *hd, MPT_FRAME_HDR 
 
 		memcpy(sc->sense_buffer, sense_data, sense_count);
 #else
-		memcpy(sc->sense_buffer, sense_data, SNS_LEN(sc));
+		sense_count = min((u32)MPT_SENSE_BUFFER_ALLOC, (u32)SNS_LEN(sc));
+		memcpy(sc->sense_buffer, sense_data, sense_count);
 #endif
 		/* Log SMART data (asc = 0x5D, non-IM case only) if required.
 		 */

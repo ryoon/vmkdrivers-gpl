@@ -4317,7 +4317,7 @@ EXPORT_SYMBOL(scsi_device_reprobe);
 
 /**
  **********************************************************************
- * vmklnx_scsi_host_set_capabilities - Set adapter capabilities
+ * vmklnx_scsi_host_set_capabilities - Set adapter capability
  *
  * @sh: Pointer to scsi host
  * @cap: Capabilities to be set

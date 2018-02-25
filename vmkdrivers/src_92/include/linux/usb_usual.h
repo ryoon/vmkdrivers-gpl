@@ -75,11 +75,7 @@
 
 
 #define US_FLAG(name, value)	US_FL_##name = value ,
-#if defined(__VMKLNX__)
-enum { US_FLAG(EN_READ_CAPACITY_16, 0x00100000) US_DO_ALL_FLAGS };
-#else
 enum { US_DO_ALL_FLAGS };
-#endif /* __VMKLNX__ */
 #undef US_FLAG
 
 /*

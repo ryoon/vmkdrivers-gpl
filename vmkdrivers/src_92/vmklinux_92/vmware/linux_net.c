@@ -1,5 +1,5 @@
 /* ****************************************************************
- * Portions Copyright 2005, 2009-2013 VMware, Inc.
+ * Portions Copyright 2005, 2009-2013, 2015 VMware, Inc.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -2020,17 +2020,18 @@ map_pkt_to_skb(struct net_device *dev,
    vmk_uint16 sgInspected = 1;
    unsigned int headLen, bytesLeft;
    vmk_uint32 frameLen;
-   VMK_ReturnStatus ret = VMK_OK, status;
+   VMK_ReturnStatus ret = VMK_OK, status = VMK_OK;
    vmk_PktHeaderEntry *l2Header, *l3Header, *encapHeader;
    const vmk_SgElem *sgElem;
-   vmk_Bool must_vlantag, must_tso, must_csum, pkt_ipv4, pkt_encap = VMK_FALSE;
-   vmk_uint8 protocol, ipVersion;
+   vmk_Bool must_vlantag, must_tso, must_csum, pkt_ipv4 = VMK_FALSE, pkt_encap = VMK_FALSE;
+   vmk_uint8 protocol = 0, ipVersion = 0;
    vmk_uint32 ehLen;
-   vmk_uint32 ipHdrLength;
+   vmk_uint32 ipHdrLength = 0;
    vmk_PktRssType rss_type;
    u32 rss_hash = 0;
    const vmk_uint64 oboFlags = NETIF_F_OFFLOAD_8OFFSET |
                                NETIF_F_OFFLOAD_16OFFSET;
+   vmk_Bool offloadNeeded;
 
    skb = do_alloc_skb(dev->skb_pool, GFP_ATOMIC);
 
@@ -2060,6 +2061,10 @@ map_pkt_to_skb(struct net_device *dev,
    VMKLNX_SKB_DECAP_CB(skb);
 
    must_csum = vmk_PktIsMustCsum(pkt);
+   must_tso = vmk_PktIsLargeTcpPacket(pkt);
+
+   // When we add another offload, we need to manually add to the check below.
+   offloadNeeded = must_csum || must_tso;
 
    // Find layer 2 header and populate L2 parameters
    ret = vmk_PktHeaderL2Find(pkt, &l2Header, NULL);
@@ -2074,232 +2079,236 @@ map_pkt_to_skb(struct net_device *dev,
       goto done;
    }
 
-   // Find layer 3 header and populate L3 parameters
-   status = vmk_PktHeaderL3Find(pkt, &l3Header, NULL);
-   if (status == VMK_OK) {
-      if (l3Header->type == VMK_PKT_HEADER_L3_IPv4) {
-         ipHdrLength = vmk_PktHeaderLength(l3Header);
-         ipVersion = 4;
-         protocol = l3Header->nextHdrProto;
-
-         skb->h.raw = skb->nh.raw + ipHdrLength;
-
-         const int eth_p_ip_nbo = htons(ETH_P_IP);
-         pkt_ipv4 = VMK_TRUE;
-         skb->protocol = eth_p_ip_nbo;
-      } else {
-         pkt_ipv4 = VMK_FALSE;
-
-         if (l3Header->type == VMK_PKT_HEADER_L3_IPv6) {
+   // Parse L3 header only when offload is needed (currently csum and tso).
+   if (offloadNeeded) {
+      // Find layer 3 header and populate L3 parameters
+      status = vmk_PktHeaderL3Find(pkt, &l3Header, NULL);
+      if (status == VMK_OK) {
+         if (l3Header->type == VMK_PKT_HEADER_L3_IPv4) {
             ipHdrLength = vmk_PktHeaderLength(l3Header);
-            ipVersion = 6;
+            ipVersion = 4;
             protocol = l3Header->nextHdrProto;
 
             skb->h.raw = skb->nh.raw + ipHdrLength;
 
-            skb->protocol = ETH_P_IPV6_NBO;
+            const int eth_p_ip_nbo = htons(ETH_P_IP);
+            pkt_ipv4 = VMK_TRUE;
+            skb->protocol = eth_p_ip_nbo;
          } else {
+            pkt_ipv4 = VMK_FALSE;
+
+            if (l3Header->type == VMK_PKT_HEADER_L3_IPv6) {
+               ipHdrLength = vmk_PktHeaderLength(l3Header);
+               ipVersion = 6;
+               protocol = l3Header->nextHdrProto;
+
+               skb->h.raw = skb->nh.raw + ipHdrLength;
+
+               skb->protocol = ETH_P_IPV6_NBO;
+            } else {
+               ipVersion = 0;
+               ipHdrLength = 0;
+               protocol = IPPROTO_NONE;
+            }
+         }
+      } else {
+         if ((status == VMK_NOT_FOUND) || (status == VMK_NOT_IMPLEMENTED)) {
+            pkt_ipv4 = VMK_FALSE;
             ipVersion = 0;
             ipHdrLength = 0;
             protocol = IPPROTO_NONE;
-         }
-      }
-   } else {
-      if ((status == VMK_NOT_FOUND) || (status == VMK_NOT_IMPLEMENTED)) {
-         pkt_ipv4 = VMK_FALSE;
-         ipVersion = 0;
-         ipHdrLength = 0;
-         protocol = IPPROTO_NONE;
-      } else {
-         static uint32_t throttle = 0;
-         VMKLNX_THROTTLED_WARN(throttle,
-                               "%s: dropping packet due to parsing failure",
-                               dev->name);
-         ret = VMK_FAILURE;
-         goto done;
-      }
-   }
-
-   /*
-    * setup encapsulation offload meta data in skb if checksum or TCP
-    * segmentation offloading is requested on an encapsulated packet.
-    */
-   if (vmk_PktIsEncapsulatedFrame(pkt) &&
-       (vmk_PktIsMustCsum(pkt) || vmk_PktIsLargeTcpPacket(pkt))) {
-      vmk_PktHeaderEntry *innerL2Header, *innerL3Header;
-
-      ret = vmk_PktHeaderEncapFind(pkt, &encapHeader, NULL);
-      if (ret != VMK_OK) {
-         static uint32_t throttle = 0;
-         VMKLNX_THROTTLED_WARN(throttle,
-                               "%s: failed to find encap header for "
-                               "encapsulated frame", dev->name);
-         goto done;
-      }
-
-      /*
-       * don't allow outer IPv6 for VXLAN/GRE encap-ed packets, But fenced
-       * encap-ed IPv6 packets are still allowed.
-       */
-      if ((l2Header->type != VMK_PKT_HEADER_L2_ETHERNET_FENCED) &&
-          (encapHeader->type != VMK_PKT_HEADER_ENCAP_GENEVE) &&
-          (status != VMK_OK ||
-           l3Header->nextHdrProto == VMK_PKT_HEADER_L3_IPv6)) {
-         /*
-          * Outer IP header not found or is IPv6 (not supported with VXLAN and
-          * GRE)
-          */
-         static uint32_t throttle = 0;
-         VMKLNX_THROTTLED_WARN(throttle,
-                               "%s: dropping encapsulated packet: no IP header"
-                               " or IPv6 (not supported)",
-                               dev->name);
-         ret = VMK_FAILURE;
-         goto done;
-      }
-
-      ret = vmk_PktHeaderEncapL2Find(pkt, &innerL2Header, NULL);
-      if (ret != VMK_OK) {
-         static uint32_t throttle = 0;
-         VMKLNX_THROTTLED_WARN(throttle,
-                               "%s: failed to find inner ethernet header "
-                               "for encapsulated frame",
-                               dev->name);
-         goto done;
-      }
-      ehLen = innerL2Header->nextHdrOffset;
-
-      ret = vmk_PktHeaderEncapL3Find(pkt, &innerL3Header, NULL);
-      if (ret != VMK_OK) {
-         static uint32_t throttle = 0;
-         VMKLNX_THROTTLED_WARN(throttle,
-                               "%s: failed to find inner IP header "
-                               "for encapsulated frame",
-                               dev->name);
-         goto done;
-      }
-      ipHdrLength = vmk_PktHeaderLength(innerL3Header);
-      protocol = innerL3Header->nextHdrProto;
-
-      switch (encapHeader->type) {
-      case VMK_PKT_HEADER_ENCAP_VXLAN:
-         if (dev->features & NETIF_F_ENCAP) {
-            setup_vxlan_offload(skb, innerL3Header);
-            pkt_encap = VMK_TRUE;
-         } else if ((dev->features & oboFlags) != 0) {
-            setup_offset_based_offload(skb, innerL3Header, ehLen, ipHdrLength,
-                                       &pkt_ipv4, &ipVersion);
-         }
-         break;
-
-      case VMK_PKT_HEADER_ENCAP_GRE:
-      case VMK_PKT_HEADER_L2_ETHERNET_FENCED:
-         if ((dev->features & oboFlags) != 0) {
-            setup_offset_based_offload(skb, innerL3Header, ehLen, ipHdrLength,
-                                       &pkt_ipv4, &ipVersion);
-         }
-         break;
-
-      case VMK_PKT_HEADER_ENCAP_GENEVE:
-         if (dev->features & NETIF_F_GENEVE_OFFLOAD) {
-            vmk_PktHeaderEntry *innerL4;
-
-            /*
-             * Uplink layer should never pass down an encapsulated packet having
-             * inner L7 offset exceeds NIC's offload limit.
-             */
-            ret = vmk_PktHeaderEncapL4Find(pkt, &innerL4, NULL);
-            if (ret == VMK_OK) {
-               LinNetDev *linDev = get_LinNetDev(dev);
-
-               /*
-                * NIC has no Geneve offload limit or inner L7 offset is within
-                * the limit, setup Geneve offload in skb.
-                */
-               if (linDev->geneve_inner_l7_offset_limit == 0 ||
-                   innerL4->nextHdrOffset <= linDev->geneve_inner_l7_offset_limit) {
-                  setup_geneve_offload(skb, innerL3Header);
-                  pkt_encap = VMK_TRUE;
-               }
-
-#ifdef VMX86_DEBUG
-               /*
-                * if inner L7's offset exceeds hardware offload limit and offset
-                * based offload is not supported, it's most likely caused by the
-                * stress option in packet parser. Write a log message and fail
-                * the conversion.
-                */
-               if ((dev->features & oboFlags) == 0 &&
-                    innerL4->nextHdrOffset > linDev->geneve_inner_l7_offset_limit) {
-                  ret = VMK_FAILURE;
-                  VMKLNX_WARN("%s: inner L7 header offset exceeds hardware's "
-                              "offload capability limit. (%d > %d)",
-                              dev->name, innerL4->nextHdrOffset,
-                              linDev->geneve_inner_l7_offset_limit);
-                  goto done;
-               }
-#endif
-            } else {
-               static uint32_t logThrottleCounter = 0;
-               VMKLNX_THROTTLED_WARN(logThrottleCounter,
-                                     "%s: Failed to find inner L4 header, err: %#x",
-                                     dev->name, ret);
-               goto done;
-            }
-         }
-
-         /* if Geneve offload can't help, try offset based offload. */
-         if (!pkt_encap) {
-            if ((dev->features & oboFlags) != 0) {
-               setup_offset_based_offload(skb, innerL3Header, ehLen, ipHdrLength,
-                                          &pkt_ipv4, &ipVersion);
-            } else {
-               static uint32_t logThrottleCounter = 0;
-               VMKLNX_THROTTLED_WARN(logThrottleCounter,
-                                     "%s: Failed to a proper encap offload engine "
-                                     "to process Geneve encap-ed packet.",
-                                     dev->name);
-               ret = VMK_FAILURE;
-               goto done;
-            }
-         }
-         break;
-
-      default:
-         {
-            static uint32_t logThrottleCounter = 0;
-            VMKLNX_THROTTLED_WARN(logThrottleCounter,
-                                  "%s: unsupported encap header type: %#x",
-                                  dev->name, encapHeader->type);
+         } else {
+            static uint32_t throttle = 0;
+            VMKLNX_THROTTLED_WARN(throttle,
+                                  "%s: dropping packet due to parsing failure",
+                                  dev->name);
             ret = VMK_FAILURE;
             goto done;
          }
-         break;
+      }
+
+      /*
+       * setup encapsulation offload meta data in skb if checksum or TCP
+       * segmentation offloading is requested on an encapsulated packet.
+       */
+      if (vmk_PktIsEncapsulatedFrame(pkt)) {
+         vmk_PktHeaderEntry *innerL2Header, *innerL3Header;
+
+         ret = vmk_PktHeaderEncapFind(pkt, &encapHeader, NULL);
+         if (ret != VMK_OK) {
+            static uint32_t throttle = 0;
+            VMKLNX_THROTTLED_WARN(throttle,
+                                  "%s: failed to find encap header for "
+                                  "encapsulated frame", dev->name);
+            goto done;
+         }
+
+         /*
+          * don't allow outer IPv6 for VXLAN/GRE encap-ed packets, But fenced
+          * encap-ed IPv6 packets are still allowed.
+          */
+         if ((l2Header->type != VMK_PKT_HEADER_L2_ETHERNET_FENCED) &&
+             (encapHeader->type != VMK_PKT_HEADER_ENCAP_GENEVE) &&
+             (status != VMK_OK ||
+              l3Header->nextHdrProto == VMK_PKT_HEADER_L3_IPv6)) {
+            /*
+             * Outer IP header not found or is IPv6 (not supported with VXLAN and
+             * GRE)
+             */
+            static uint32_t throttle = 0;
+            VMKLNX_THROTTLED_WARN(throttle,
+                                  "%s: dropping encapsulated packet: no IP header"
+                                  " or IPv6 (not supported)",
+                                  dev->name);
+            ret = VMK_FAILURE;
+            goto done;
+         }
+
+         ret = vmk_PktHeaderEncapL2Find(pkt, &innerL2Header, NULL);
+         if (ret != VMK_OK) {
+            static uint32_t throttle = 0;
+            VMKLNX_THROTTLED_WARN(throttle,
+                                  "%s: failed to find inner ethernet header "
+                                  "for encapsulated frame",
+                                  dev->name);
+            goto done;
+         }
+         ehLen = innerL2Header->nextHdrOffset;
+
+         ret = vmk_PktHeaderEncapL3Find(pkt, &innerL3Header, NULL);
+         if (ret != VMK_OK) {
+            static uint32_t throttle = 0;
+            VMKLNX_THROTTLED_WARN(throttle,
+                                  "%s: failed to find inner IP header "
+                                  "for encapsulated frame",
+                                  dev->name);
+            goto done;
+         }
+         ipHdrLength = vmk_PktHeaderLength(innerL3Header);
+         protocol = innerL3Header->nextHdrProto;
+
+         switch (encapHeader->type) {
+         case VMK_PKT_HEADER_ENCAP_VXLAN:
+            if (dev->features & NETIF_F_ENCAP) {
+               setup_vxlan_offload(skb, innerL3Header);
+               pkt_encap = VMK_TRUE;
+            } else if ((dev->features & oboFlags) != 0) {
+               setup_offset_based_offload(skb, innerL3Header, ehLen, ipHdrLength,
+                                          &pkt_ipv4, &ipVersion);
+            }
+            break;
+
+         case VMK_PKT_HEADER_ENCAP_GRE:
+         case VMK_PKT_HEADER_L2_ETHERNET_FENCED:
+            if ((dev->features & oboFlags) != 0) {
+               setup_offset_based_offload(skb, innerL3Header, ehLen, ipHdrLength,
+                                          &pkt_ipv4, &ipVersion);
+            }
+            break;
+
+         case VMK_PKT_HEADER_ENCAP_GENEVE:
+            if (dev->features & NETIF_F_GENEVE_OFFLOAD) {
+               vmk_PktHeaderEntry *innerL4;
+
+               /*
+                * Uplink layer should never pass down an encapsulated packet having
+                * inner L7 offset exceeds NIC's offload limit.
+                */
+               ret = vmk_PktHeaderEncapL4Find(pkt, &innerL4, NULL);
+               if (ret == VMK_OK) {
+                  LinNetDev *linDev = get_LinNetDev(dev);
+
+                  /*
+                   * NIC has no Geneve offload limit or inner L7 offset is within
+                   * the limit, setup Geneve offload in skb.
+                   */
+                  if (linDev->geneve_inner_l7_offset_limit == 0 ||
+                      innerL4->nextHdrOffset <= linDev->geneve_inner_l7_offset_limit) {
+                     setup_geneve_offload(skb, innerL3Header);
+                     pkt_encap = VMK_TRUE;
+                  }
+
+#ifdef VMX86_DEBUG
+                  /*
+                   * if inner L7's offset exceeds hardware offload limit and offset
+                   * based offload is not supported, it's most likely caused by the
+                   * stress option in packet parser. Write a log message and fail
+                   * the conversion.
+                   */
+                  if ((dev->features & oboFlags) == 0 &&
+                       innerL4->nextHdrOffset > linDev->geneve_inner_l7_offset_limit) {
+                     ret = VMK_FAILURE;
+                     VMKLNX_WARN("%s: inner L7 header offset exceeds hardware's "
+                                 "offload capability limit. (%d > %d)",
+                                 dev->name, innerL4->nextHdrOffset,
+                                 linDev->geneve_inner_l7_offset_limit);
+                     goto done;
+                  }
+#endif
+               } else {
+                  static uint32_t logThrottleCounter = 0;
+                  VMKLNX_THROTTLED_WARN(logThrottleCounter,
+                                        "%s: Failed to find inner L4 header, err: %#x",
+                                        dev->name, ret);
+                  goto done;
+               }
+            }
+
+            /* if Geneve offload can't help, try offset based offload. */
+            if (!pkt_encap) {
+               if ((dev->features & oboFlags) != 0) {
+                  setup_offset_based_offload(skb, innerL3Header, ehLen, ipHdrLength,
+                                             &pkt_ipv4, &ipVersion);
+               } else {
+                  static uint32_t logThrottleCounter = 0;
+                  VMKLNX_THROTTLED_WARN(logThrottleCounter,
+                                        "%s: Failed to a proper encap offload engine "
+                                        "to process Geneve encap-ed packet.",
+                                        dev->name);
+                  ret = VMK_FAILURE;
+                  goto done;
+               }
+            }
+            break;
+
+         default:
+            {
+               static uint32_t logThrottleCounter = 0;
+               VMKLNX_THROTTLED_WARN(logThrottleCounter,
+                                     "%s: unsupported encap header type: %#x",
+                                     dev->name, encapHeader->type);
+               ret = VMK_FAILURE;
+               goto done;
+            }
+            break;
+         }
       }
    }
 
 #ifdef VMX86_DEBUG
-   vmk_PktHeaderEntry *l4Header;
-   vmk_uint16 l4HeaderLen;
+   if (offloadNeeded) {
+      vmk_PktHeaderEntry *l4Header;
+      vmk_uint16 l4HeaderLen;
 
-   status = vmk_PktHeaderL4Find(pkt, &l4Header, NULL);
-   if (status == VMK_OK) {
-      l4HeaderLen = vmk_PktHeaderLength(l4Header);
-   } else {
-      l4HeaderLen = 0;
+      status = vmk_PktHeaderL4Find(pkt, &l4Header, NULL);
+      if (status == VMK_OK) {
+         l4HeaderLen = vmk_PktHeaderLength(l4Header);
+      } else {
+         l4HeaderLen = 0;
+      }
+
+      VMKLNX_DEBUG(3, "inet layout %d %d %d protocol %x ipVers %d proto %x "
+                   "ipv4 %d csum %d tso %d",
+                   ehLen,
+                   ipHdrLength,
+                   l4HeaderLen,
+                   skb->protocol,
+                   protocol,
+                   pkt_ipv4,
+                   ipVersion,
+                   must_csum,
+                   must_tso);
    }
-
-   VMKLNX_DEBUG(3, "inet layout %d %d %d protocol %x ipVers %d proto %x "
-                "ipv4 %d csum %d tso %d",
-                ehLen,
-                ipHdrLength,
-                l4HeaderLen,
-                skb->protocol,
-                protocol,
-                pkt_ipv4,
-                ipVersion,
-                must_csum,
-                vmk_PktIsLargeTcpPacket(pkt));
 #endif
 
    VMKLNX_DEBUG(10, "head: %u bytes at VA 0x%p", headLen, skb->head);
@@ -2331,7 +2340,6 @@ map_pkt_to_skb(struct net_device *dev,
     * See if the packet requires checksum offloading or TSO
     */
 
-   must_tso = vmk_PktIsLargeTcpPacket(pkt);
 
    if (must_tso) {
       vmk_uint32 tsoMss = vmk_PktGetLargeTcpPacketMss(pkt);
@@ -2422,7 +2430,7 @@ map_pkt_to_skb(struct net_device *dev,
       }
    }
 
-   if (must_csum || must_tso) {
+   if (offloadNeeded) {
 
       switch (protocol) {
 
@@ -5684,7 +5692,8 @@ marshall_from_vmknetq_id(vmk_NetqueueQueueID vmkqid,
 static inline VMK_ReturnStatus
 marshall_from_vmknetq_filter_type(vmk_NetqueueFilter *vmkfilter,
                                   vmknetddi_queueops_filter_t *filter,
-                                  vmknetddi_queueops_vxlan_filter_t *vxlan_filter)
+                                  vmknetddi_queueops_vxlan_filter_t *vxlan_filter,
+                                  vmknetddi_queueops_geneve_filter_t *geneve_filter)
 {
    if (vmkfilter->class != VMK_UPLINK_QUEUE_FILTER_CLASS_MAC_ONLY &&
        vmkfilter->class != VMK_UPLINK_QUEUE_FILTER_CLASS_VLAN_ONLY &&
@@ -6395,6 +6404,7 @@ netqueue_op_realloc_queue_with_attr(void *clientData,
       (vmk_NetqueueOpApplyRxFilterArgs *)vmkreallocargs->applyRxFilterArgs;
    vmknetddi_queueop_apply_rx_filter_args_t  applyrxfilterargs;
    vmknetddi_queueops_vxlan_filter_t vxlan_filter;
+   vmknetddi_queueops_geneve_filter_t geneve_filter;
 
    if (vmkargs->nattr == 0) {
       //realloc op can be called without attribues in case pre-emption of no-featurs-netq
@@ -6427,7 +6437,8 @@ netqueue_op_realloc_queue_with_attr(void *clientData,
   
    ret = marshall_from_vmknetq_filter_type(&vmkapplyrxfilterargs->filter,
                                            &applyrxfilterargs.filter,
-                                           &vxlan_filter);
+                                           &vxlan_filter,
+                                           &geneve_filter);
    VMK_ASSERT(ret == VMK_OK);
    if (ret != VMK_OK) {
       return ret;
@@ -6866,6 +6877,7 @@ netqueue_op_apply_rx_filter(void *clientData,
    VMK_ReturnStatus ret;
    vmknetddi_queueop_apply_rx_filter_args_t args;
    vmknetddi_queueops_vxlan_filter_t vxlan_filter;
+   vmknetddi_queueops_geneve_filter_t geneve_filter;
 
    vmk_NetqueueOpApplyRxFilterArgs *vmkargs =
       (vmk_NetqueueOpApplyRxFilterArgs *)opArgs;
@@ -6889,7 +6901,8 @@ netqueue_op_apply_rx_filter(void *clientData,
 
    ret = marshall_from_vmknetq_filter_type(&vmkargs->filter,
                                            &args.filter,
-                                           &vxlan_filter);
+                                           &vxlan_filter,
+                                           &geneve_filter);
    VMK_ASSERT(ret == VMK_OK);
    if (ret != VMK_OK) {
       return ret;
@@ -8424,10 +8437,10 @@ SetCoalesceParams(vmk_AddrCookie cookie, vmk_UplinkCoalesceParams *coalesceParam
          coalesce.rate_sample_interval = coalesceParams->rateSampleInterval;
 
          coalesce.cmd = ETHTOOL_SCOALESCE;
-         VMKAPI_MODULE_CALL(dev->module_id, 
-                            ret, 
-                            ops->set_coalesce, 
-                            dev, 
+         VMKAPI_MODULE_CALL(dev->module_id,
+                            ret,
+                            ops->set_coalesce,
+                            dev,
                             &coalesce);
       }
       rtnl_unlock();
@@ -12078,7 +12091,7 @@ EXPORT_SYMBOL(vmklnx_skb_real_size);
  */
 static void
 LinNetEvent_cb_workq(struct work_struct *work)
-{
+{ 
    struct LinNetEventCB_Task *eventCB_task, *eventCB_temp;
    struct list_head temp_list;
    struct LinNetEventCB *eventCB;
@@ -12092,7 +12105,7 @@ LinNetEvent_cb_workq(struct work_struct *work)
    // First remove all entries from LinNetEventCB_WorkQ_List and put them
    // in the temporary list.
    spin_lock(&LinNetEventCB_WorkQ_List.lock);
-   list_for_each_entry_safe(eventCB_task, eventCB_temp,
+   list_for_each_entry_safe(eventCB_task, eventCB_temp, 
                             &LinNetEventCB_WorkQ_List.head, head) {
       eventCB = eventCB_task->eventCB;
       list_del(&eventCB_task->head);
@@ -12315,7 +12328,7 @@ vmklnx_unregister_event_callback(void *cdHdl)
    }
 
    spin_lock(&LinNetEventCB_WorkQ_List.lock);
-   list_for_each_entry_safe(eventCB_task, eventCB_temp,
+   list_for_each_entry_safe(eventCB_task, eventCB_temp, 
                             &LinNetEventCB_WorkQ_List.head, head) {
       if (eventCB_task->eventCB == eventCB) {
          vmk_AtomicDec64(&eventCB->refCount);

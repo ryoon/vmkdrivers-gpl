@@ -67,8 +67,7 @@ static inline void out##s(unsigned x value, unsigned short port) {
 
 #if defined(__VMKLNX__)
 #define __OUT2(s,s1,s2) \
-vmk_CPUEnsureClearDF(); \
-__asm__ __volatile__ ("out" #s " %" s1 "0,%" s2 "1"
+__asm__ __volatile__ ("cld\n" "out" #s " %" s1 "0,%" s2 "1"
 #else /* !defined(__VMKLNX__) */
 #define __OUT2(s,s1,s2) \
 __asm__ __volatile__ ("out" #s " %" s1 "0,%" s2 "1"
@@ -83,8 +82,7 @@ static inline RETURN_TYPE in##s(unsigned short port) { RETURN_TYPE _v;
 
 #if defined(__VMKLNX__)
 #define __IN2(s,s1,s2) \
-vmk_CPUEnsureClearDF(); \
-__asm__ __volatile__ ("in" #s " %" s2 "1,%" s1 "0"
+__asm__ __volatile__ ("cld\n" "in" #s " %" s2 "1,%" s1 "0"
 #else /* !defined(__VMKLNX__) */
 #define __IN2(s,s1,s2) \
 __asm__ __volatile__ ("in" #s " %" s2 "1,%" s1 "0"
@@ -98,8 +96,7 @@ __IN1(s##_p) __IN2(s,s1,"w") __FULL_SLOW_DOWN_IO : "=a" (_v) : "Nd" (port) ,##i 
 #define __INS(s) \
 static inline void ins##s(unsigned short port, void * addr, unsigned long count) \
 { \
- vmk_CPUEnsureClearDF(); \
- __asm__ __volatile__ ("rep ; ins" #s \
+ __asm__ __volatile__ ("cld\n" "rep ; ins" #s \
 : "=D" (addr), "=c" (count) : "d" (port),"0" (addr),"1" (count)); }
 #else /* !defined(__VMKLNX__) */
 #define __INS(s) \
@@ -112,8 +109,7 @@ static inline void ins##s(unsigned short port, void * addr, unsigned long count)
 #define __OUTS(s) \
 static inline void outs##s(unsigned short port, const void * addr, unsigned long count) \
 { \
- vmk_CPUEnsureClearDF(); \
- __asm__ __volatile__ ("rep ; outs" #s \
+ __asm__ __volatile__ ("cld\n" "rep ; outs" #s \
 : "=S" (addr), "=c" (count) : "d" (port),"0" (addr),"1" (count)); }
 #else /* !defined(__VMKLNX__) */
 #define __OUTS(s) \

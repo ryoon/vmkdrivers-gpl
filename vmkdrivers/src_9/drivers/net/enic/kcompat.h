@@ -20,6 +20,12 @@
 #ifndef _KCOMPAT_H_
 #define _KCOMPAT_H_
 
+#ifdef __GNUC__
+#  define UNUSED(x) UNUSED_ ## x __attribute__((__unused__))
+#else
+#  define UNUSED(x) UNUSED_ ## x
+#endif
+
 
 #include <linux/version.h>
 #include <linux/netdevice.h>
@@ -28,6 +34,11 @@
 #ifndef PCI_VENDOR_ID_CISCO
 #define PCI_VENDOR_ID_CISCO	0x1137
 #endif
+
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 21))
+#define ENIC_AIC
+#endif
+
 
 /*
  * Kernel backward-compatibility definitions
@@ -120,6 +131,60 @@
 #define PORT_PROFILE_MAX 40
 #define PORT_UUID_MAX  16
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 3, 0))
+#include <net/flow_keys.h>
+#else
+#include <net/ip.h>
+#include <stdbool.h>
+
+struct flow_keys {
+	__be32 src;
+	__be32 dst;
+	union {
+		__be32 ports;
+		__be16 port16[2];
+	};
+	u8 ip_proto;
+};
+
+#endif /*LINUX >= 3.3.0*/
+
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3, 14, 0))
+#define skb_get_hash_raw(skb) (skb)->rxhash
+#endif
+
+#if !defined(__VMKLNX__) && (LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 24))
+#define enic_wq_lock(wq_lock) spin_lock_irqsave(wq_lock, flags)
+#define enic_wq_unlock(wq_lock) spin_unlock_irqrestore(wq_lock, flags)
+#else
+#define enic_wq_lock(wq_lock) spin_lock(wq_lock)
+#define enic_wq_unlock(wq_lock) spin_unlock(wq_lock)
+#endif /* ! vmklnx && kernel < 2.6.24 */
+
+
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3, 5, 00))
+#define ether_addr_equal(i, j) (!(compare_ether_addr(i, j)))
+#endif /* LINUX_VERSION_CODE < 3.5.0 */
+
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3, 9, 00))
+#define NETIF_F_HW_VLAN_CTAG_RX NETIF_F_HW_VLAN_RX
+#define NETIF_F_HW_VLAN_CTAG_TX NETIF_F_HW_VLAN_TX
+#define enic_hlist_for_each_entry_safe(a, b, c, d, e) hlist_for_each_entry_safe(a, b, c, d, e)
+#define enic_hlist_for_each_entry(a, b, c, d) hlist_for_each_entry(a, b, c, d)
+#else
+#define enic_hlist_for_each_entry_safe(a, b, c, d, e) hlist_for_each_entry_safe(a, c, d, e)
+#define enic_hlist_for_each_entry(a, b, c, d) hlist_for_each_entry(a, c, d)
+#endif /*KERNEL_VERSION > 3.9.0 */
+
+#define napi_hash_del(napi) do {} while(0)
+#define napi_hash_add(napi) do {} while(0)
+#define skb_mark_napi_id(skb, napi) do {} while(0)
+
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3, 9, 00))
+#define __vlan_hwaccel_put_tag(a, b, c) __vlan_hwaccel_put_tag(a, c);
+#endif /* KERNEL < 3.9.0 */
+
+
 /* Kernel version-specific definitions */
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 14))
 static inline signed long schedule_timeout_uninterruptible(signed long timeout)
@@ -165,14 +230,14 @@ static inline int kcompat_skb_linearize(struct sk_buff *skb, int gfp)
 #define skb_transport_offset(skb) (skb->h.raw - skb->data)
 #endif
 
-#elif (LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 38)) && \
-    ((!RHEL_RELEASE_CODE) || (RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(6, 4)))
-
+#elif (LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 38))
+#if ((!RHEL_RELEASE_CODE) || \
+    (RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(6, 4)))
 static inline int skb_checksum_start_offset(const struct sk_buff *skb)
 {
 	return skb->csum_start - skb_headroom(skb);
 }
-
+#endif /* RHEL < 6.4 */
 #endif /* LINUX_VERSION_CODE < 2.6.22 */
 
 
@@ -180,11 +245,13 @@ static inline int skb_checksum_start_offset(const struct sk_buff *skb)
 		for ((var) = (start), (index) = 0; (index) < (count); \
 			(var) = sg_next(var), (index)++)
 #define kmem_cache kmem_cache_s
+#define local_bh_disable() do { } while (0)
+#define local_bh_enable() do { } while (0)
 
 
 #if ((LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 29)) && \
-     (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 24))) || \
-    defined(__VMKLNX__)
+	(LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 24))) || \
+	defined(__VMKLNX__)
 
 #define napi_schedule_prep(napi) netif_rx_schedule_prep((napi)->dev, napi)
 #define napi_schedule(napi) netif_rx_schedule((napi)->dev, napi)
@@ -243,6 +310,7 @@ struct napi_struct {
 		_ecmd->speed = _speed;		\
 	} while (0)
 
+
 #endif /* LINUX_VERSION_CODE < 2.6.27 */
 
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 28))
@@ -252,6 +320,8 @@ struct napi_struct {
 #undef pr_err
 #define pr_err(fmt, ...) \
 	printk(KERN_ERR pr_fmt(fmt), ##__VA_ARGS__)
+#undef pr_warn
+#define pr_warn pr_warning
 #undef pr_warning
 #define pr_warning(fmt, ...) \
 	printk(KERN_WARNING pr_fmt(fmt), ##__VA_ARGS__)
@@ -263,7 +333,7 @@ struct napi_struct {
 #endif /* LINUX_VERSION_CODE < 2.6.28 */
 
 /*
- * We want this to be dependent on NETIF_F_GRO instead of kernel version, 
+ * We want this to be dependent on NETIF_F_GRO instead of kernel version,
  * because of past bugs we have seen.
  */
 #ifndef NETIF_F_GRO
@@ -293,7 +363,7 @@ static inline struct sk_buff *kcompat_netdev_alloc_skb_ip_align(
 
 #if ((!RHEL_RELEASE_CODE) || \
 	(RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(5, 6)) || \
-	(RHEL_RELEASE_CODE == RHEL_RELEASE_VERSION(6,0)))
+	(RHEL_RELEASE_CODE == RHEL_RELEASE_VERSION(6, 0)))
 #define netdev_for_each_mc_addr(mclist, dev) \
 	for (mclist = dev->mc_list; mclist; mclist = mclist->next)
 #endif
@@ -336,7 +406,35 @@ static inline const char *netdev_name(const struct net_device *dev)
 	netdev_printk(KERN_INFO, dev, format, ##args)
 #endif
 
+/* To enable multi-wq capablity for netqueue from esxi5.0 onwards */
+#define netif_set_real_num_tx_queues(_dev, _txq)\
+	do {					\
+		(_dev)->real_num_tx_queues = _txq; \
+	} while (0)	
+
 #endif /* LINUX_VERSION_CODE < 2.6.34 */
+
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 37))
+#if ((!RHEL_RELEASE_CODE) || \
+		(RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(6, 4)))
+#define netif_set_real_num_rx_queues(_dev, _rxq) do {} while (0)
+#endif
+#endif /* LINUX_VERSION_CODE < 2.6.37 */
+
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 38))
+#if ((!RHEL_RELEASE_CODE) || \
+		(RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(6, 2)))
+#define alloc_etherdev_mqs(n, tx, rx) alloc_etherdev_mq(n, max_t(int, tx, rx))
+#define call_netdevice_notifiers(_val, _dev) do {} while (0)
+#endif
+#endif /* LINUX_VERSION_CODE < 2.6.38 */
+
+/* skb_record_rx_queue() required for netqueue from 
+ * esxi5.0 onwards so we need to redfine it
+ */
+#define skb_record_rx_queue(_skb, _rxq) \
+		vmknetddi_queueops_set_skb_queueid((_skb), \
+			VMKNETDDI_QUEUEOPS_MK_RX_QUEUEID((_rxq)))
 
 #if (LINUX_VERSION_CODE <= KERNEL_VERSION(3, 1, 00))
 #define skb_frag_dma_map(_dev, _frag, _offset, _size, _dir) \
@@ -344,7 +442,10 @@ static inline const char *netdev_name(const struct net_device *dev)
 		_size, _dir)
 #endif /* LINUX_VERSION_CODE <= 3.1.0 */
 
-/* Don't forget about MIPS, include it last */
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3, 2, 00))
+#define skb_frag_size(frag) frag->size
+#endif /* LINUX_VERSION_CODE < 3.2.0 */
 
+/* Don't forget about MIPS, include it last */
 
 #endif /* _KCOMPAT_H_ */

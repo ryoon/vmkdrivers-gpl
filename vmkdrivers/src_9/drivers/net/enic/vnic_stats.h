@@ -62,6 +62,7 @@ struct vnic_rx_stats {
 	u64 rsvd[16];
 };
 
+
 struct vnic_stats {
 	struct vnic_tx_stats tx;
 	struct vnic_rx_stats rx;

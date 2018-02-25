@@ -23,6 +23,7 @@
 #include "enic_res.h"
 #include "enic.h"
 #include "enic_dev.h"
+#include "enic_clsf.h"
 #include "enic_ethtool.h"
 
 struct enic_stat {
@@ -34,6 +35,7 @@ struct enic_stat {
 	{ .name = #stat, .offset = offsetof(struct vnic_tx_stats, stat) / 8 }
 #define ENIC_RX_STAT(stat)	\
 	{ .name = #stat, .offset = offsetof(struct vnic_rx_stats, stat) / 8 }
+
 
 static const struct enic_stat enic_tx_stats[] = {
 	ENIC_TX_STAT(tx_frames_ok),
@@ -76,6 +78,17 @@ static const struct enic_stat enic_rx_stats[] = {
 static const unsigned int enic_n_tx_stats = ARRAY_SIZE(enic_tx_stats);
 static const unsigned int enic_n_rx_stats = ARRAY_SIZE(enic_rx_stats);
 
+void enic_intr_coal_set_rx(struct enic *enic, u32 timer)
+{
+	int i;
+	int intr;
+
+	for (i = 0; i < enic->rq_count; i++) {
+		intr = enic_msix_rq_intr(enic, i);
+		vnic_intr_coalescing_timer_set(&enic->intr[intr], timer);
+	}
+}
+
 static int enic_get_settings(struct net_device *netdev,
 	struct ethtool_cmd *ecmd)
 {
@@ -104,15 +117,18 @@ static void enic_get_drvinfo(struct net_device *netdev,
 {
 	struct enic *enic = netdev_priv(netdev);
 	struct vnic_devcmd_fw_info *fw_info;
+	int err;
 
-	enic_dev_fw_info(enic, &fw_info);
-
-	strncpy(drvinfo->driver, DRV_NAME, sizeof(drvinfo->driver));
-	strncpy(drvinfo->version, DRV_VERSION, sizeof(drvinfo->version));
-	strncpy(drvinfo->fw_version, fw_info->fw_version,
+	err = enic_dev_fw_info(enic, &fw_info);
+	if (err == -ENOMEM)
+		return;
+	strlcpy(drvinfo->driver, DRV_NAME, sizeof(drvinfo->driver));
+	strlcpy(drvinfo->version, DRV_VERSION, sizeof(drvinfo->version));
+	strlcpy(drvinfo->fw_version, fw_info->fw_version,
 		sizeof(drvinfo->fw_version));
-	strncpy(drvinfo->bus_info, pci_name(enic->pdev),
+	strlcpy(drvinfo->bus_info, pci_name(enic->pdev),
 		sizeof(drvinfo->bus_info));
+	memset(drvinfo->reserved1, 0, sizeof(drvinfo->reserved1));
 }
 
 static u32 enic_get_msglevel(struct net_device *netdev)
@@ -169,9 +185,11 @@ static void enic_get_ethtool_stats(struct net_device *netdev,
 	struct enic *enic = netdev_priv(netdev);
 	struct vnic_stats *vstats;
 	unsigned int i;
-
-	enic_dev_stats_dump(enic, &vstats);
-
+	int err;
+	
+	err = enic_dev_stats_dump(enic, &vstats);
+	if (err == -ENOMEM)
+		return;
 	for (i = 0; i < enic_n_tx_stats; i++)
 		*(data++) = ((u64 *)&vstats->tx)[enic_tx_stats[i].offset];
 	for (i = 0; i < enic_n_rx_stats; i++)
@@ -248,17 +266,23 @@ static int enic_set_coalesce(struct net_device *netdev,
 	struct enic *enic = netdev_priv(netdev);
 	u32 tx_coalesce_usecs;
 	u32 rx_coalesce_usecs;
+        u32 coalesce_usecs_max;
 	unsigned int i, intr;
 
-	tx_coalesce_usecs = min_t(u32, ecmd->tx_coalesce_usecs,
-		vnic_dev_get_intr_coal_timer_max(enic->vdev));
+        coalesce_usecs_max = vnic_dev_get_intr_coal_timer_max(enic->vdev);
+
+        tx_coalesce_usecs = min_t(u32, ecmd->tx_coalesce_usecs,
+				  coalesce_usecs_max);
+
 	rx_coalesce_usecs = min_t(u32, ecmd->rx_coalesce_usecs,
-		vnic_dev_get_intr_coal_timer_max(enic->vdev));
+				  coalesce_usecs_max);
+
 
 	switch (vnic_dev_get_intr_mode(enic->vdev)) {
 	case VNIC_DEV_INTR_MODE_INTX:
 		if (tx_coalesce_usecs != rx_coalesce_usecs)
 			return -EINVAL;
+
 
 		intr = enic_legacy_io_intr();
 		vnic_intr_coalescing_timer_set(&enic->intr[intr],
@@ -267,6 +291,7 @@ static int enic_set_coalesce(struct net_device *netdev,
 	case VNIC_DEV_INTR_MODE_MSI:
 		if (tx_coalesce_usecs != rx_coalesce_usecs)
 			return -EINVAL;
+
 
 		vnic_intr_coalescing_timer_set(&enic->intr[0],
 			tx_coalesce_usecs);
@@ -277,23 +302,119 @@ static int enic_set_coalesce(struct net_device *netdev,
 			vnic_intr_coalescing_timer_set(&enic->intr[intr],
 				tx_coalesce_usecs);
 		}
-
-		for (i = 0; i < enic->rq_count; i++) {
-			intr = enic_msix_rq_intr(enic, i);
-			vnic_intr_coalescing_timer_set(&enic->intr[intr],
-				rx_coalesce_usecs);
-		}
-
-		break;
-	default:
-		break;
-	}
+		enic_intr_coal_set_rx(enic, rx_coalesce_usecs);
+                break;
+        default:
+                break;
+        }
 
 	enic->tx_coalesce_usecs = tx_coalesce_usecs;
 	enic->rx_coalesce_usecs = rx_coalesce_usecs;
 
 	return 0;
 }
+
+#if (LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 29))
+static int enic_grxclsrlall(struct enic *enic, struct ethtool_rxnfc *cmd,
+			    u32 *rule_locs)
+{
+	int j, ret = 0, cnt = 0;
+
+	cmd->data = enic->rfs_h.max - enic->rfs_h.free;
+	for (j = 0; j < (1 << ENIC_RFS_FLW_BITSHIFT); j++) {
+		struct hlist_head *hhead;
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3, 9, 00))
+		struct hlist_node *pos;
+#endif
+		struct hlist_node *tmp;
+		struct enic_rfs_fltr_node *n;
+
+		hhead = &enic->rfs_h.ht_head[j];
+		enic_hlist_for_each_entry_safe(n, pos, tmp, hhead, node) {
+			if (cnt == cmd->rule_cnt)
+				return -EMSGSIZE;
+			rule_locs[cnt] = n->fltr_id;
+			cnt++;
+		}
+	}
+	cmd->rule_cnt = cnt;
+
+	return ret;
+}
+
+static int enic_grxclsrule(struct enic *enic, struct ethtool_rxnfc *cmd)
+{
+	struct ethtool_rx_flow_spec *fsp =
+				(struct ethtool_rx_flow_spec *)&cmd->fs;
+	struct enic_rfs_fltr_node *n;
+
+	n = htbl_fltr_search(enic, (u16)fsp->location);
+	if (!n)
+		return -EINVAL;
+	switch (n->keys.ip_proto) {
+	case IPPROTO_TCP:
+		fsp->flow_type = TCP_V4_FLOW;
+		break;
+	case IPPROTO_UDP:
+		fsp->flow_type = UDP_V4_FLOW;
+		break;
+	default:
+		return -EINVAL;
+		break;
+	}
+
+	fsp->h_u.tcp_ip4_spec.ip4src = n->keys.src;
+	fsp->h_u.tcp_ip4_spec.ip4dst = n->keys.dst;
+	fsp->h_u.tcp_ip4_spec.psrc = n->keys.port16[0];
+	fsp->h_u.tcp_ip4_spec.pdst = n->keys.port16[1];
+	fsp->ring_cookie = n->rq_id;
+
+	fsp->m_u.tcp_ip4_spec.ip4src = (__u32)~0;
+	fsp->m_u.tcp_ip4_spec.ip4dst = (__u32)~0;
+	fsp->m_u.tcp_ip4_spec.psrc = (__u16)~0;
+	fsp->m_u.tcp_ip4_spec.pdst = (__u16)~0;
+
+	return 0;
+}
+
+static int enic_get_rxnfc(struct net_device *dev, struct ethtool_rxnfc *cmd,
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3, 1, 0))
+			  void *rule_locs)
+#else
+			  u32 *rule_locs)
+#endif
+{
+	struct enic *enic = netdev_priv(dev);
+	int ret = 0;
+
+	switch (cmd->cmd) {
+	case ETHTOOL_GRXRINGS:
+		cmd->data = enic->rq_count;
+		break;
+	case ETHTOOL_GRXCLSRLCNT:
+		spin_lock_bh(&enic->rfs_h.lock);
+		cmd->rule_cnt = enic->rfs_h.max - enic->rfs_h.free;
+		cmd->data = enic->rfs_h.max;
+		spin_unlock_bh(&enic->rfs_h.lock);
+		break;
+	case ETHTOOL_GRXCLSRLALL:
+		spin_lock_bh(&enic->rfs_h.lock);
+		ret = enic_grxclsrlall(enic, cmd, rule_locs);
+		spin_unlock_bh(&enic->rfs_h.lock);
+		break;
+	case ETHTOOL_GRXCLSRULE:
+		spin_lock_bh(&enic->rfs_h.lock);
+		ret = enic_grxclsrule(enic, cmd);
+		spin_unlock_bh(&enic->rfs_h.lock);
+		break;
+	default:
+		ret = -EOPNOTSUPP;
+		break;
+	}
+
+	return ret;
+}
+#endif /* kernel > 2.6.29 */
 
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 32))
 static struct ethtool_ops enic_ethtool_ops = {
@@ -329,6 +450,9 @@ static const struct ethtool_ops enic_ethtool_ops = {
 #endif
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 24) && LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 36))
 	.set_flags = ethtool_op_set_flags,
+#endif
+#if (LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 29))
+	.get_rxnfc = enic_get_rxnfc,
 #endif
 };
 

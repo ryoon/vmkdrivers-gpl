@@ -2336,7 +2336,7 @@ int mlx4_HW2SW_CQ_wrapper(struct mlx4_dev *dev, int slave,
 {
 	int err;
 	int cqn = vhcr->in_modifier;
-	struct res_cq *cq;
+	struct res_cq *cq = NULL;
 
 	err = cq_res_start_move_to(dev, slave, cqn, RES_CQ_ALLOCATED, &cq);
 	if (err)
@@ -2519,7 +2519,7 @@ int mlx4_HW2SW_SRQ_wrapper(struct mlx4_dev *dev, int slave,
 {
 	int err;
 	int srqn = vhcr->in_modifier;
-	struct res_srq *srq;
+	struct res_srq *srq = NULL;
 
 	err = srq_res_start_move_to(dev, slave, srqn, RES_SRQ_ALLOCATED, &srq);
 	if (err)

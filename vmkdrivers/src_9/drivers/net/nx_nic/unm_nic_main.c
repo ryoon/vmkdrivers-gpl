@@ -692,6 +692,7 @@ nx_rcode_t nx_nic_handle_fw_response(nx_dev_handle_t drv_handle,
 
 void nx_init_napi (struct unm_adapter_s *adapter)
 {
+
 	int num_sds_rings = adapter->num_sds_rings;
 	int ring;
 
@@ -702,17 +703,6 @@ void nx_init_napi (struct unm_adapter_s *adapter)
 				adapter->MaxRxDescCount >> 2);
 	}
 }
-
-void nx_free_napi (struct unm_adapter_s *adapter)
-{
-	int num_sds_rings = adapter->num_sds_rings;
-	int ring;
-
-	for(ring = 0; ring < num_sds_rings; ring++)
-		netif_napi_del(&adapter->host_sds_rings[ring].napi);
-}
-
-
 /*
  * Function to enable napi interface for all rss rings
  */
@@ -2018,8 +2008,8 @@ err_out_disable_pdev:
 	mem_ptr0 = ioremap(mem_base, mem_len);
 	if (!mem_ptr0) {
 		err = -EIO;
-		goto err_ret_mapio;
-	}
+		goto err_ret;
+	}	
 	pci_len0 = mem_len;
 	first_page_group_start = 0;
 	first_page_group_end   = 0;
@@ -2049,8 +2039,8 @@ err_out_disable_pdev:
 		db_ptr = ioremap(db_base, UNM_DB_MAPSIZE_BYTES);
 		if (!db_ptr) {
 			err = -EIO;
-			goto err_ret_mapdb;
-		}
+			goto err_ret;
+		}	
 		NX_NIC_TRC_FN(adapter, cur_fn, adapter->ahw.pci_func);
 		NX_NIC_TRC_FN(adapter, cur_fn, pdev);
 	} else {
@@ -2091,13 +2081,13 @@ err_out_disable_pdev:
 			      "0 -> %p, 1 -> %p, 2 -> %p\n",
 			      mem_ptr0, mem_ptr1, mem_ptr2);
 		err = -EIO;
-		goto err_ret_eval;
+		goto err_ret;
 	}
 
 	if (db_len && db_ptr == 0UL) {
 		nx_nic_print3(NULL, "Failed to allocate doorbell map.\n");
 		err = -EIO;
-		goto err_ret_eval;
+		goto err_ret;
 	}
 
 	if (db_len) {
@@ -2174,7 +2164,7 @@ err_out_disable_pdev:
 	 */
 	if (initialize_adapter_hw(adapter) != 0) {
 		err = -EIO;
-		goto err_ret_hw_init;
+		goto err_ret;
 	}
 
 	/* Do not enable netq for all types of P3 quad gig cards.*/
@@ -2207,23 +2197,23 @@ err_out_disable_pdev:
 
 	err = nx_read_flashed_versions(adapter);
 	if (err) {
-		goto err_ret_hw_init;
+		goto err_ret;
 	}
 	/* Check flash fw compatiblity. Minimum fw required is 4.0.505 */
-	#define MIN_FLASH_FW_SUPP NX_FW_VERSION(4, 0, 505)
+	#define MIN_FLASH_FW_SUPP NX_FW_VERSION(4, 0, 505)	
 	if (NX_FW_VERSION(adapter->flash_ver.major, adapter->flash_ver.minor,
 	    adapter->flash_ver.sub) < MIN_FLASH_FW_SUPP) {
 		nx_nic_print3(NULL, "Minimum fw version supported is 4.0.505."
 			      "Please update firmware on flash.\n");
 		err = -EIO;
-		goto err_ret_hw_init;
+		goto err_ret;
 	}
 
 	unm_check_options(adapter);
 
 	err = nx_start_firmware(adapter);
 	if (err) {
-		goto err_ret_hw_init;
+		goto err_ret;
 	}
 
     api_lock(adapter);
@@ -2279,17 +2269,17 @@ err_out_disable_pdev:
 	if (err) {
 		nx_nic_print6(NULL, "Memory cannot be allocated");
 		err = -ENOMEM;
-		goto err_ret_alloc_dev;
+		goto err_ret;
 	}
 
 	adapter->nx_dev = nx_dev;
 
 	err = nx_alloc_adapter_sds_rings(adapter);
 	if (err) {
-		goto err_ret_alloc_dev;
+		goto err_ret;
 	}
 	nx_init_napi(adapter);
-
+	
 	if (adapter->multi_ctx)
 		NX_SET_NETQ_OPS(netdev, nx_nic_netqueue_ops);
 
@@ -2309,7 +2299,7 @@ err_out_disable_pdev:
 		if (err != 0) {
 			nx_nic_print3(NULL,
 					"LRO Initialization failed\n");
-			goto err_ret_sw_init;
+			goto err_ret;
 		}
 		NX_NIC_TRC_FN(adapter, cur_fn, NX_FW_CAPABILITY_LRO);
 	}
@@ -2343,9 +2333,9 @@ err_out_disable_pdev:
 
 	if ((err = register_netdev(netdev))) {
 		nx_nic_print3(NULL, "register_netdev failed\n");
-		goto err_ret_sw_init;
+		goto err_ret;
 	}
-	if(adapter->portnum == 0) {
+	if(adapter->portnum == 0) {	
 		adapter->auto_fw_reset = 1;
 		NXWR32(adapter,UNM_FW_RESET, 0);
 		adapter->fwload_failed_jiffies = jiffies;
@@ -2356,21 +2346,9 @@ err_out_disable_pdev:
 	NX_NIC_TRC_FN(adapter, cur_fn, 0);
 	return 0;
 
-err_ret_sw_init:
-	nx_free_napi(adapter);
-err_ret_alloc_dev:
-err_ret_hw_init:
-err_ret_eval:
-	iounmap(db_ptr);
-	adapter->ahw.db_base = 0;
-	adapter->ahw.db_len = 0;
-err_ret_mapdb:
-	iounmap(mem_ptr0);
-	adapter->ahw.pci_base0 = 0;
-	adapter->ahw.pci_len0 = 0;
-err_ret_mapio:
 err_ret:
-	if (adapter->portnum == 0)
+
+	if (adapter->portnum == 0) 
 		destroy_dummy_dma(adapter);
 
 	nx_release_fw(&adapter->nx_fw);
@@ -2511,8 +2489,6 @@ void nx_free_rx_resources(struct unm_adapter_s *adapter,
 		nxhal_host_rds_ring = &nxhal_rx_ctx->rds_rings[ring];
 		host_rds_ring =
 		    (rds_host_ring_t *) nxhal_host_rds_ring->os_data;
-		if (!host_rds_ring)
-			continue;
 		for (i = 0; i < nxhal_host_rds_ring->ring_size; ++i) {
 			buffer = &(host_rds_ring->rx_buf_arr[i]);
 			if (buffer->state == UNM_BUFFER_FREE) {
@@ -2852,10 +2828,8 @@ static void __devexit unm_nic_remove(struct pci_dev *pdev)
 
 	if(adapter->portnum == 0 ) {
 		FLUSH_SCHEDULED_WORK();
-		del_timer_sync(&adapter->watchdog_timer_fw_reset);
+       		del_timer_sync(&adapter->watchdog_timer_fw_reset);
 	}
-
-	nx_napi_disable(adapter);
 	unregister_netdev(netdev);
 	unm_nic_detach(adapter, NX_DESTROY_CTX_RESET);
 
@@ -3132,11 +3106,8 @@ static void nx_nic_free_host_rx_resources(struct unm_adapter_s *adapter,
 		if (nxhal_host_rx_ctx->rds_rings[ring].os_data) {
 			host_rds_ring =
 				nxhal_host_rx_ctx->rds_rings[ring].os_data;
-			if (host_rds_ring->rx_buf_arr) {
-				vfree(host_rds_ring->rx_buf_arr);
-				host_rds_ring->rx_buf_arr = NULL;
-			}
-
+			vfree(host_rds_ring->rx_buf_arr);
+			host_rds_ring->rx_buf_arr = NULL;
 			kfree(nxhal_host_rx_ctx->rds_rings[ring].os_data);
 			nxhal_host_rx_ctx->rds_rings[ring].os_data = NULL;
 		}
@@ -3491,6 +3462,9 @@ int nx_nic_multictx_free_rx_ctx(struct net_device *netdev, int ctx_id)
 			spin_unlock(&adapter->ctx_state_lock);
 			return -1;
 		}
+#ifdef __VMKLNX__
+		if (!test_bit(NAPI_STATE_UNUSED, &adapter->host_sds_rings[ctx_id].napi.state))
+#endif
 		napi_synchronize(&adapter->host_sds_rings[ctx_id].napi);
 #ifdef __VMKLNX__
 		/* need to disable NAPI when freeing an IRQ */

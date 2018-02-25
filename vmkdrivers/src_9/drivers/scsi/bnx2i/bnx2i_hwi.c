@@ -709,12 +709,24 @@ void bnx2i_ep_ofld_timer(unsigned long data)
 				 jiffies, ep, ep->ep_iscsi_cid, ep->ep_cid,
                                  ep->conn, ep->sess);
 		ep->state = EP_STATE_OFLD_FAILED;
+	} else if (ep->state == EP_STATE_ULP_UPDATE_START) {
+		PRINT_ALERT(ep->hba, "[%lx]: ofld_timer: CONN_UPDATE"
+				"timeout (ep %p {%d, %x}, conn %p, sess %p)\n",
+				jiffies, ep, ep->ep_iscsi_cid, ep->ep_cid,
+				ep->conn, ep->sess);
+		ep->state = EP_STATE_ULP_UPDATE_TIMEOUT;
 	} else if (ep->state == EP_STATE_DISCONN_START) {
 		PRINT_ALERT(ep->hba, "[%lx]: ofld_timer: CONN_DISCON "
-				"timeout (ep %p {%d, %x}, conn %p, sess %p)\n", 
+				"timeout (ep %p {%d, %x}, conn %p, sess %p)\n",
 				jiffies, ep, ep->ep_iscsi_cid, ep->ep_cid,
 				ep->conn, ep->sess);
 		ep->state = EP_STATE_DISCONN_TIMEDOUT;
+	} else if (ep->state == EP_STATE_CONNECT_START) {
+		PRINT_ALERT(ep->hba, "[%lx]: ofld_timer: CONN_START"
+				"timeout (ep %p {%d, %x}, conn %p, sess %p)\n",
+				jiffies, ep, ep->ep_iscsi_cid, ep->ep_cid,
+				ep->conn, ep->sess);
+		ep->state = EP_STATE_CONNECT_FAILED;
 	} else if (ep->state == EP_STATE_CLEANUP_START) {
 		PRINT_ALERT(ep->hba, "[%lx]: ofld_timer: CONN_CLEANUP "
 				"timeout (ep %p {%d, %x}, conn %p, sess %p)\n", 
@@ -2604,6 +2616,11 @@ static void bnx2i_cm_connect_cmpl(struct cnic_sock *cm_sk)
 {
 	struct bnx2i_endpoint *ep = (struct bnx2i_endpoint *) cm_sk->context;
 
+	if (ep->hba == NULL) {
+		printk("%s: no hba associated with ep:%p \n", __func__, ep);
+		return;
+	}
+
 	if (test_bit(ADAPTER_STATE_GOING_DOWN, &ep->hba->adapter_state))
 		ep->state = EP_STATE_CONNECT_FAILED;
 	else if (test_bit(SK_F_OFFLD_COMPLETE, &cm_sk->flags)) {
@@ -2636,6 +2653,10 @@ static void bnx2i_cm_close_cmpl(struct cnic_sock *cm_sk)
 
 	ep->state = EP_STATE_DISCONN_COMPL;
 	hba = ep->hba;
+	if (hba == NULL) {
+		printk("%s: no hba associated with ep:%p \n", __func__, ep);
+		return;
+	}
 
 	BNX2I_DBG(DBG_CONN_SETUP, ep->hba, "%s: cid %d gracefully shutdown\n",
 		  __FUNCTION__, ep->ep_iscsi_cid);
@@ -2661,6 +2682,11 @@ static void bnx2i_cm_abort_cmpl(struct cnic_sock *cm_sk)
 
 	ep->state = EP_STATE_DISCONN_COMPL;
 	hba = ep->hba;
+
+	if (hba == NULL) {
+		printk("%s: no hba associated with ep:%p \n", __func__, ep);
+		return;
+	}
 
 	BNX2I_DBG(DBG_CONN_SETUP, ep->hba, "cid %d torn down successfully\n",
 		  ep->ep_iscsi_cid);

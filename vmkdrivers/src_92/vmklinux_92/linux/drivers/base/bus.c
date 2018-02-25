@@ -1,5 +1,5 @@
 /*
- * Portions Copyright 2009, 2010 VMware, Inc.
+ * Portions Copyright 2009, 2010, 2015 VMware, Inc.
  */
 /*
  * bus.c - bus driver management
@@ -966,7 +966,7 @@ int bus_register(struct bus_type * bus)
 	bus->bus_notifier.head = NULL;
 
 	status = vmk_SemaCreate(&bus->bus_notifier.rwsem, vmk_ModuleCurrentID,
-                                bus->name, 1);
+                           bus->name, 1);
 	if (status != VMK_OK) {
 		return -EINVAL;
 	}

@@ -1,5 +1,5 @@
 /* ****************************************************************
- * Portions Copyright 1998, 2010, 2012 VMware, Inc.
+ * Portions Copyright 1998, 2010, 2012, 2015 VMware, Inc.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -118,7 +118,6 @@ typedef struct scsiLinuxTLS {
 scsiLinuxTLS_t *scsiLinuxTLS[NR_CPUS] VMK_ATTRIBUTE_L1_ALIGNED;
 #else /* defined(__VMKLNX__) */
 scsiLinuxTLS_t **scsiLinuxTLS;
-#endif /* !defined(__VMKLNX__) */
 
 static vmk_PCPUStorageHandle tlsPCPUHandle;
 
@@ -166,6 +165,36 @@ extern void SCSILinux_CleanupVmkIf();
 
 /* Throttle timeout */
 #define THROTTLE_TO               (15 * 60)	// 15 mins
+
+/* 
+ * WARNING: The following constants are defined in a future version
+ *          of vmkapi, but this version of vmklinux is compiled against
+ *          against vmkapi v2_3_0_0.  It is not possible to re-write
+ *          vmkapi history on main.  So we define them here in vmklinux.
+ *
+ *          While this version of vmklinux should, in theory, execute
+ *          properly against the actual 6.0 GA vmkernel, that won't be
+ *          tested.  So therefore, this version of vmklinux will contain
+ *          an esx-base dependency for 6.1 or above.
+ */
+
+/* Logical unit is not configured (array only). */
+#define VMKLNX_SCSI_ASC_ATA_PASSTHROUGH_INFO_AVAILABLE                  0x00
+#define VMKLNX_SCSI_ASCQ_ATA_PASSTHROUGH_INFO_AVAILABLE                 0x1d
+
+/*
+ * Description Type field
+ * SPC 4 r33, Section 4.5.2.1 table 27
+ */
+#define VMKLNX_SCSI_SENSE_DESCRIPTOR_TYPE_INFORMATION                    0x0
+#define VMKLNX_SCSI_SENSE_DESCRIPTOR_TYPE_COMMAND_SPECIFIC_INFIRMATION   0x1
+#define VMKLNX_SCSI_SENSE_DESCRIPTOR_TYPE_SENSE_KEY_SPECIFIC             0x2
+#define VMKLNX_SCSI_SENSE_DESCRIPTOR_TYPE_FIELD_REPLACABLE_UNIT          0x3
+#define VMKLNX_SCSI_SENSE_DESCRIPTOR_TYPE_ATA_STATUS_RETURN              0x9
+/*
+ * END WARNING
+ */
+
 
 /*
  *-----------------------------------------------------------------------------
@@ -650,26 +679,16 @@ SCSILinuxGetModuleID(struct Scsi_Host *sh, struct pci_dev *pdev)
  *
  *-----------------------------------------------------------------------------
  */
-
 static vmk_Bool
 SCSILinuxATASenseDescriptorToFixed(unsigned char *buffer)
 {
-#define SCSI_ASC_ATA_PASSTHROUGH_INFO_AVAILABLE        0x00
-#define SCSI_ASCQ_ATA_PASSTHROUGH_INFO_AVAILABLE       0x1d
-
-#define SCSI_SENSE_DESCRIPTOR_TYPE_INFORMATION                    0x0
-#define SCSI_SENSE_DESCRIPTOR_TYPE_COMMAND_SPECIFIC_INFIRMATION   0x1
-#define SCSI_SENSE_DESCRIPTOR_TYPE_SENSE_KEY_SPECIFIC             0x2
-#define SCSI_SENSE_DESCRIPTOR_TYPE_FIELD_REPLACABLE_UNIT          0x3
-#define SCSI_SENSE_DESCRIPTOR_TYPE_ATA_STATUS_RETURN          0x9
-
    if (buffer[0] == 0x72) {
       vmk_ScsiSenseDataSimple *senseData = (vmk_ScsiSenseDataSimple *)buffer;
       if (senseData->format.descriptor.key == VMK_SCSI_SENSE_KEY_RECOVERED_ERROR &&
-          senseData->format.descriptor.asc == SCSI_ASC_ATA_PASSTHROUGH_INFO_AVAILABLE &&
-          senseData->format.descriptor.ascq == SCSI_ASCQ_ATA_PASSTHROUGH_INFO_AVAILABLE &&
+          senseData->format.descriptor.asc == VMKLNX_SCSI_ASC_ATA_PASSTHROUGH_INFO_AVAILABLE &&
+          senseData->format.descriptor.ascq == VMKLNX_SCSI_ASCQ_ATA_PASSTHROUGH_INFO_AVAILABLE &&
           senseData->format.descriptor.optLen == 0xe &&
-          senseData->format.descriptor.additional[0] == SCSI_SENSE_DESCRIPTOR_TYPE_ATA_STATUS_RETURN) {
+          senseData->format.descriptor.additional[0] == VMKLNX_SCSI_SENSE_DESCRIPTOR_TYPE_ATA_STATUS_RETURN) {
          vmk_ScsiSenseData fixed = {0};
 
          fixed.error = VMK_SCSI_SENSE_ERROR_CURCMD;
@@ -687,7 +706,6 @@ SCSILinuxATASenseDescriptorToFixed(unsigned char *buffer)
    }
    return VMK_FALSE;
 }
-
 
 /*
  *-----------------------------------------------------------------------------
@@ -918,6 +936,7 @@ SCSILinuxProcessCompletions(scsiLinuxTLS_t *tls,       // IN
                         scmd->device->channel, scmd->device->id,
                         scmd->device->lun, 
                         scmd->device->host->hostt->name);
+            VMK_ASSERT_BUG(VMK_FALSE); /* See PR 503363 */
          }
          hostStatus = DID_NO_CONNECT;
       }
@@ -3494,4 +3513,4 @@ SCSILinuxTLSSetIOQueueHandle(scsiLinuxTLS_t *tls, void *q_handle)
    }
    return VMK_EXISTS;
 }
-
+#endif /* !defined(__VMKLNX__) */

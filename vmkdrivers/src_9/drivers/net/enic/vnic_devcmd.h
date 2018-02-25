@@ -60,7 +60,7 @@
 
 /*
  * Used to create cmds..
-*/
+ */
 #define _CMDCF(dir, flags, vtype, nr)  \
 	(((dir)   << _CMD_DIRSHIFT) | \
 	((flags) << _CMD_FLAGSSHIFT) | \
@@ -71,7 +71,7 @@
 
 /*
  * Used to decode cmds..
-*/
+ */
 #define _CMD_DIR(cmd)            (((cmd) >> _CMD_DIRSHIFT) & _CMD_DIRMASK)
 #define _CMD_FLAGS(cmd)          (((cmd) >> _CMD_FLAGSSHIFT) & _CMD_FLAGSMASK)
 #define _CMD_VTYPE(cmd)          (((cmd) >> _CMD_VTYPESHIFT) & _CMD_VTYPEMASK)
@@ -341,8 +341,8 @@ enum vnic_devcmd_cmd {
 	 *
 	 *   intr_timer_cycles = intr_timer_usec * multiplier / divisor
 	 *
-	 * Interrupt coalescing timer in usecs can be obtained from
-	 * CPU cycles as follows:
+	 * Interrupt coalescing timer in usecs can be be converted/obtained
+	 * from CPU cycles as follows:
 	 *
 	 *   intr_timer_usec = intr_timer_cycles * divisor / multiplier
 	 *
@@ -371,7 +371,8 @@ enum vnic_devcmd_cmd {
 	/*
 	 * Subvnic migration from MQ <--> VF.
 	 * Enable the LIF migration from MQ to VF and vice versa. MQ and VF
-	 * indexes are statically bound at the time of initialization. Based on the
+	 * indexes are statically bound at the time of initialization.
+	 * Based on the
 	 * direction of migration, the resources of either MQ or the VF shall
 	 * be attached to the LIF.
 	 * in:        (u32)a0=Direction of Migration
@@ -390,7 +391,6 @@ enum vnic_devcmd_cmd {
 	 *   (u16)a1 & 0x0000ffff00000000=intr num (-1 for no intr)
 	 * out:
 	 *   (u32)a1 = effective size
-	 *
 	 */
 	CMD_SUBVNIC_NOTIFY = _CMDC(_CMD_DIR_RW, _CMD_VTYPE_ALL, 54),
 
@@ -398,15 +398,90 @@ enum vnic_devcmd_cmd {
 	 * Set the predefined mac address as default
 	 * in:
 	 *   (u48)a0=mac addr
-	 *
 	 */
 	CMD_SET_MAC_ADDR = _CMDC(_CMD_DIR_WRITE, _CMD_VTYPE_ENET, 55),
 
-
 	/* Update the provisioning info of the given VIF
-	 *    (u64)a0=paddr of vnic_devcmd_provinfo
+	 *     (u64)a0=paddr of vnic_devcmd_provinfo
 	 *     (u32)a1=sizeof provision info */
 	CMD_PROV_INFO_UPDATE = _CMDC(_CMD_DIR_WRITE, _CMD_VTYPE_ENET, 56),
+
+	/*
+	 * Initialization for the devcmd2 interface.
+	 * in: (u64) a0=host result buffer physical address
+	 * in: (u16) a1=number of entries in result buffer
+	 */
+	CMD_INITIALIZE_DEVCMD2 = _CMDC(_CMD_DIR_WRITE, _CMD_VTYPE_ALL, 57),
+
+	/*
+	 * Add a filter.
+	 * in: (u64) a0= filter address
+	 *     (u32) a1= size of filter
+	 * out: (u32) a0=filter identifier
+	 */
+	CMD_ADD_FILTER = _CMDC(_CMD_DIR_RW, _CMD_VTYPE_ENET, 58),
+
+	/*
+	 * Delete a filter.
+	 * in: (u32) a0=filter identifier
+	 */
+	CMD_DEL_FILTER = _CMDC(_CMD_DIR_WRITE, _CMD_VTYPE_ENET, 59),
+
+	/*
+	 * Enable a Queue Pair in User space NIC
+	 * in: (u32) a0=Queue Pair number
+	 *     (u32) a1= command
+	 */
+	CMD_QP_ENABLE = _CMDC(_CMD_DIR_WRITE, _CMD_VTYPE_ENET, 60),
+
+	/*
+	 * Disable a Queue Pair in User space NIC
+	 * in: (u32) a0=Queue Pair number
+	 *     (u32) a1= command
+	 */
+	CMD_QP_DISABLE = _CMDC(_CMD_DIR_WRITE, _CMD_VTYPE_ENET, 61),
+
+	/*
+	 * Stats dump Queue Pair in User space NIC
+	 * in: (u32) a0=Queue Pair number
+	 *     (u64) a1=host buffer addr for status dump
+	 *     (u32) a2=length of the buffer
+	 */
+	CMD_QP_STATS_DUMP = _CMDC(_CMD_DIR_WRITE, _CMD_VTYPE_ENET, 62),
+
+	/*
+	 * Clear stats for Queue Pair in User space NIC
+	 * in: (u32) a0=Queue Pair number
+	 */
+	CMD_QP_STATS_CLEAR = _CMDC(_CMD_DIR_WRITE, _CMD_VTYPE_ENET, 63),
+
+	/* Use this devcmd for agreeing on the highest common version supported
+	 * by both driver and fw for features who need such a facility.
+	 * in:  (u64) a0 = feature (driver requests for the supported versions on
+	 * 	this feature)
+	 * out: (u64) a0 = bitmap of all supported versions for that feature
+	 */
+	CMD_GET_SUPP_FEATURE_VER = _CMDC(_CMD_DIR_RW, _CMD_VTYPE_ENET, 69),
+
+	/*
+	 * Control (Enable/Disable) overlay offloads on the given vnic
+	 * in: (u8) a0 = OVERLAY_FEATURE_NVGRE : NVGRE
+	 *          a0 = OVERLAY_FEATURE_VXLAN : VxLAN
+	 * in: (u8) a1 = OVERLAY_OFFLOAD_ENABLE : Enable or
+	 *          a1 = OVERLAY_OFFLOAD_DISABLE : Disable or
+	 *          a1 = OVERLAY_OFFLOAD_ENABLE_V2 : Enable with version 2
+	 */
+	CMD_OVERLAY_OFFLOAD_CTRL =
+		_CMDC(_CMD_DIR_WRITE, _CMD_VTYPE_ENET, 72),
+
+	/*
+	 * Configuration of overlay offloads feature on a given vNIC
+	 * in: (u8) a0 = DEVCMD_OVERLAY_NVGRE : NVGRE
+	 *          a0 = DEVCMD_OVERLAY_VXLAN : VxLAN
+	 * in: (u8) a1 = VXLAN_PORT_UPDATE : VxLAN
+	 * in: (u16) a2 = unsigned short int port information
+	 */
+	CMD_OVERLAY_OFFLOAD_CFG = _CMDC(_CMD_DIR_WRITE, _CMD_VTYPE_ENET, 73),
 };
 
 /* CMD_ENABLE2 flags */
@@ -425,6 +500,9 @@ enum vnic_devcmd_cmd {
 #define CMD_PFILTER_BROADCAST		0x04
 #define CMD_PFILTER_PROMISCUOUS		0x08
 #define CMD_PFILTER_ALL_MULTICAST	0x10
+
+/* Commands for CMD_QP_ENABLE/CM_QP_DISABLE */
+#define CMD_QP_RQWQ                     0x0
 
 /* rewrite modes for CMD_IG_VLAN_REWRITE_MODE */
 #define IG_VLAN_REWRITE_MODE_DEFAULT_TRUNK              0
@@ -506,6 +584,117 @@ struct vnic_devcmd_provinfo {
 };
 
 /*
+ * These are used in flags field of different filters to denote
+ * valid fields used.
+ */
+#define FILTER_FIELD_VALID(fld) (1 << (fld - 1))
+
+#define FILTER_FIELDS_USNIC (FILTER_FIELD_VALID(1) | \
+			     FILTER_FIELD_VALID(2) | \
+			     FILTER_FIELD_VALID(3) | \
+			     FILTER_FIELD_VALID(4))
+
+#define FILTER_FIELDS_IPV4_5TUPLE (FILTER_FIELD_VALID(1) | \
+				   FILTER_FIELD_VALID(2) | \
+				   FILTER_FIELD_VALID(3) | \
+				   FILTER_FIELD_VALID(4) | \
+				   FILTER_FIELD_VALID(5))
+
+#define FILTER_FIELDS_MAC_VLAN (FILTER_FIELD_VALID(1) | \
+				FILTER_FIELD_VALID(2))
+
+#define FILTER_FIELD_USNIC_VLAN    FILTER_FIELD_VALID(1)
+#define FILTER_FIELD_USNIC_ETHTYPE FILTER_FIELD_VALID(2)
+#define FILTER_FIELD_USNIC_PROTO   FILTER_FIELD_VALID(3)
+#define FILTER_FIELD_USNIC_ID      FILTER_FIELD_VALID(4)
+
+struct filter_usnic_id {
+	u32 flags;
+	u16 vlan;
+	u16 ethtype;
+	u8 proto_version;
+	u32 usnic_id;
+} __attribute__((packed));
+
+#define FILTER_FIELD_5TUP_PROTO  FILTER_FIELD_VALID(1)
+#define FILTER_FIELD_5TUP_SRC_AD FILTER_FIELD_VALID(2)
+#define FILTER_FIELD_5TUP_DST_AD FILTER_FIELD_VALID(3)
+#define FILTER_FIELD_5TUP_SRC_PT FILTER_FIELD_VALID(4)
+#define FILTER_FIELD_5TUP_DST_PT FILTER_FIELD_VALID(5)
+
+/* Enums for the protocol field. */
+enum protocol_e {
+	PROTO_UDP = 0,
+	PROTO_TCP = 1,
+};
+
+struct filter_ipv4_5tuple {
+	u32 flags;
+	u32 protocol;
+	u32 src_addr;
+	u32 dst_addr;
+	u16 src_port;
+	u16 dst_port;
+} __attribute__((packed));
+
+#define FILTER_FIELD_VMQ_VLAN   FILTER_FIELD_VALID(1)
+#define FILTER_FIELD_VMQ_MAC    FILTER_FIELD_VALID(2)
+
+struct filter_mac_vlan {
+	u32 flags;
+	u16 vlan;
+	u8 mac_addr[6];
+} __attribute__((packed));
+
+/* Specifies the filter_action type. */
+enum {
+	FILTER_ACTION_RQ_STEERING = 0,
+	FILTER_ACTION_MAX
+};
+
+struct filter_action {
+	u32 type;
+	union {
+		u32 rq_idx;
+	} u;
+} __attribute__((packed));
+
+/* Specifies the filter type. */
+enum filter_type {
+	FILTER_USNIC_ID = 0,
+	FILTER_IPV4_5TUPLE = 1,
+	FILTER_MAC_VLAN = 2,
+	FILTER_MAX
+};
+
+struct filter {
+	u32 type;
+	union {
+		struct filter_usnic_id usnic;
+		struct filter_ipv4_5tuple ipv4;
+		struct filter_mac_vlan mac_vlan;
+	} u;
+} __attribute__((packed));
+
+enum {
+	CLSF_TLV_FILTER = 0,
+	CLSF_TLV_ACTION = 1,
+};
+
+#define FILTER_MAX_BUF_SIZE 100  /* Maximum size of buffer to CMD_ADD_FILTER */
+
+struct filter_tlv {
+	uint32_t type;
+	uint32_t length;
+	uint32_t val[0];
+};
+
+enum {
+	CLSF_ADD = 0,
+	CLSF_DEL = 1,
+};
+
+/*
  * Writing cmd register causes STAT_BUSY to get set in status register.
  * When cmd completes, STAT_BUSY will be cleared.
  *
@@ -526,4 +715,65 @@ struct vnic_devcmd {
 	u64 args[VNIC_DEVCMD_NARGS];	/* RW cmd args (little-endian) */
 };
 
+/*
+ * Version 2 of the interface.
+ *
+ * Some things are carried over, notably the vnic_devcmd_cmd enum.
+ */
+
+/*
+ * Flags for vnic_devcmd2.flags
+ */
+
+#define DEVCMD2_FNORESULT       0x1     /* Don't copy result to host */
+
+#define VNIC_DEVCMD2_NARGS      VNIC_DEVCMD_NARGS
+struct vnic_devcmd2 {
+	u16 pad;
+	u16 flags;
+	u32 cmd;                /* same command #defines as original */
+	u64 args[VNIC_DEVCMD2_NARGS];
+};
+
+#define VNIC_DEVCMD2_NRESULTS   VNIC_DEVCMD_NARGS
+struct devcmd2_result {
+	u64 results[VNIC_DEVCMD2_NRESULTS];
+	u32 pad;
+	u16 completed_index;    /* into copy WQ */
+	u8  error;              /* same error codes as original */
+	u8  color;              /* 0 or 1 as with completion queues */
+};
+
+#define DEVCMD2_RING_SIZE   32
+#define DEVCMD2_DESC_SIZE   128
+
+#define DEVCMD2_RESULTS_SIZE_MAX   ((1 << 16) - 1)
+
+/* Overlay related definitions */
+
+/*
+ * This enum lists the flag associated with each of the overlay features
+ */
+typedef enum {
+	OVERLAY_FEATURE_NVGRE = 1,
+	OVERLAY_FEATURE_VXLAN,
+	OVERLAY_FEATURE_MAX,
+} overlay_feature_t;
+
+#define OVERLAY_OFFLOAD_ENABLE          0
+#define OVERLAY_OFFLOAD_DISABLE         1
+#define OVERLAY_OFFLOAD_ENABLE_V2       2
+
+#define OVERLAY_CFG_VXLAN_PORT_UPDATE 0
+
+/*
+ * Use this enum to get the supported versions for each of these features
+ * If you need to use the devcmd_get_supported_feature_version(), add
+ * the new feature into this enum and install function handler in devcmd.c
+ */
+typedef enum {
+	VIC_FEATURE_VXLAN,
+	VIC_FEATURE_MAX,
+} vic_feature_t;
+	
 #endif /* _VNIC_DEVCMD_H_ */

@@ -20,6 +20,7 @@
 #define _ENIC_DEV_H_
 
 #include "vnic_dev.h"
+#include "vnic_vic.h"
 
 /*
  * Calls the devcmd function given by argument vnicdevcmdfn.
@@ -27,7 +28,7 @@
  */
 #define ENIC_DEVCMD_PROXY_BY_INDEX(vf, err, enic, vnicdevcmdfn, ...) \
 	do { \
-		spin_lock(&enic->devcmd_lock); \
+		spin_lock_bh(&enic->devcmd_lock); \
 		if (enic_is_valid_vf(enic, vf)) { \
 			vnic_dev_cmd_proxy_by_index_start (enic->vdev, vf); \
 			err = vnicdevcmdfn(enic->vdev, ##__VA_ARGS__); \
@@ -35,7 +36,7 @@
 		} else { \
 			err = vnicdevcmdfn(enic->vdev, ##__VA_ARGS__); \
 		} \
-		spin_unlock(&enic->devcmd_lock); \
+		spin_unlock_bh(&enic->devcmd_lock); \
 	} while (0)
 
 int enic_dev_fw_info(struct enic *enic, struct vnic_devcmd_fw_info **fw_info);
@@ -46,8 +47,16 @@ int enic_dev_packet_filter(struct enic *enic, int directed, int multicast,
 	int broadcast, int promisc, int allmulti);
 int enic_dev_add_addr(struct enic *enic, u8 *addr);
 int enic_dev_del_addr(struct enic *enic, u8 *addr);
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3, 3, 00))
 void enic_vlan_rx_add_vid(struct net_device *netdev, u16 vid);
 void enic_vlan_rx_kill_vid(struct net_device *netdev, u16 vid);
+#elif (LINUX_VERSION_CODE < KERNEL_VERSION(3, 9, 00))
+int enic_vlan_rx_add_vid(struct net_device *netdev, u16 vid);
+int enic_vlan_rx_kill_vid(struct net_device *netdev, u16 vid);
+#else
+int enic_vlan_rx_add_vid(struct net_device *netdev, __be16 proto, u16 vid);
+int enic_vlan_rx_kill_vid(struct net_device *netdev, __be16 proto, u16 vid);
+#endif
 int enic_dev_notify_unset(struct enic *enic);
 int enic_dev_hang_notify(struct enic *enic);
 int enic_dev_set_ig_vlan_rewrite_mode(struct enic *enic);

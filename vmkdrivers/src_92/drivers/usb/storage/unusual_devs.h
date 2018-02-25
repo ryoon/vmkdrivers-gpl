@@ -2028,42 +2028,6 @@ UNUSUAL_DEV(  0xed06, 0x4500, 0x0001, 0x0001,
 		US_FL_CAPACITY_HEURISTICS),
 
 #if defined(__VMKLNX__)
-UNUSUAL_DEV(  0x8564, 0x1000, 0x0000, 0x9999,
-		"Transcend Information, Inc.",
-		"JetFlash",
-		USB_SC_DEVICE, USB_PR_DEVICE, NULL,
-		US_FL_EN_READ_CAPACITY_16 ),
-
-UNUSUAL_DEV(  0x05dc, 0x0804, 0x0000, 0x9999,
-		"Lexar Media, Inc.",
-		"M20i",
-		USB_SC_DEVICE, USB_PR_DEVICE, NULL,
-		US_FL_EN_READ_CAPACITY_16 ),
-
-UNUSUAL_DEV(  0x1567, 0x8902, 0x0000, 0x9999,
-		"USB Flash Disk",
-		"USB Product String123456",
-		USB_SC_DEVICE, USB_PR_DEVICE, NULL,
-		US_FL_EN_READ_CAPACITY_16 ),
-
-UNUSUAL_DEV(  0x0930, 0x6544, 0x0000, 0x9999,
-		"Toshiba Corp.",
-		"TransMemory-Mini / Kingston DataTraveler 2.0 Stick",
-		USB_SC_DEVICE, USB_PR_DEVICE, NULL,
-		US_FL_EN_READ_CAPACITY_16 ),
-
-UNUSUAL_DEV(  0x0781, 0x5530, 0x0000, 0x9999,
-		"SanDisk Corp.",
-		"Cruzer",
-		USB_SC_DEVICE, USB_PR_DEVICE, NULL,
-		US_FL_EN_READ_CAPACITY_16 ),
-
-UNUSUAL_DEV(  0x0781, 0x5581, 0x0000, 0x9999,
-		"SanDisk Corp.",
-		"Ultra",
-		USB_SC_DEVICE, USB_PR_DEVICE, NULL,
-		US_FL_EN_READ_CAPACITY_16 ),
-
 UNUSUAL_DEV(  0x0951, 0x1600, 0x0000, 0x9999,
 		"Kingston",
 		"DataTraveler II",

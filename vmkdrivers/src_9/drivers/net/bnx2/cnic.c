@@ -2239,7 +2239,6 @@ static int cnic_bnx2x_connect(struct cnic_dev *dev, struct kwqe *wqes[],
 	union l5cm_specific_data l5_data;
 	u32 l5_cid = kwqe1->pg_cid;
 	struct cnic_sock *csk = &cp->csk_tbl[l5_cid];
-	struct cnic_context *ctx = &cp->ctx_tbl[l5_cid];
 	int ret;
 
 	if (num < 2) {
@@ -2308,8 +2307,6 @@ static int cnic_bnx2x_connect(struct cnic_dev *dev, struct kwqe *wqes[],
 
 	ret = cnic_submit_kwqe_16(dev, L5CM_RAMROD_CMD_ID_TCP_CONNECT,
 			kwqe1->cid, ISCSI_CONNECTION_TYPE, &l5_data);
-	if (!ret)
-		set_bit(CTX_FL_OFFLD_START, &ctx->ctx_flags);
 
 	return ret;
 }
@@ -4620,9 +4617,13 @@ static void cnic_cm_process_kcqe(struct cnic_dev *dev, struct kcqe *kcqe)
 		}
 		break;
 	case L4_KCQE_OPCODE_VALUE_CONNECT_COMPLETE:
-		if (l4kcqe->status == 0)
-			set_bit(SK_F_OFFLD_COMPLETE, &csk->flags);
-		else {
+		if (l4kcqe->status == 0) {
+			if (test_bit(CNIC_F_BNX2X_CLASS, &dev->flags)) {
+				struct cnic_context *ctx = &cp->ctx_tbl[l5_cid];
+				set_bit(CTX_FL_OFFLD_START, &ctx->ctx_flags);
+			}
+                        set_bit(SK_F_OFFLD_COMPLETE, &csk->flags);
+                } else {
 			printk(KERN_WARNING PFX "%s: Connect completion "
 						"failed: "
 						"status: 0x%x cid: 0x%x "

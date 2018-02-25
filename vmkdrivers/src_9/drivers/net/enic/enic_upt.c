@@ -103,9 +103,9 @@ static int enic_upt_dev_stats_dump(struct enic *enic)
 	a0 = enic->upt_oob_pa[ENIC_UPT_OOB_STATS];
 	a1 = sizeof(struct vnic_stats);
 
-	spin_lock(&enic->devcmd_lock);
+	spin_lock_bh(&enic->devcmd_lock);
 	err = vnic_dev_cmd(enic->vdev, CMD_STATS_DUMP, &a0, &a1, wait);
-	spin_unlock(&enic->devcmd_lock);
+	spin_unlock_bh(&enic->devcmd_lock);
 
 	return err;
 }
@@ -329,13 +329,13 @@ static int enic_upt_set_nic_cfg(struct enic *enic, vmk_NetVFParameters *vs)
  	 */
 	ig_vlan_strip_en = 1;
 
-	spin_lock(&enic->devcmd_lock);
+	spin_lock_bh(&enic->devcmd_lock);
 	err = enic_set_nic_cfg(enic,
 		rss_default_cpu, rss_hash_type,
 		rss_hash_bits, rss_base_cpu,
 		rss_enable, tso_ipid_split_en,
 		ig_vlan_strip_en);
-	spin_unlock(&enic->devcmd_lock);
+	spin_unlock_bh(&enic->devcmd_lock);
 
 	return err;
 }
@@ -359,9 +359,9 @@ static int enic_upt_set_rss_key(struct enic *enic, void *oob_mem,
 		rss_key->key[i/10].b[i%10] = key[i];
 
 	netdev_err(enic->netdev, "rss key %u bytes\n", key_size);
-	spin_lock(&enic->devcmd_lock);
+	spin_lock_bh(&enic->devcmd_lock);
 	err = enic_set_rss_key(enic, oob_mem_pa, key_size);
-	spin_unlock(&enic->devcmd_lock);
+	spin_unlock_bh(&enic->devcmd_lock);
 
 	return err;
 }
@@ -385,9 +385,9 @@ static int enic_upt_set_rss_ind_table(struct enic *enic, void *oob_mem,
 		rss_cpu->cpu[i/4].b[i%4] = ind_table[i];
 
 	netdev_err(enic->netdev, "rss indtable %u bytes\n", ind_table_size);
-	spin_lock(&enic->devcmd_lock);
+	spin_lock_bh(&enic->devcmd_lock);
 	err = enic_set_rss_cpu(enic, oob_mem_pa, ind_table_size);
-	spin_unlock(&enic->devcmd_lock);
+	spin_unlock_bh(&enic->devcmd_lock);
 
 	return err;
 }
@@ -753,12 +753,12 @@ static int enic_upt_notify_set(struct enic *enic)
 	 * as we always poll since we don't have an interrupt 
 	 * vector we can use in UPT mode.
 	 */
-	spin_lock(&enic->devcmd_lock);
+	spin_lock_bh(&enic->devcmd_lock);
 	r = vnic_dev_notify_setcmd(enic->vdev,
 		enic->upt_oob[ENIC_UPT_OOB_NOTIFY],
 		enic->upt_oob_pa[ENIC_UPT_OOB_NOTIFY],
 		-1);
-	spin_unlock(&enic->devcmd_lock);
+	spin_unlock_bh(&enic->devcmd_lock);
 
 	return r;
 }
@@ -896,9 +896,9 @@ static int enic_upt_quiesce(struct net_device *netdev)
 			return err;
 	}
 
-	spin_lock(&enic->devcmd_lock);
+	spin_lock_bh(&enic->devcmd_lock);
 	vnic_dev_notify_unsetcmd(enic->vdev);
-	spin_unlock(&enic->devcmd_lock);
+	spin_unlock_bh(&enic->devcmd_lock);
 
 	/* Must not touch intr mask since we need to
 	 * checkpoint it.
@@ -1040,9 +1040,9 @@ int enic_upt_recover_from(struct enic *enic)
 	if (enic->upt_active) {
 		del_timer_sync(&enic->upt_notify_timer);
 
-		spin_lock(&enic->devcmd_lock);
+		spin_lock_bh(&enic->devcmd_lock);
 		vnic_dev_notify_unsetcmd(enic->vdev);
-		spin_unlock(&enic->devcmd_lock);
+		spin_unlock_bh(&enic->devcmd_lock);
 
 		enic->upt_active = 0;
 	}

@@ -31,7 +31,7 @@ union vnic_rss_key {
 /* RSS cpu array */
 union vnic_rss_cpu {
 	struct {
-		u8 b[4] ;
+		u8 b[4];
 		u8 b_pad[4];
 	} cpu[32];
 	u64 raw[32];

@@ -34,7 +34,7 @@
 /*
  * MegaRAID SAS Driver meta data
  */
-#define MEGASAS_VERSION				"6.603.55.00.1vmw"
+#define MEGASAS_VERSION				"6.603.55.00.2vmw"
 #define MEGASAS_RELDATE				"Feb 19, 2014"
 
 

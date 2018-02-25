@@ -75,7 +75,7 @@
 #define COPYRIGHT	"Copyright (c) 1999-2008 " MODULEAUTHOR
 #endif
 
-#define MPT_LINUX_VERSION_COMMON	"4.23.01.00-9vmw"
+#define MPT_LINUX_VERSION_COMMON	"4.23.01.00-10vmw"
 #define MPT_LINUX_PACKAGE_NAME		"@(#)mptlinux-4.23.01.00"
 #define WHAT_MAGIC_STRING		"@" "(" "#" ")"
 #define MPT_LINUX_MAJOR_VERSION		4

@@ -32,6 +32,9 @@ struct vnic_enet_config {
 	char devname[16];
 	u32 intr_timer_usec;
 	u16 loop_tag;
+	u16 vf_rq_count;
+	u16 num_arfs;
+	u64 mem_paddr;
 };
 
 #define VENETF_TSO		0x1	/* TSO enabled */
@@ -46,7 +49,9 @@ struct vnic_enet_config {
 #define VENETF_RSSHASH_IPV6_EX	0x200	/* Hash on IPv6 extended fields */
 #define VENETF_RSSHASH_TCPIPV6_EX 0x400	/* Hash on TCP + IPv6 ext. fields */
 #define VENETF_LOOP		0x800	/* Loopback enabled */
-
+#define VENETF_VMQ		0x4000  /* using VMQ flag for VMware NETQ */
+#define VENETF_VXLAN    0x10000 /* VxLAN offload */
+#define VENETF_NVGRE    0x20000 /* NVGRE offload */
 #define VENET_INTR_TYPE_MIN	0	/* Timer specs min interrupt spacing */
 #define VENET_INTR_TYPE_IDLE	1	/* Timer specs idle time before irq */
 

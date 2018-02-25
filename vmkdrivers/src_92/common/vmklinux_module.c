@@ -283,16 +283,31 @@ vmklnx_module_heap_init(void)
    heap_max = (int) largeHeapMax;
 #endif
 
-   if (heap_initial > heap_max) {
-      heap_initial = heap_max;
-      vmk_WarningMessage("module heap: Initial heap size > max. Limiting to max!!!");
+   if (heap_max < LINUX_MODULE_HEAP_MAX) {
+      vmk_WarningMessage("module heap %s: user specified heap_max (%d) < default (%d).",
+                         VMK_MODULE_HEAP_NAME, heap_max, LINUX_MODULE_HEAP_MAX);
    }
 
-   vmk_LogMessage("module heap: Initial heap size: %d, max heap size: %d",
-           heap_initial, heap_max);
+   if (heap_initial < LINUX_MODULE_HEAP_INITIAL) {
+      vmk_WarningMessage("module heap %s: user specified heap_initial (%d) < default (%d).",
+                         VMK_MODULE_HEAP_NAME, heap_initial, LINUX_MODULE_HEAP_INITIAL);
+   }
+
+   if (heap_initial > heap_max) {
+      vmk_WarningMessage("module heap %s: user specified heap_initial (%d) > heap_max (%d). "
+                         "Limiting to max!!!",
+                         VMK_MODULE_HEAP_NAME, heap_initial, heap_max);
+      heap_initial = heap_max;
+   }
+
+   vmk_LogMessage("module heap %s: Initial heap size = %d, max heap size = %d",
+                  VMK_MODULE_HEAP_NAME, heap_initial, heap_max);
 
    status = vmklnx_module_mempool_init();
    VMK_ASSERT(status == VMK_OK);
+   if (status != VMK_OK) {
+      return status;
+   }
 
    /* compute heap physical address constraint */
    if (driverMaxPhysAddr >= machineMaxPhysAddr) {
@@ -304,10 +319,11 @@ vmklnx_module_heap_init(void)
    } else if (driverMaxPhysAddr >= DMA_BIT_MASK(31)) {
       memType = VMK_PHYS_ADDR_BELOW_2GB;
    } else {
-      vmk_WarningMessage("module heap: dma width (%d) too small, min is 31", LINUX_MODULE_HEAP_DMA_WIDTH);
+      vmk_WarningMessage("module heap %s: dma width (%d) too small, min is 31",
+                         VMK_MODULE_HEAP_NAME, LINUX_MODULE_HEAP_DMA_WIDTH);
       return VMK_FAILURE;
    }
-   vmk_LogMessage("module heap: using memType %d", memType);
+   vmk_LogMessage("module heap %s: using memType %d", VMK_MODULE_HEAP_NAME, memType);
    THIS_MODULE->primary_mem_info.mem_phys_addr_type = memType;
 
    status = vmk_NameInitialize(&props.name, VMK_MODULE_HEAP_NAME);
@@ -454,10 +470,10 @@ vmklnx_module_mempool_init(void)
    status = vmk_NameFormat(&mpool_props.name, "vmklnx_%s", module_name);
    VMK_ASSERT(status == VMK_OK);
    status = vmk_MemPoolCreate(&mpool_props, &THIS_MODULE->primary_mem_info.mempool);
-   VMK_ASSERT(status == VMK_OK);
    if (status != VMK_OK) {
       THIS_MODULE->primary_mem_info.mempool = VMK_MEMPOOL_INVALID;  /* Just to be sure */
       vmk_WarningMessage("vmk_MemPoolCreate failed  0x%x.", status);
+      VMK_ASSERT(0);
       return status;
    } else {
       vmk_LogMessage("vmk_MemPoolCreate passed for %d pages",
@@ -569,6 +585,28 @@ vmklnx_module_skb_mpool_init(void)
    VMK_ReturnStatus status;
 
    vmk_ModuleGetName(THIS_MODULE->moduleID, module_name, sizeof(module_name));
+   status = vmk_NameFormat(&mpool_props.name, "vmklnx_%s_skb", module_name);
+   VMK_ASSERT(status == VMK_OK);
+
+   if (skb_mpool_max < LINUX_MODULE_SKB_HEAP_MAX) {
+      vmk_WarningMessage("module mempool %s: user specified skb_mpool_max (%d) < default (%d).",
+                         vmk_NameToString(&mpool_props.name), skb_mpool_max,
+                         LINUX_MODULE_SKB_HEAP_MAX);
+   }
+
+   if (skb_mpool_initial < LINUX_MODULE_SKB_HEAP_INITIAL) {
+      vmk_WarningMessage("module mempool %s: user specified skb_mpool_initial (%d) < default (%d).",
+                         vmk_NameToString(&mpool_props.name), skb_mpool_initial,
+                         LINUX_MODULE_SKB_HEAP_INITIAL);
+   }
+
+   if (skb_mpool_initial > skb_mpool_max) {
+      vmk_WarningMessage("module mempool %s: user specified skb_mpool_initial (%d) > skb_mpool_max (%d). "
+                         "Limiting to skb_mpool_max!!!",
+                         vmk_NameToString(&mpool_props.name), skb_mpool_initial, skb_mpool_max);
+      skb_mpool_initial = skb_mpool_max;
+   }
+
    mpool_props.module = THIS_MODULE->moduleID;
    mpool_props.parentMemPool = THIS_MODULE->parent_mem_pool;
    mpool_props.memPoolType = VMK_MEM_POOL_LEAF;
@@ -576,18 +614,16 @@ vmklnx_module_skb_mpool_init(void)
       (skb_mpool_initial + (VMK_PAGE_SIZE - 1))/ VMK_PAGE_SIZE;
    mpool_props.resourceProps.limit =
       (skb_mpool_max + (VMK_PAGE_SIZE - 1))/ VMK_PAGE_SIZE;
-   status = vmk_NameFormat(&mpool_props.name, "vmklnx_%s_skb", module_name);
-   VMK_ASSERT(status == VMK_OK);
 
    status = vmk_MemPoolCreate(&mpool_props, &THIS_MODULE->skb_mem_info.mempool);
-   VMK_ASSERT(status == VMK_OK);
    if (status != VMK_OK) {
-      vmk_WarningMessage("skb_mem_info mempool for module %s failed (%s).",
-                         module_name, vmk_StatusToString(status));
+      vmk_WarningMessage("module mempool %s: creation failed - %s.",
+                         vmk_NameToString(&mpool_props.name), vmk_StatusToString(status));
+      VMK_ASSERT(0);
       return status;
    }
-   vmk_LogMessage("skb_mem_info mempool for module %s created - max size %d",
-                  module_name, skb_mpool_max);
+   vmk_LogMessage("module mempool %s: creation succeeded. initial size = %d, max size = %d",
+                  vmk_NameToString(&mpool_props.name), skb_mpool_initial, skb_mpool_max);
 
    return VMK_OK;
 }

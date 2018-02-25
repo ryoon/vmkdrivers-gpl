@@ -141,6 +141,19 @@ IXGBE_PARAM(DCA, "Disable or enable Direct Cache Access, 0=disabled, 1=descripto
 
 IXGBE_PARAM(RSS, "Number of Receive-Side Scaling Descriptor Queues, default 1=number of cpus");
 
+#ifdef __VMKLNX__
+/* DRSS - Device Receive-Side Scaling (DRSS) Descriptor Queues
+ *
+ * Valid Range: 0 - no limit
+ *
+ * - 0 - Disable DRSS
+ * - Others - Enables DRSS and set the Desc. Q's to min(DRSS, IXGBE_MAX_RSS_INDICES, num_online_cpus()).
+ *
+ * Default Value: 0
+ */
+IXGBE_PARAM(DRSS, "Number of Device Receive-Side Scaling Descriptor Queues, default 0=disable, 1- DRSS, IXGBE_MAX_RSS_INDICES = enable")
+#endif /* __VMKLNX__ */
+
 #ifdef IXGBE_VMDQ
 /* VMDQ - Virtual Machine Device Queues (VMDQ)
  *
@@ -447,6 +460,9 @@ void __devinit ixgbe_check_options(struct ixgbe_adapter *adapter)
 	struct ixgbe_ring_feature *feature = adapter->ring_feature;
 	bool cna_enabled_manually = false;
 	bool vmdq_enabled_manually = false;
+#ifdef __VMKLNX__
+	bool drss_enabled = false;
+#endif
 
 	if (bd >= IXGBE_MAX_NIC) {
 		printk(KERN_NOTICE
@@ -456,6 +472,49 @@ void __devinit ixgbe_check_options(struct ixgbe_adapter *adapter)
 		bd = IXGBE_MAX_NIC;
 #endif
 	}
+
+#ifdef __VMKLNX__
+	{ /* DRSS */
+		int drss;
+#ifdef module_param_array
+		drss = (num_DRSS > bd) ? DRSS[bd] : 0;
+#else
+		drss = DRSS[bd];
+#endif
+
+		/*
+		 * DRSS, once DRSS is enabled, features like VMDQ, CNA, RSS
+		 * and SRIOV should be disabled.
+		 */
+		if (drss) {
+			VMDQ[bd] = 0;
+			RSS[bd] = 0;
+			CNA[bd] = 0;
+			max_vfs[bd] = 0;
+#ifdef module_param_array
+			num_VMDQ = num_RSS = num_CNA = num_max_vfs = num_DRSS;
+#endif
+
+			/*
+			 * Set number of queues to the minimum of DRSS, number of cores and
+			 * IXGBE_MAX_RSS_INDICES.
+			 */
+			drss = min(drss, IXGBE_MAX_RSS_INDICES);
+			drss = min(drss, (int)num_online_cpus());
+
+			feature[RING_F_RSS].indices = drss;
+			*aflags |= IXGBE_FLAG_RSS_ENABLED;
+			drss_enabled = true;
+
+			DPRINTK(PROBE, INFO,
+				"Device RSS is enabled on %d, %d queues will "
+				"be created\n", bd, drss);
+		} else {
+			feature[RING_F_RSS].indices = 0;
+			*aflags &= ~IXGBE_FLAG_RSS_ENABLED;
+		}
+	}
+#endif /* __VMKLNX__ */
 
 	{ /* Interrupt Mode */
 		unsigned int int_mode;
@@ -597,71 +656,80 @@ void __devinit ixgbe_check_options(struct ixgbe_adapter *adapter)
 			adapter->flags |= IXGBE_FLAG_DCA_ENABLED_DATA;
 	}
 #endif /* CONFIG_DCA or CONFIG_DCA_MODULE */
+
 	{ /* Receive-Side Scaling (RSS) */
-		static struct ixgbe_option opt = {
-			.type = range_option,
-			.name = "Receive-Side Scaling (RSS)",
-			.err  = "using default.",
 #ifdef __VMKLNX__
-			.def  = OPTION_DISABLED,
+		if (!drss_enabled) {
+#endif
+			static struct ixgbe_option opt = {
+				.type = range_option,
+				.name = "Receive-Side Scaling (RSS)",
+				.err  = "using default.",
+#ifdef __VMKLNX__
+				.def  = OPTION_DISABLED,
 #else
-			.def  = OPTION_ENABLED,
+				.def  = OPTION_ENABLED,
 #endif /* __VMKLNX__ */
-			.arg  = { .r = { .min = OPTION_DISABLED,
-					 .max = IXGBE_MAX_RSS_INDICES}}
-		};
-		unsigned int rss = RSS[bd];
+				.arg  = { .r = { .min = OPTION_DISABLED,
+						 .max = IXGBE_MAX_RSS_INDICES}}
+			};
+			unsigned int rss = RSS[bd];
 
 #ifdef module_param_array
-		if (num_RSS > bd) {
+			if (num_RSS > bd) {
 #endif
-			if (rss != OPTION_ENABLED)
-				ixgbe_validate_option(&rss, &opt);
-			/*
-			 * we cannot use an else since validate option may
-			 * have changed the state of RSS
-			 */
-			if (rss == OPTION_ENABLED) {
+				if (rss != OPTION_ENABLED)
+					ixgbe_validate_option(&rss, &opt);
 				/*
-				 * Base it off num_online_cpus() with
-				 * a hardware limit cap.
+				 * we cannot use an else since validate option may
+				 * have changed the state of RSS
 				 */
-				rss = min(IXGBE_MAX_RSS_INDICES,
-				          (int)num_online_cpus());
-			}
-			feature[RING_F_RSS].indices = rss ? : 1;
-			if (rss)
-				*aflags |= IXGBE_FLAG_RSS_ENABLED;
-			else
-				*aflags &= ~IXGBE_FLAG_RSS_ENABLED;
-#ifdef module_param_array
-		} else {
-			if (opt.def == OPTION_DISABLED) {
-				*aflags &= ~IXGBE_FLAG_RSS_ENABLED;
-			} else {
-				rss = min(IXGBE_MAX_RSS_INDICES,
-				          (int)num_online_cpus());
-				feature[RING_F_RSS].indices = rss;
+				if (rss == OPTION_ENABLED) {
+					/*
+					 * Base it off num_online_cpus() with
+					 * a hardware limit cap.
+					 */
+					rss = min(IXGBE_MAX_RSS_INDICES,
+						  (int)num_online_cpus());
+				}
+				feature[RING_F_RSS].indices = rss ? : 1;
 				if (rss)
 					*aflags |= IXGBE_FLAG_RSS_ENABLED;
 				else
 					*aflags &= ~IXGBE_FLAG_RSS_ENABLED;
+#ifdef module_param_array
+			} else {
+				if (opt.def == OPTION_DISABLED) {
+					*aflags &= ~IXGBE_FLAG_RSS_ENABLED;
+				} else {
+					rss = min(IXGBE_MAX_RSS_INDICES,
+						  (int)num_online_cpus());
+					feature[RING_F_RSS].indices = rss;
+					if (rss)
+						*aflags |= IXGBE_FLAG_RSS_ENABLED;
+					else
+						*aflags &= ~IXGBE_FLAG_RSS_ENABLED;
+				}
 			}
-		}
 #endif
+
+#ifdef __VMKLNX__
+		} /* if (!drss_enabled) ... */
+#endif
+
 		/* Check Interoperability */
 		if (*aflags & IXGBE_FLAG_RSS_ENABLED) {
 			if (!(*aflags & IXGBE_FLAG_RSS_CAPABLE)) {
 				DPRINTK(PROBE, INFO,
-				        "RSS is not supported on this "
-				        "hardware.  Disabling RSS.\n");
+					"RSS is not supported on this "
+					"hardware.  Disabling RSS.\n");
 				*aflags &= ~IXGBE_FLAG_RSS_ENABLED;
 				feature[RING_F_RSS].indices = 0;
 			} else if (!(*aflags & IXGBE_FLAG_MQ_CAPABLE)) {
 				DPRINTK(PROBE, INFO,
-				        "RSS is not supported while multiple "
-				        "queues are disabled.  "
-				        "Disabling RSS.\n");
+					"RSS is not supported while multiple "
+					"queues are disabled.  "
+					"Disabling RSS.\n");
 				*aflags &= ~IXGBE_FLAG_RSS_ENABLED;
 				*aflags &= ~IXGBE_FLAG_DCB_CAPABLE;
 				feature[RING_F_RSS].indices = 0;
@@ -675,12 +743,12 @@ void __devinit ixgbe_check_options(struct ixgbe_adapter *adapter)
 				*aflags &= ~IXGBE_FLAG_RSS_ENABLED;
 				feature[RING_F_RSS].indices = 0;
 				DPRINTK(PROBE, ERR,
-                                        "RSS is not supported on 82598. "
-                                        "Disabling RSS.\n");
+					"RSS is not supported on 82598. "
+					"Disabling RSS.\n");
 			}
-			/* The only value allowed is IXGBE_ESX_RSS_QUEUES */ 
-			if (feature[RING_F_RSS].indices !=
-				IXGBE_ESX_RSS_QUEUES) {
+			/* The only value allowed is IXGBE_ESX_RSS_QUEUES */
+			if (!drss_enabled &&
+			    feature[RING_F_RSS].indices != IXGBE_ESX_RSS_QUEUES) {
 				feature[RING_F_RSS].indices =
 					IXGBE_ESX_RSS_QUEUES;
 				DPRINTK(PROBE, ERR,
@@ -702,6 +770,7 @@ void __devinit ixgbe_check_options(struct ixgbe_adapter *adapter)
 		}
 #endif /* __VMKLNX__ */
 	}
+
 	{
 		adapter->flags2 &= ~IXGBE_FLAG2_CNA_ENABLED;
 		if (adapter->hw.mac.type != ixgbe_mac_82598EB) {

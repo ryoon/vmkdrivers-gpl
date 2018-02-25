@@ -6,5 +6,5 @@
  * files for the driver's defineVmkDriver() rule.
  */
 
-VMK_NAMESPACE_REQUIRED("com.vmware.usb", "9.2.3.0");
+VMK_NAMESPACE_REQUIRED("com.vmware.usb", "10.0");
 VMK_NAMESPACE_REQUIRED("com.vmware.usbnet", "9.2.3.0");

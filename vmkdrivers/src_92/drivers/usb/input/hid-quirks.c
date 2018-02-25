@@ -1,5 +1,5 @@
 /*
- * Portions Copyright 2008 VMware, Inc.
+ * Portions Copyright 2008, 2015 VMware, Inc.
  */
 /*
  *  USB HID quirks support for Linux

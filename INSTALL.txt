@@ -1,4 +1,4 @@
-This package vmkdrivers-gpl-none is used in ESXi
+This package vmkdrivers-gpl-none is used in ESXi 6.5U1
 
 First, make sure you have the following environment for the validation:
 
@@ -12,7 +12,7 @@ Follow the install instruction and execute the commands:
  - Extract the file vmkdrivers-gpl.tar in the current directory
     cd /vmfs/volumes/datastore1
     cp -r /tmp/drivers /tmp/update-drivers.sh ./
-    sh update-drivers.sh
+    sh ./update-drivers.sh
 
 Then go through the check-list below to verify your changes:
 

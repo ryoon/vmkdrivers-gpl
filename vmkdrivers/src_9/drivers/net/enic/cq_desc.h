@@ -61,6 +61,7 @@ static inline void cq_desc_dec(const struct cq_desc *desc_arg,
 
 	*color = (type_color >> CQ_DESC_COLOR_SHIFT) & CQ_DESC_COLOR_MASK;
 
+#if !defined(__LIBUSNIC__)
 	/*
 	 * Make sure color bit is read from desc *before* other fields
 	 * are read from desc.  Hardware guarantees color bit is last
@@ -70,6 +71,7 @@ static inline void cq_desc_dec(const struct cq_desc *desc_arg,
 	 */
 
 	rmb();
+#endif
 
 	*type = type_color & CQ_DESC_TYPE_MASK;
 	*q_number = le16_to_cpu(desc->q_number) & CQ_DESC_Q_NUM_MASK;

@@ -380,8 +380,8 @@ find_first_zero_bit(const unsigned long * addr, unsigned long size)
         if (!size)
                 return 0;
 
-        vmk_CPUEnsureClearDF();
         asm volatile(
+                "  cld\n"
                 "  repe; scasq\n"
                 "  je 1f\n"
                 "  xorq -8(%%rdi),%%rax\n"
@@ -478,8 +478,8 @@ static __inline__ long find_first_bit(const unsigned long * addr, unsigned long 
 	if (!size)
 		return 0;
 
-	vmk_CPUEnsureClearDF();
 	asm volatile(
+                "   cld\n"
                 "   repe; scasq\n"
 		"   jz 1f\n"
 		"   subq $8,%%rdi\n"

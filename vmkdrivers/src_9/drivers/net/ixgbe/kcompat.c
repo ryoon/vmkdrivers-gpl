@@ -975,8 +975,42 @@ void _kc_skb_add_rx_frag(struct sk_buff *skb, int i, struct page *page,
 
 /*****************************************************************************/
 #if ( LINUX_VERSION_CODE < KERNEL_VERSION(2,6,30) )
-#ifdef HAVE_NETDEV_SELECT_QUEUE
+#if defined(HAVE_NETDEV_SELECT_QUEUE) || defined(__VMKLNX__)
 #include <net/ip.h>
+
+#define __jhash_mix(a, b, c) \
+{ \
+  a -= b; a -= c; a ^= (c>>13); \
+  b -= c; b -= a; b ^= (a<<8); \
+  c -= a; c -= b; c ^= (b>>13); \
+  a -= b; a -= c; a ^= (c>>12);  \
+  b -= c; b -= a; b ^= (a<<16); \
+  c -= a; c -= b; c ^= (b>>5); \
+  a -= b; a -= c; a ^= (c>>3);  \
+  b -= c; b -= a; b ^= (a<<10); \
+  c -= a; c -= b; c ^= (b>>15); \
+}
+
+/* The golden ration: an arbitrary value */
+#define JHASH_GOLDEN_RATIO      0x9e3779b9
+
+/* A special ultra-optimized versions that knows they are hashing exactly
+ * 3, 2 or 1 word(s).
+ *
+ * NOTE: In partilar the "c += length; __jhash_mix(a,b,c);" normally
+ * done at the end is not done here.
+ */
+static inline u32 jhash_3words(u32 a, u32 b, u32 c, u32 initval)
+{
+	a += JHASH_GOLDEN_RATIO;
+	b += JHASH_GOLDEN_RATIO;
+	c += initval;
+
+	__jhash_mix(a, b, c);
+
+	return c;
+}
+
 static u32 _kc_simple_tx_hashrnd;
 static u32 _kc_simple_tx_hashrnd_initialized;
 
@@ -992,7 +1026,7 @@ u16 _kc_skb_tx_hash(struct net_device *dev, struct sk_buff *skb)
 	}
 
 	switch (skb->protocol) {
-	case htons(ETH_P_IP):
+	case __constant_htons(ETH_P_IP):
 		if (!(ip_hdr(skb)->frag_off & htons(IP_MF | IP_OFFSET)))
 			ip_proto = ip_hdr(skb)->protocol;
 		addr1 = ip_hdr(skb)->saddr;
@@ -1000,7 +1034,7 @@ u16 _kc_skb_tx_hash(struct net_device *dev, struct sk_buff *skb)
 		ihl = ip_hdr(skb)->ihl;
 		break;
 #if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
-	case htons(ETH_P_IPV6):
+	case __constant_htons(ETH_P_IPV6):
 		ip_proto = ipv6_hdr(skb)->nexthdr;
 		addr1 = ipv6_hdr(skb)->saddr.s6_addr32[3];
 		addr2 = ipv6_hdr(skb)->daddr.s6_addr32[3];
@@ -1032,7 +1066,7 @@ u16 _kc_skb_tx_hash(struct net_device *dev, struct sk_buff *skb)
 
 	return (u16) (((u64) hash * dev->real_num_tx_queues) >> 32);
 }
-#endif /* HAVE_NETDEV_SELECT_QUEUE */
+#endif /* HAVE_NETDEV_SELECT_QUEUE || __VMKLNX__*/
 #endif /* < 2.6.30 */
 
 

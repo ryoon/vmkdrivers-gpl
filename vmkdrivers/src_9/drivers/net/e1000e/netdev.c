@@ -7937,8 +7937,7 @@ static int e1000_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 		goto err_ioremap;
 
 	if ((adapter->flags & FLAG_HAS_FLASH) &&
-	    (pci_resource_flags(pdev, 1) & IORESOURCE_MEM) &&
-	    (hw->mac.type < e1000_pch_spt)) {
+	    (pci_resource_flags(pdev, 1) & IORESOURCE_MEM)) {
 		flash_start = pci_resource_start(pdev, 1);
 		flash_len = pci_resource_len(pdev, 1);
 		adapter->hw.flash_address = ioremap(flash_start, flash_len);
@@ -8287,7 +8286,7 @@ err_hw_init:
 	kfree(adapter->rx_ring);
 err_sw_init:
 	netif_napi_del(&adapter->napi);
-	if ((adapter->hw.flash_address) && (hw->mac.type < e1000_pch_spt))
+	if (adapter->hw.flash_address)
 		iounmap(adapter->hw.flash_address);
 	e1000e_reset_interrupt_capability(adapter);
 err_flashmap:
@@ -8372,8 +8371,7 @@ static void e1000_remove(struct pci_dev *pdev)
 	kfree(adapter->rx_ring);
 
 	iounmap(adapter->hw.hw_addr);
-	if ((adapter->hw.flash_address) &&
-	    (adapter->hw.mac.type < e1000_pch_spt))
+	if (adapter->hw.flash_address)
 		iounmap(adapter->hw.flash_address);
 	pci_release_selected_regions(pdev,
 				     pci_select_bars(pdev, IORESOURCE_MEM));
@@ -8480,11 +8478,6 @@ static const  struct pci_device_id e1000_pci_tbl[] = {
 	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_PCH_SPT_I219_V), board_pch_spt },
 	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_PCH_SPT_I219_LM2), board_pch_spt },
 	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_PCH_SPT_I219_V2), board_pch_spt },
-        { PCI_VDEVICE(INTEL, E1000_DEV_ID_PCH_LBG_I219_LM3), board_pch_spt },
-        { PCI_VDEVICE(INTEL, E1000_DEV_ID_PCH_SPT_I219_LM4), board_pch_spt },
-        { PCI_VDEVICE(INTEL, E1000_DEV_ID_PCH_SPT_I219_V4), board_pch_spt },
-        { PCI_VDEVICE(INTEL, E1000_DEV_ID_PCH_SPT_I219_LM5), board_pch_spt },
-        { PCI_VDEVICE(INTEL, E1000_DEV_ID_PCH_SPT_I219_V5), board_pch_spt },
 
 	{ 0, 0, 0, 0, 0, 0, 0 }	/* terminate list */
 };

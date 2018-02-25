@@ -8,4 +8,4 @@
 
 VMK_NAMESPACE_PROVIDES("com.vmware.usbhid", "9.2.3.0");
 #define VMKLNX_MY_NAMESPACE_VERSION "9.2.3.0"
-VMK_NAMESPACE_REQUIRED("com.vmware.usb", "9.2.3.0");
+VMK_NAMESPACE_REQUIRED("com.vmware.usb", "10.0");

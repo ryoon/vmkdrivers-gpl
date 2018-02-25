@@ -6103,6 +6103,15 @@ void ata_qc_complete(struct ata_queued_cmd *qc)
 			ata_verify_xfer(qc);
 
 		__ata_qc_complete(qc);
+#if defined(__VMKLNX__)
+		/* Fixing PR 1173296 */
+		if (unlikely((ehi->dev_action[dev->devno] & ATA_EH_REVALIDATE) &&
+			     (ap->pflags & ATA_PFLAG_EH_PENDING))) {
+			ata_port_printk(ap, KERN_INFO,
+					"ata_qc_complete, dev needs revalidation, calling EH\n");
+			wake_up_process(ap->scsi_host->ehandler);
+		}
+#endif /* defined(__VMKLNX__) */
 	} else {
 		if (qc->flags & ATA_QCFLAG_EH_SCHEDULED)
 			return;

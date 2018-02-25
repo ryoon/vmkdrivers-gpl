@@ -1008,9 +1008,7 @@ static void bnx2i_free_ep(struct bnx2i_endpoint *endpoint)
 	if (endpoint->in_progress == 1)
 		endpoint->hba->ofld_conns_active--;
 
-	if(endpoint->state != EP_STATE_OFLD_FAILED_CID_BUSY) {
-		bnx2i_free_iscsi_cid(endpoint->hba, endpoint->ep_iscsi_cid);
-	}
+	bnx2i_free_iscsi_cid(endpoint->hba, endpoint->ep_iscsi_cid);
 	endpoint->state = EP_STATE_IDLE;
 
 	if (endpoint->conn) {
@@ -4839,6 +4837,7 @@ struct iscsi_cls_session *
 		  __FUNCTION__, sess);
 	return hostdata_session(shost->hostdata);
 #else
+	PRINT(hba, "sess %p created successfully\n", sess);
 	return cls_session;
 #endif
 
@@ -5588,18 +5587,27 @@ int bnx2i_conn_start(struct iscsi_cls_conn *cls_conn)
 
 	conn->ep->state = EP_STATE_ULP_UPDATE_START;
 
+        conn->ep->ofld_timer.expires = 10*HZ + jiffies;
+        conn->ep->ofld_timer.function = bnx2i_ep_ofld_timer;
+        conn->ep->ofld_timer.data = (unsigned long) conn->ep;
+        add_timer(&conn->ep->ofld_timer);
+
 	if (bnx2i_update_iscsi_conn(conn)) {
 		PRINT_ERR(sess->hba, "unable to send conn update kwqe\n");
 		return -ENOSPC;
 	}
 
-	conn->ep->ofld_timer.expires = 10*HZ + jiffies;
-	conn->ep->ofld_timer.function = bnx2i_ep_ofld_timer;
-	conn->ep->ofld_timer.data = (unsigned long) conn->ep;
-	add_timer(&conn->ep->ofld_timer);
 	/* update iSCSI context for this conn, wait for CNIC to complete */
 	wait_event_interruptible(conn->ep->ofld_wait,
 				 conn->ep->state != EP_STATE_ULP_UPDATE_START);
+
+	if(conn->ep->state != EP_STATE_ULP_UPDATE_COMPL) {
+		BNX2I_DBG(DBG_CONN_SETUP, conn->sess->hba, "Update iscsi conn"
+				"failed cid 0x%x iscsi_cid 0x%x state = 0x%x \n",
+				conn->ep->ep_cid, conn->ep->ep_iscsi_cid,
+				conn->ep->state);
+		return -ENOSPC;
+	}
 
 	if (signal_pending(current))
 		flush_signals(current);
@@ -6126,6 +6134,10 @@ static struct bnx2i_hba *bnx2i_check_route(struct sockaddr *dst_addr)
 
 	hba = get_adapter_list_head();
 #endif
+        if (bnx2i_adapter_ready(hba)) {
+                PRINT_ALERT(hba, "check route, hba not found\n");
+                goto no_nx2_route;
+        }
 
 	if (hba && hba->cnic)
 #ifdef __VMKLNX__
@@ -6143,10 +6155,6 @@ static struct bnx2i_hba *bnx2i_check_route(struct sockaddr *dst_addr)
 		goto no_nx2_route;
 	}
 
-	if (bnx2i_adapter_ready(hba)) {
-		PRINT_ALERT(hba, "check route, hba not found\n");
-		goto no_nx2_route;
-	}
 	if (hba->netdev->mtu > hba->mtu_supported) {
 		PRINT_ALERT(hba, "%s network i/f mtu is set to %d\n",
 				  hba->netdev->name, hba->netdev->mtu);
@@ -6392,11 +6400,32 @@ int bnx2i_ep_connect(struct sockaddr *dst_addr, int non_blocking,
 	if (!test_bit(BNX2I_CNIC_REGISTERED, &hba->reg_with_cnic)) {
 		rc = -EINVAL;
 		goto conn_failed;
-	} else
-		rc = cnic->cm_connect(endpoint->cm_sk, &saddr);
+	} else {
+		init_timer(&endpoint->ofld_timer);
+		endpoint->ofld_timer.expires = 2 * HZ + jiffies;
+		endpoint->ofld_timer.function = bnx2i_ep_ofld_timer;
+		endpoint->ofld_timer.data = (unsigned long) endpoint;
+		add_timer(&endpoint->ofld_timer);
+                rc = cnic->cm_connect(endpoint->cm_sk, &saddr);
+	}
 
 	if (rc)
 		goto release_ep;
+	/* Wait for CNIC hardware to setup conn context and return 'cid' */
+	wait_event_interruptible(endpoint->ofld_wait,
+			endpoint->state != EP_STATE_CONNECT_START);
+
+	if (signal_pending(current))
+		flush_signals(current);
+	del_timer_sync(&endpoint->ofld_timer);
+
+	if (endpoint->state != EP_STATE_CONNECT_COMPL) {
+		printk("bnx2i:%s:%d - %s: connect failed for iscsi cid %d\n",
+				__func__, __LINE__, hba->netdev->name,
+				endpoint->ep_iscsi_cid);
+		rc = -ENOSPC;
+		goto release_ep;
+	}
 
 	rc = bnx2i_map_ep_dbell_regs(endpoint);
 	if (rc)
@@ -6629,7 +6658,11 @@ void bnx2i_ep_disconnect(uint64_t ep_handle)
 
 	/* wait for option-2 conn teardown */
 	wait_event_interruptible(ep->ofld_wait,
-				 ep->state != EP_STATE_DISCONN_START);
+				 ((ep->state != EP_STATE_DISCONN_START)
+				 && (ep->state != EP_STATE_TCP_FIN_RCVD)));
+
+	BNX2I_DBG(DBG_CONN_SETUP, hba, "After wait, ep->state:0x%x \n",
+			ep->state);
 
 	if (signal_pending(current))
 		flush_signals(current);

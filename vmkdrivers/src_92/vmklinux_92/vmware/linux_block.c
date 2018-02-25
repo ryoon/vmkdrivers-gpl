@@ -1,5 +1,5 @@
 /* ****************************************************************
- * Portions Copyright 1998, 2010, 2012, 2013 VMware, Inc.
+ * Portions Copyright 1998, 2010, 2012-2013, 2015-2016 VMware, Inc.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -959,8 +959,8 @@ LinuxBlockIODone(struct bio *bio, int bytes_done, int errors)
       /*
        * Cleanup resources (lbb + bio) belong to this request
        */
-      vmklnx_bio_fs_destructor(bio); /* this free's llb + bio */
       bio->bi_private = NULL;
+      vmklnx_bio_fs_destructor(bio); /* this free's llb + bio */
    } else {
       /* we shouldn't come here */
       VMK_ASSERT(0);

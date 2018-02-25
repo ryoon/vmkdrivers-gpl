@@ -281,7 +281,7 @@ static void defer_bh(struct usbnet *dev, struct sk_buff *skb, struct sk_buff_hea
 	if (dev->done.qlen == 1) {
 		spin_unlock_irqrestore(&dev->done.lock, flags);
 		tasklet_schedule(&dev->bh);
-		return;
+		 return;
 	}
 	spin_unlock_irqrestore(&dev->done.lock, flags);
 }
@@ -970,6 +970,38 @@ static int usbnet_start_xmit (struct sk_buff *skb, struct net_device *net)
 	entry->state = tx_start;
 	entry->length = length;
 
+
+#if defined(__VMKLNX__)
+	length = min(skb->len,
+		(unsigned int)((uint8_t *)skb->end - (uint8_t *)skb->head));
+	usb_fill_bulk_urb (urb, dev->udev, dev->out,
+			skb->data, length, tx_complete, skb);
+
+	/* don't assume the hardware handles USB_ZERO_PACKET
+	 * NOTE:  strictly conforming cdc-ether devices should expect
+	 * the ZLP here, but ignore the one-byte packet.
+	 */
+	if ((length % dev->maxpacket) == 0) {
+		if (skb_tailroom(skb)) {
+			/* In very tiny chance, the mapped buffer
+			 * is at the end of the page. If there is
+			 * no room at the buffer end, and we increase
+			 * the buffer length, HCD may fail in
+			 * acrossing pages memory map.
+			 */
+			__skb_put(skb, 1);
+			skb->data[skb->len - 1] = 0;
+			urb->transfer_buffer_length++;
+		} else {
+			/*
+			 * Let the HCD handle this.
+			 * In our OHCI/UHCI/EHCI driver,
+			 * it is safe to use this flag.
+			 */
+			urb->transfer_flags |= URB_ZERO_PACKET;
+		}
+	}
+#else
 	usb_fill_bulk_urb (urb, dev->udev, dev->out,
 			skb->data, skb->len, tx_complete, skb);
 
@@ -984,7 +1016,7 @@ static int usbnet_start_xmit (struct sk_buff *skb, struct net_device *net)
 			__skb_put(skb, 1);
 		}
 	}
-
+#endif /* __VMKLNX__ */
 	spin_lock_irqsave (&dev->txq.lock, flags);
 
 	switch ((retval = usb_submit_urb (urb, GFP_ATOMIC))) {
@@ -1200,7 +1232,10 @@ usbnet_probe (struct usb_interface *udev, const struct usb_device_id *prod)
 	if (dma_supported (&udev->dev, DMA_64BIT_MASK))
 		net->features |= NETIF_F_HIGHDMA;
 #endif
-
+#if defined(__VMKLNX__)
+	/* For USB NIC, we do not support span pages */
+	net->features |= NETIF_F_FRAG_CANT_SPAN_PAGES;
+#endif
 	net->change_mtu = usbnet_change_mtu;
 	net->get_stats = usbnet_get_stats;
 	net->hard_start_xmit = usbnet_start_xmit;

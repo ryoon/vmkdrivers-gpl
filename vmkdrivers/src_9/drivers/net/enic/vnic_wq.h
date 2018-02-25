@@ -58,6 +58,10 @@ struct vnic_wq_buf {
 	unsigned int index;
 	int sop;
 	void *desc;
+	uint64_t wr_id; /* Cookie */
+	uint8_t cq_entry; /* Gets completion event from hw */
+	uint8_t desc_skip_cnt; /* Num descs to occupy */
+	uint8_t compressed_send; /* Both hdr and payload in one desc */
 };
 
 /* Break the vnic_wq_buf allocations into blocks of 32/64 entries */
@@ -81,7 +85,11 @@ struct vnic_wq {
 	struct vnic_wq_buf *to_use;
 	struct vnic_wq_buf *to_clean;
 	unsigned int pkts_outstanding;
+	unsigned int state;
 	int enabled;
+#if defined(__LIBUSNIC__)
+	uint32_t qp_num;
+#endif
 };
 
 static inline unsigned int vnic_wq_desc_avail(struct vnic_wq *wq)
@@ -101,30 +109,121 @@ static inline void *vnic_wq_next_desc(struct vnic_wq *wq)
 	return wq->to_use->desc;
 }
 
+#define PI_LOG2_CACHE_LINE_SIZE        5
+#define PI_INDEX_BITS            12
+#define PI_INDEX_MASK ((1U << PI_INDEX_BITS) - 1)
+#define PI_PREFETCH_LEN_MASK ((1U << PI_LOG2_CACHE_LINE_SIZE) - 1)
+#define PI_PREFETCH_LEN_OFF 16
+#define PI_PREFETCH_ADDR_BITS 43
+#define PI_PREFETCH_ADDR_MASK ((1ULL << PI_PREFETCH_ADDR_BITS) - 1)
+#define PI_PREFETCH_ADDR_OFF 21
+
+/** How many cache lines are touched by buffer (addr, len). */
+static inline unsigned int num_cache_lines_touched(dma_addr_t addr,
+							unsigned int len)
+{
+	const unsigned long mask = PI_PREFETCH_LEN_MASK;
+	const unsigned long laddr = (unsigned long)addr;
+	unsigned long lines, equiv_len;
+	/* A. If addr is aligned, our solution is just to round up len to the
+	next boundary.
+
+	e.g. addr = 0, len = 48
+	+--------------------+
+	|XXXXXXXXXXXXXXXXXXXX|    32-byte cacheline a
+	+--------------------+
+	|XXXXXXXXXX          |    cacheline b
+	+--------------------+
+
+	B. If addr is not aligned, however, we may use an extra
+	cacheline.  e.g. addr = 12, len = 22
+
+	+--------------------+
+	|       XXXXXXXXXXXXX|
+	+--------------------+
+	|XX                  |
+	+--------------------+
+
+	Our solution is to make the problem equivalent to case A
+	above by adding the empty space in the first cacheline to the length:
+	unsigned long len;
+
+	+--------------------+
+	|eeeeeeeXXXXXXXXXXXXX|    "e" is empty space, which we add to len
+	+--------------------+
+	|XX                  |
+	+--------------------+
+
+	*/
+	equiv_len = len + (laddr & mask);
+
+	/* Now we can just round up this len to the next 32-byte boundary. */
+	lines = (equiv_len + mask) & (~mask);
+
+	/* Scale bytes -> cachelines. */
+	return lines >> PI_LOG2_CACHE_LINE_SIZE;
+}
+
+static inline u64 vnic_cached_posted_index(dma_addr_t addr, unsigned int len,
+						unsigned int index)
+{
+	unsigned int num_cache_lines = num_cache_lines_touched(addr, len);
+	/* Wish we could avoid a branch here.  We could have separate
+	 * vnic_wq_post() and vinc_wq_post_inline(), the latter
+	 * only supporting < 1k (2^5 * 2^5) sends, I suppose.  This would
+	 * eliminate the if (eop) branch as well.
+	 */
+	if (num_cache_lines > PI_PREFETCH_LEN_MASK)
+		num_cache_lines = 0;
+	return (index & PI_INDEX_MASK) |
+	((num_cache_lines & PI_PREFETCH_LEN_MASK) << PI_PREFETCH_LEN_OFF) |
+		(((addr >> PI_LOG2_CACHE_LINE_SIZE) &
+	PI_PREFETCH_ADDR_MASK) << PI_PREFETCH_ADDR_OFF);
+}
+
 static inline void vnic_wq_post(struct vnic_wq *wq,
 	void *os_buf, dma_addr_t dma_addr,
-	unsigned int len, int sop, int eop)
+	unsigned int len, int sop, int eop,
+	uint8_t desc_skip_cnt, uint8_t cq_entry,
+	uint8_t compressed_send, uint64_t wrid)
 {
 	struct vnic_wq_buf *buf = wq->to_use;
 
 	buf->sop = sop;
+	buf->cq_entry = cq_entry;
+	buf->compressed_send = compressed_send;
+	buf->desc_skip_cnt = desc_skip_cnt;
 	buf->os_buf = eop ? os_buf : NULL;
 	buf->dma_addr = dma_addr;
 	buf->len = len;
+	buf->wr_id = wrid;
 
 	buf = buf->next;
 	if (eop) {
+#ifdef DO_PREFETCH
+		uint64_t wr = vnic_cached_posted_index(dma_addr, len,
+							buf->index);
+#endif
 		/* Adding write memory barrier prevents compiler and/or CPU
 		 * reordering, thus avoiding descriptor posting before
 		 * descriptor is initialized. Otherwise, hardware can read
 		 * stale descriptor fields.
 		 */
 		wmb();
+#ifdef DO_PREFETCH
+		/* Intel chipsets seem to limit the rate of PIOs that we can
+		 * push on the bus.  Thus, it is very important to do a single
+		 * 64 bit write here.  With two 32-bit writes, my maximum
+		 * pkt/sec rate was cut almost in half. -AJF
+		 */
+		iowrite64((uint64_t)wr, &wq->ctrl->posted_index);
+#else
 		iowrite32(buf->index, &wq->ctrl->posted_index);
+#endif
 	}
 	wq->to_use = buf;
 
-	wq->ring.desc_avail--;
+	wq->ring.desc_avail -= desc_skip_cnt;
 }
 
 static inline void vnic_wq_service(struct vnic_wq *wq,
@@ -153,6 +252,8 @@ static inline void vnic_wq_service(struct vnic_wq *wq,
 
 void vnic_wq_free(struct vnic_wq *wq);
 int vnic_wq_alloc(struct vnic_dev *vdev, struct vnic_wq *wq, unsigned int index,
+	unsigned int desc_count, unsigned int desc_size);
+int vnic_wq_devcmd2_alloc(struct vnic_dev *vdev, struct vnic_wq *wq,
 	unsigned int desc_count, unsigned int desc_size);
 void vnic_wq_init_start(struct vnic_wq *wq, unsigned int cq_index,
 	unsigned int fetch_index, unsigned int posted_index,

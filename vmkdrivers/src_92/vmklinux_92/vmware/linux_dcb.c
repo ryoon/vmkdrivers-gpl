@@ -169,6 +169,8 @@ VMK_ReturnStatus
 NICDCBIsEnabled(void *device, vmk_Bool *state,  vmk_DCBVersion *version)
 {
    struct net_device *netdev = (struct net_device *) device;
+   LinNetDev *linDev = get_LinNetDev(netdev);
+   u8 mode = 0;
 
    VMK_ASSERT(netdev);
 
@@ -182,11 +184,33 @@ NICDCBIsEnabled(void *device, vmk_Bool *state,  vmk_DCBVersion *version)
    VMKLNX_DEBUG(9, "getstate: %s", netdev->name);
    VMKAPI_MODULE_CALL(netdev->module_id, *((vmk_uint8 *)state),
                       netdev->dcbnl_ops->getstate, netdev);
-
    rtnl_unlock();
 
-   version->majorVersion = 1;
-   version->minorVersion = 1;
+
+   if (linDev->flags & NET_VMKLNX_IEEE_DCB) {
+      if (!netdev->dcbnl_ops || !netdev->dcbnl_ops->getdcbx) {
+         VMKLNX_DEBUG(9, "getdcbx not defined on %s", netdev->name);
+         return VMK_NOT_SUPPORTED;
+      }
+
+      rtnl_lock();
+
+      VMKLNX_DEBUG(9, "getdcbx: %s", netdev->name);
+      VMKAPI_MODULE_CALL(netdev->module_id, mode,
+                         netdev->dcbnl_ops->getdcbx, netdev);
+      rtnl_unlock();
+   }
+
+   if (mode & DCB_CAP_DCBX_VER_IEEE) {
+      version->majorVersion = 2;
+      version->minorVersion = 0;
+   } else if (mode & DCB_CAP_DCBX_VER_CEE) {
+      version->majorVersion = 1;
+      version->minorVersion = 2;
+   } else {
+      version->majorVersion = 1;
+      version->minorVersion = 0;
+   }
 
    return VMK_OK;
 }

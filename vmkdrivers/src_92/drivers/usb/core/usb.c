@@ -1,5 +1,5 @@
 /*
- * Portions Copyright 2008, 2009, 2011 VMware, Inc.
+ * Portions Copyright 2008, 2009, 2011, 2015 VMware, Inc.
  */
 /*
  * drivers/usb/core/usb.c
@@ -1145,7 +1145,7 @@ static int __init usb_init(void)
 	}
 #if defined(__VMKLNX__)
 	status = vmk_SemaCreate(&ehci_cf_port_reset_rwsem,
-		vmk_ModuleCurrentID, "EHCI_CF_PORT_RESET_RWSEM", 1);
+                vmk_ModuleCurrentID, "EHCI_CF_PORT_RESET_RWSEM", 1);
 	if (status != VMK_OK)
 		return -EFAULT;
 

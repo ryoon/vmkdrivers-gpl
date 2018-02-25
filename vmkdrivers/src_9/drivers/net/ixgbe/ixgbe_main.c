@@ -5821,11 +5821,15 @@ static inline bool ixgbe_set_vmdq_queues(struct ixgbe_adapter *adapter)
 		break;
 
 	case (IXGBE_FLAG_RSS_ENABLED):
-		/* RSS enabled, no VMDQ.  possibly SRIOV enabled */
-		adapter->num_rx_queues = min(MAX_RX_QUEUES, 1 + rss_i); /* default queue + RSS */
-		adapter->num_tx_queues = min(MAX_TX_QUEUES, 2); /* default + 1 for the RSS pool */
-		adapter->num_rx_pools = 2; /* default + RSS */
-		adapter->num_rx_queues_per_pool = 1;
+		/*
+		 * This case takes care of Device RSS only, no VMDQ, CNA or
+		 * SRIOV. For VMDQ plus RSS case, it's handled by case
+		 * (IXGBE_FLAG_RSS_ENABLED | IXGBE_FLAG_VMDQ_ENABLED).
+		 */
+		adapter->num_rx_queues = rss_i;
+		adapter->num_tx_queues = rss_i;
+		adapter->num_rx_pools = 1;
+		adapter->num_rx_queues_per_pool = rss_i;
 		ret = true;
 		goto vmdq_queues_out;
 	default:
@@ -6259,7 +6263,7 @@ static inline bool ixgbe_cache_ring_vmdq(struct ixgbe_adapter *adapter)
 				adapter->rx_ring[i]->reg_idx = VMDQ_P(i) *
 					IXGBE_ESX_HW_QUEUES_PER_POOL;
 			/* Configure RSS queues - all queues in the same pool */
-			for (i = 0; i < IXGBE_ESX_RSS_QUEUES ; i++)
+			for (i = 0; i < adapter->ring_feature[RING_F_RSS].indices; i++)
 				adapter->rx_ring[adapter->num_rx_pools-1 + i]->
 				reg_idx = (VMDQ_P(adapter->num_rx_pools - 1) *
 					   IXGBE_ESX_HW_QUEUES_PER_POOL) + i;
@@ -9167,7 +9171,20 @@ static netdev_tx_t ixgbe_xmit_frame(struct sk_buff *skb, struct net_device *netd
 	struct ixgbe_ring *tx_ring;
 #ifdef HAVE_TX_MQ
 	unsigned int r_idx = skb->queue_mapping;
+
+#ifdef __VMKLNX__
+	// only when DRSS is enabled, select the r_idx based on 5 tuple hash
+	if ((adapter->flags & (IXGBE_FLAG_RSS_ENABLED |
+			       IXGBE_FLAG_DCB_ENABLED |
+#ifdef IXGBE_VMDQ
+			       IXGBE_FLAG_VMDQ_ENABLED |
 #endif
+			       IXGBE_FLAG_SRIOV_ENABLED)) == IXGBE_FLAG_RSS_ENABLED) {
+		r_idx = skb_tx_hash(netdev, skb);
+	}
+#endif /* __VMKLNX__ */
+
+#endif /* HAVE_TX_MQ */
 
 	if (skb->len <= 0) {
 		dev_kfree_skb_any(skb);

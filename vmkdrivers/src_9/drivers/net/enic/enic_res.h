@@ -47,6 +47,9 @@ static inline void enic_queue_wq_desc_ex(struct vnic_wq *wq,
 	int offload_mode, int cq_entry, int sop, int eop, int loopback)
 {
 	struct wq_enet_desc *desc = vnic_wq_next_desc(wq);
+	u8 desc_skip_cnt = 1;
+	u8 compressed_send = 0;
+	u64 wrid = 0;
 
 	wq_enet_desc_enc(desc,
 		(u64)dma_addr | VNIC_PADDR_TARGET,
@@ -59,7 +62,8 @@ static inline void enic_queue_wq_desc_ex(struct vnic_wq *wq,
 		(u16)vlan_tag,
 		(u8)loopback);
 
-	vnic_wq_post(wq, os_buf, dma_addr, len, sop, eop);
+	vnic_wq_post(wq, os_buf, dma_addr, len, sop, eop, desc_skip_cnt,
+			(u8)cq_entry, compressed_send, wrid);
 }
 
 static inline void enic_queue_wq_desc_cont(struct vnic_wq *wq,
@@ -114,12 +118,22 @@ static inline void enic_queue_wq_desc_tso(struct vnic_wq *wq,
 		WQ_ENET_OFFLOAD_MODE_TSO,
 		eop, 1 /* SOP */, eop, loopback);
 }
-
+static inline void enic_queue_wq_desc_csum_all(struct vnic_wq *wq,
+	void *os_buf, dma_addr_t dma_addr, unsigned int len,
+	unsigned int mss, int vlan_tag_insert, unsigned int vlan_tag,
+	int eop, int loopback)
+{
+	enic_queue_wq_desc_ex(wq, os_buf, dma_addr, len,
+		mss, 0, vlan_tag_insert, vlan_tag,
+		WQ_ENET_OFFLOAD_MODE_CSUM,
+		eop, 1 /* SOP */, eop, loopback);
+}
 static inline void enic_queue_rq_desc(struct vnic_rq *rq,
 	void *os_buf, unsigned int os_buf_index,
 	dma_addr_t dma_addr, unsigned int len)
 {
 	struct rq_enet_desc *desc = vnic_rq_next_desc(rq);
+	u64 wrid = 0;
 	u8 type = os_buf_index ?
 		RQ_ENET_TYPE_NOT_SOP : RQ_ENET_TYPE_ONLY_SOP;
 
@@ -127,7 +141,7 @@ static inline void enic_queue_rq_desc(struct vnic_rq *rq,
 		(u64)dma_addr | VNIC_PADDR_TARGET,
 		type, (u16)len);
 
-	vnic_rq_post(rq, os_buf, os_buf_index, dma_addr, len);
+	vnic_rq_post(rq, os_buf, os_buf_index, dma_addr, len, wrid);
 }
 
 struct enic;

@@ -45,6 +45,8 @@ enum {
   IPPROTO_COMP   = 108,                /* Compression Header protocol */
   IPPROTO_SCTP   = 132,		/* Stream Control Transport Protocol	*/
 
+  IPPROTO_UDPLITE = 136,	/* UDP lite */
+
   IPPROTO_RAW	 = 255,		/* Raw IP packets			*/
   IPPROTO_MAX
 };

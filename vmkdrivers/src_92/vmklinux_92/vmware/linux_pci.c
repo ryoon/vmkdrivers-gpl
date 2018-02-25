@@ -914,7 +914,6 @@ LinuxPCI_EnableMSIX(struct pci_dev* dev, struct msix_entry *entries,
       vmk_HeapFree(VMK_MODULE_HEAP_ID, pciDevExt->intrArray);
    }
 
-
    pciDevExt->intrArray = intrArray;
    pciDevExt->intrVectors = vectors;
    pciDevExt->numIntrVectors += *nvecs_alloced;
