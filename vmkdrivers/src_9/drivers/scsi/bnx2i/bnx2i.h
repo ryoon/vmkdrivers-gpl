@@ -1469,7 +1469,6 @@ static inline void bnx2i_int_to_scsilun_with_sec_lun_id(uint16_t lun,
 							uint64_t sllid)
 {
 	if (sllid != VMKLNX_SCSI_INVALID_SECONDLEVEL_ID) {
-		VMK_ASSERT(lun <= 255); /* Max LUN supported is 255. */
 		memset(scsi_lun, 0, 8);
 		scsi_lun->scsi_lun[0] = (lun >> 8) & 0xFF;
 		scsi_lun->scsi_lun[1] = lun & 0xFF;

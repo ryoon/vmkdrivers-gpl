@@ -278,8 +278,11 @@ static void defer_bh(struct usbnet *dev, struct sk_buff *skb, struct sk_buff_hea
 	spin_unlock(&list->lock);
 	spin_lock(&dev->done.lock);
 	__skb_queue_tail(&dev->done, skb);
-	if (dev->done.qlen == 1)
+	if (dev->done.qlen == 1) {
+		spin_unlock_irqrestore(&dev->done.lock, flags);
 		tasklet_schedule(&dev->bh);
+		return;
+	}
 	spin_unlock_irqrestore(&dev->done.lock, flags);
 }
 

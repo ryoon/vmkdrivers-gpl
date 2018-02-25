@@ -1,0 +1,19 @@
+The installation of this package should be performed on an ESXi server.
+This server should have SSH access enabled: Customize System/View Logs ->
+Troubleshooting Options -> Enable SSH
+
+To install the package create a working directory on a datastore on the
+ESXi server, e.g., "/vmfs/volumes/datastore1/" and copy the binary
+disclosure created by the build:
+
+scp centos-5.3-x64.tar root@esx.example.org:/vmfs/volumes/datastore1/centos-5.3-x64.tar
+
+On the ESXi host, verify the shipped version:
+
+Replace the shipped version with the custom build:
+
+cd /vmfs/volumes/datastore1/
+tar xf centos-5.3-x64.tar
+./update-drivers.sh
+
+Reboot the system to load the updated drivers.
