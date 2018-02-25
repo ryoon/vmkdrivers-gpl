@@ -1,30 +1,24 @@
-/*******************************************************************************
-
-  Intel PRO/1000 Linux driver
-  Copyright(c) 1999 - 2013 Intel Corporation.
-
-  This program is free software; you can redistribute it and/or modify it
-  under the terms and conditions of the GNU General Public License,
-  version 2, as published by the Free Software Foundation.
-
-  This program is distributed in the hope it will be useful, but WITHOUT
-  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
-  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
-  more details.
-
-  You should have received a copy of the GNU General Public License along with
-  this program; if not, write to the Free Software Foundation, Inc.,
-  51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
-
-  The full GNU General Public License is included in this distribution in
-  the file called "COPYING".
-
-  Contact Information:
-  Linux NICS <linux.nics@intel.com>
-  e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
-  Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
-
-*******************************************************************************/
+/*
+ * Intel PRO/1000 Linux driver
+ * Copyright(c) 1999 - 2014 Intel Corporation.
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * The full GNU General Public License is included in this distribution in
+ * the file called "COPYING".
+ *
+ * Contact Information:
+ * Linux NICS <linux.nics@intel.com>
+ * e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
+ * Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
+ */
 
 /* Linux PRO/1000 Ethernet Driver main header file */
 
@@ -96,9 +90,6 @@ struct e1000_info;
 
 #define E1000_MNG_VLAN_NONE		(-1)
 
-/* Number of packet split data buffers (not including the header buffer) */
-#define PS_PAGE_BUFFERS			(MAX_PS_BUFFERS - 1)
-
 #define DEFAULT_JUMBO			9234
 
 /* Time to wait before putting the device into D3 if there's no link (in ms). */
@@ -148,6 +139,7 @@ enum e1000_boards {
 	board_pchlan,
 	board_pch2lan,
 	board_pch_lpt,
+	board_pch_spt
 };
 
 struct e1000_ps_page {
@@ -286,15 +278,16 @@ struct e1000_adapter {
 	u32 tx_head_addr;
 	u32 tx_fifo_size;
 	u32 tx_dma_failed;
+	u32 tx_hwtstamp_timeouts;
 
 	/* Rx */
 #ifdef CONFIG_E1000E_NAPI
-	bool (*clean_rx) (struct e1000_ring *ring, int *work_done,
+	bool (*clean_rx)(struct e1000_ring *ring, int *work_done,
 			  int work_to_do) ____cacheline_aligned_in_smp;
 #else
-	bool (*clean_rx) (struct e1000_ring *ring) ____cacheline_aligned_in_smp;
+	bool (*clean_rx)(struct e1000_ring *ring) ____cacheline_aligned_in_smp;
 #endif
-	void (*alloc_rx_buf) (struct e1000_ring *ring, int cleaned_count,
+	void (*alloc_rx_buf)(struct e1000_ring *ring, int cleaned_count,
 			      gfp_t gfp);
 	struct e1000_ring *rx_ring;
 
@@ -312,6 +305,12 @@ struct e1000_adapter {
 #ifdef HAVE_HW_TIME_STAMP
 	u32 rx_hwtstamp_cleared;
 #endif
+#ifdef DYNAMIC_LTR_SUPPORT
+	u64 c10_mpc_count;	/* frequently updated MPC count */
+	u64 c10_rx_bytes;	/* frequently updated RX bytes count */
+	u32 c10_pba_bytes;	/* current PBA RXA converted to bytes*/
+	bool c10_demote_ltr;	/* is/should LTR be demoted */
+#endif /* DYNAMIC_LTR_SUPPORT */
 
 	unsigned int rx_ps_pages;
 	u16 rx_ps_bsize0;
@@ -365,6 +364,7 @@ struct e1000_adapter {
 
 #endif
 	unsigned int flags;
+
 #if defined(__VMKLNX__)
 	unsigned int flags1;
 	enum {
@@ -372,6 +372,7 @@ struct e1000_adapter {
 		hw_hang_on_tso
 	} hw_hang_reason;
 #endif /* defined(__VMKLNX__) */
+
 	unsigned int flags2;
 	struct work_struct downshift_task;
 	struct work_struct update_phy_task;
@@ -392,6 +393,7 @@ struct e1000_adapter {
 	struct hwtstamp_config hwtstamp_config;
 	struct delayed_work systim_overflow_work;
 	struct sk_buff *tx_hwtstamp_skb;
+	unsigned long tx_hwtstamp_start;
 	struct work_struct tx_hwtstamp_work;
 	spinlock_t systim_lock;	/* protects SYSTIML/H regsters */
 	struct cyclecounter cc;
@@ -453,6 +455,8 @@ s32 e1000e_get_base_timinca(struct e1000_adapter *adapter, u32 *timinca);
  * 25MHz	46-bit	2^46 / 10^9 / 3600 = 19.55 hours
  */
 #define E1000_SYSTIM_OVERFLOW_PERIOD	(HZ * 60 * 60 * 4)
+#define E1000_MAX_82574_SYSTIM_REREADS 50
+#define E1000_82574_SYSTIM_EPSILON (1ULL << 35ULL)
 #endif /* HAVE_HW_TIME_STAMP */
 
 /* hardware capability, feature, and workaround flags */
@@ -496,6 +500,7 @@ s32 e1000e_get_base_timinca(struct e1000_adapter *adapter, u32 *timinca);
 #if defined(__VMKLNX__)
 #define FLAG_READ_ONLY_NVM                (1 << 0)
 #endif /* defined(__VMKLNX__) */
+
 #define FLAG2_CRC_STRIPPING               (1 << 0)
 #define FLAG2_HAS_PHY_WAKEUP              (1 << 1)
 #define FLAG2_IS_DISCARDING               (1 << 2)
@@ -529,7 +534,6 @@ s32 e1000e_get_base_timinca(struct e1000_adapter *adapter, u32 *timinca);
 
 enum e1000_state_t {
 	__E1000_OBFF_DISABLED,
-	__E1000_SHUTDOWN,
 	__E1000_TESTING,
 	__E1000_RESETTING,
 	__E1000_ACCESS_SHARED_RESOURCE,
@@ -577,9 +581,9 @@ extern void e1000e_get_hw_control(struct e1000_adapter *adapter);
 extern void e1000e_release_hw_control(struct e1000_adapter *adapter);
 extern void e1000e_write_itr(struct e1000_adapter *adapter, u32 itr);
 
-#if defined(__VMKLNX__)
+#ifdef __VMKLNX__
 extern void e1000e_write_protect_nvm_ich8lan(struct e1000_hw *hw);
-#endif /* defined(__VMKLNX__) */
+#endif /* __VMKLNX__ */
 extern unsigned int copybreak;
 
 extern const struct e1000_info e1000_82571_info;
@@ -593,6 +597,7 @@ extern const struct e1000_info e1000_ich10_info;
 extern const struct e1000_info e1000_pch_info;
 extern const struct e1000_info e1000_pch2_info;
 extern const struct e1000_info e1000_pch_lpt_info;
+extern const struct e1000_info e1000_pch_spt_info;
 extern const struct e1000_info e1000_es2_info;
 
 #ifdef HAVE_PTP_1588_CLOCK

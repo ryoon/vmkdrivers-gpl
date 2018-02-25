@@ -1,30 +1,24 @@
-/*******************************************************************************
-
-  Intel PRO/1000 Linux driver
-  Copyright(c) 1999 - 2013 Intel Corporation.
-
-  This program is free software; you can redistribute it and/or modify it
-  under the terms and conditions of the GNU General Public License,
-  version 2, as published by the Free Software Foundation.
-
-  This program is distributed in the hope it will be useful, but WITHOUT
-  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
-  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
-  more details.
-
-  You should have received a copy of the GNU General Public License along with
-  this program; if not, write to the Free Software Foundation, Inc.,
-  51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
-
-  The full GNU General Public License is included in this distribution in
-  the file called "COPYING".
-
-  Contact Information:
-  Linux NICS <linux.nics@intel.com>
-  e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
-  Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
-
-*******************************************************************************/
+/*
+ * Intel PRO/1000 Linux driver
+ * Copyright(c) 1999 - 2014 Intel Corporation.
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * The full GNU General Public License is included in this distribution in
+ * the file called "COPYING".
+ *
+ * Contact Information:
+ * Linux NICS <linux.nics@intel.com>
+ * e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
+ * Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
+ */
 
 #include <linux/netdevice.h>
 #include <linux/module.h>
@@ -63,13 +57,13 @@ MODULE_PARM_DESC(copybreak,
  * "Extensions to the C Language Family" of the GCC documentation.
  */
 #define E1000_PARAM(X, desc) \
-	static const int __devinitdata X[E1000_MAX_NIC+1] = E1000_PARAM_INIT; \
+	static const int X[E1000_MAX_NIC+1] __devinitconst = E1000_PARAM_INIT; \
 	static unsigned int num_##X;				 \
 	MODULE_PARM(X, "1-" __MODULE_STRING(E1000_MAX_NIC) "i"); \
 	MODULE_PARM_DESC(X, desc);
 #elif defined(HAVE_CONFIG_HOTPLUG)
 #define E1000_PARAM(X, desc)					\
-	static int __devinitdata X[E1000_MAX_NIC+1]		\
+	static int X[E1000_MAX_NIC+1] __devinitdata		\
 		= E1000_PARAM_INIT;				\
 	static unsigned int num_##X;				\
 	module_param_array_named(X, X, int, &num_##X, 0);	\
@@ -170,7 +164,7 @@ E1000_PARAM(KumeranLockLoss, "Enable Kumeran lock loss workaround");
 E1000_PARAM(CrcStripping,
 	    "Enable CRC Stripping, disable if your BMC needs the CRC");
 
-#if defined(__VMKLNX__)
+#ifdef __VMKLNX__
 /*
  * Write Protect NVM
  *
@@ -179,7 +173,7 @@ E1000_PARAM(CrcStripping,
  * Default Value: 1 (enabled)
  */
 E1000_PARAM(WriteProtectNVM, "Write-protect NVM [WARNING: disabling this can lead to corrupted NVM]");
-#endif /* defined(__VMKLNX__) */
+#endif /* __VMKLNX__ */
 
 /* Enable/disable EEE (a.k.a. IEEE802.3az)
  *
@@ -439,8 +433,8 @@ void e1000e_check_options(struct e1000_adapter *adapter)
 			break;
 		case 2:
 			dev_info(pci_dev_to_dev(adapter->pdev),
-				"%s Invalid mode - setting default\n",
-				opt.name);
+				 "%s Invalid mode - setting default\n",
+				 opt.name);
 			adapter->itr_setting = opt.def;
 			/* fall-through */
 		case 3:
@@ -629,7 +623,7 @@ void e1000e_check_options(struct e1000_adapter *adapter)
 
 		adapter->node = node;
 	}
-#if defined(__VMKLNX__)
+#ifdef __VMKLNX__
 	{ /* Write-protect NVM */
 		const struct e1000_option opt = {
 			.type = enable_option,
@@ -651,5 +645,5 @@ void e1000e_check_options(struct e1000_adapter *adapter)
 			}
 		}
 	}
-#endif /* defined(__VMKLNX__) */
+#endif /* __VMKLNX__ */
 }

@@ -1,30 +1,24 @@
-/*******************************************************************************
-
-  Intel PRO/1000 Linux driver
-  Copyright(c) 1999 - 2013 Intel Corporation.
-
-  This program is free software; you can redistribute it and/or modify it
-  under the terms and conditions of the GNU General Public License,
-  version 2, as published by the Free Software Foundation.
-
-  This program is distributed in the hope it will be useful, but WITHOUT
-  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
-  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
-  more details.
-
-  You should have received a copy of the GNU General Public License along with
-  this program; if not, write to the Free Software Foundation, Inc.,
-  51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
-
-  The full GNU General Public License is included in this distribution in
-  the file called "COPYING".
-
-  Contact Information:
-  Linux NICS <linux.nics@intel.com>
-  e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
-  Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
-
-*******************************************************************************/
+/*
+ * Intel PRO/1000 Linux driver
+ * Copyright(c) 1999 - 2014 Intel Corporation.
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * The full GNU General Public License is included in this distribution in
+ * the file called "COPYING".
+ *
+ * Contact Information:
+ * Linux NICS <linux.nics@intel.com>
+ * e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
+ * Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
+ */
 
 #ifndef _E1000E_DEFINES_H_
 #define _E1000E_DEFINES_H_
@@ -148,6 +142,7 @@
 #define E1000_RCTL_LBM_TCVR	0x000000C0	/* tcvr loopback mode */
 #define E1000_RCTL_DTYP_PS	0x00000400	/* Packet Split descriptor */
 #define E1000_RCTL_RDMTS_HALF	0x00000000	/* Rx desc min thresh size */
+#define E1000_RCTL_RDMTS_HEX	0x00010000
 #define E1000_RCTL_MO_SHIFT	12	/* multicast offset shift */
 #define E1000_RCTL_MO_3		0x00003000	/* multicast offset 15:4 */
 #define E1000_RCTL_BAM		0x00008000	/* broadcast enable */
@@ -349,6 +344,7 @@
 #define E1000_TIPG_IPGR2_SHIFT		20
 
 #define MAX_JUMBO_FRAME_SIZE		0x3F00
+#define E1000_TX_PTR_GAP		0x1F
 
 /* Extended Configuration Control and Size */
 #define E1000_EXTCNF_CTRL_MDIO_SW_OWNERSHIP	0x00000020
@@ -534,6 +530,12 @@
 
 #define E1000_TSYNCTXCTL_VALID		0x00000001	/* Tx timestamp valid */
 #define E1000_TSYNCTXCTL_ENABLED	0x00000010	/* enable Tx timestamping */
+
+/* HH Time Sync */
+#define E1000_TSYNCTXCTL_MAX_ALLOWED_DLY_MASK	0x0000F000	/* max delay */
+#define E1000_TSYNCTXCTL_SYNC_COMP_ERR		0x20000000	/* sync err */
+#define E1000_TSYNCTXCTL_SYNC_COMP		0x40000000	/* sync complete */
+#define E1000_TSYNCTXCTL_START_SYNC		0x80000000	/* initiate sync */
 
 #define E1000_TSYNCRXCTL_VALID		0x00000001	/* Rx timestamp valid */
 #define E1000_TSYNCRXCTL_TYPE_MASK	0x0000000E	/* Rx type mask */

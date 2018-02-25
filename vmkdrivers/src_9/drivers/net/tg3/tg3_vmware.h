@@ -55,9 +55,10 @@ MODULE_PARM_DESC(psod_on_tx_timeout, "For debugging purposes, crash the system "
 
 #define TG3_OPTION_UNSET	-1
 
+/* PR 1392928. Disable netq on tg3 by default */
 static unsigned int __devinitdata tg3_netq_index;
 static int __devinitdata tg3_netq_force[TG3_MAX_NIC+1] =
-			 { [0 ... TG3_MAX_NIC] = TG3_OPTION_UNSET };
+			 { [0 ... TG3_MAX_NIC] = 0 };
 
 module_param_array_named(force_netq, tg3_netq_force, int, NULL, 0);
 MODULE_PARM_DESC(force_netq,

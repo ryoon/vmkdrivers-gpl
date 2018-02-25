@@ -187,6 +187,16 @@ typedef struct vmk_ScsiSenseDataSimple {
 } vmk_ScsiSenseDataSimple;
 
 /**
+ * \brief Description Type field
+ *  SPC 4 r33, Section 4.5.2.1 table 27
+ */
+#define VMK_SCSI_SENSE_DESCRIPTOR_TYPE_INFORMATION                    0x0
+#define VMK_SCSI_SENSE_DESCRIPTOR_TYPE_COMMAND_SPECIFIC_INFIRMATION   0x1
+#define VMK_SCSI_SENSE_DESCRIPTOR_TYPE_SENSE_KEY_SPECIFIC             0x2
+#define VMK_SCSI_SENSE_DESCRIPTOR_TYPE_FIELD_REPLACABLE_UNIT          0x3
+#define VMK_SCSI_SENSE_DESCRIPTOR_TYPE_ATA_STATUS_RETURN              0x9
+
+/**
  * \brief SCSI Device event handler callback entry
  *
  * This function is called when a registered device

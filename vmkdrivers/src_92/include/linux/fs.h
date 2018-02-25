@@ -279,7 +279,9 @@ extern int dir_notify_enable;
 #include <linux/cache.h>
 #include <linux/kobject.h>
 #include <linux/list.h>
+#if !defined(__VMKLNX__)
 #include <linux/radix-tree.h>
+#endif /* defined(__VMKLNX__) */
 #include <linux/prio_tree.h>
 #include <linux/init.h>
 #include <linux/sched.h>
@@ -435,7 +437,9 @@ struct address_space_operations {
 struct backing_dev_info;
 struct address_space {
 	struct inode		*host;		/* owner: inode, block_device */
+#if !defined(__VMKLNX__)
 	struct radix_tree_root	page_tree;	/* radix tree of all pages */
+#endif /* defined(__VMKLNX__) */
 	rwlock_t		tree_lock;	/* and rwlock protecting it */
 	unsigned int		i_mmap_writable;/* count VM_SHARED mappings */
 	struct prio_tree_root	i_mmap;		/* tree of private and shared mappings */

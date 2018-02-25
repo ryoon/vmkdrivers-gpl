@@ -1,30 +1,24 @@
-/*******************************************************************************
-
-  Intel PRO/1000 Linux driver
-  Copyright(c) 1999 - 2013 Intel Corporation.
-
-  This program is free software; you can redistribute it and/or modify it
-  under the terms and conditions of the GNU General Public License,
-  version 2, as published by the Free Software Foundation.
-
-  This program is distributed in the hope it will be useful, but WITHOUT
-  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
-  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
-  more details.
-
-  You should have received a copy of the GNU General Public License along with
-  this program; if not, write to the Free Software Foundation, Inc.,
-  51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
-
-  The full GNU General Public License is included in this distribution in
-  the file called "COPYING".
-
-  Contact Information:
-  Linux NICS <linux.nics@intel.com>
-  e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
-  Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
-
-*******************************************************************************/
+/*
+ * Intel PRO/1000 Linux driver
+ * Copyright(c) 1999 - 2014 Intel Corporation.
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * The full GNU General Public License is included in this distribution in
+ * the file called "COPYING".
+ *
+ * Contact Information:
+ * Linux NICS <linux.nics@intel.com>
+ * e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
+ * Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
+ */
 
 #ifndef _E1000E_REGS_H_
 #define _E1000E_REGS_H_
@@ -74,6 +68,7 @@
 #define E1000_PBA	0x01000	/* Packet Buffer Allocation - RW */
 #define E1000_PBS	0x01008	/* Packet Buffer Size */
 #define E1000_PBECCSTS	0x0100C	/* Packet Buffer ECC Status - RW */
+#define E1000_IOSFPC	0x00F28	/* TX corrupted data  */
 #define E1000_EEMNGCTL	0x01010	/* MNG EEprom Control */
 #define E1000_EEWR	0x0102C	/* EEPROM Write Register - RW */
 #define E1000_FLOP	0x0103C	/* FLASH Opcode Register */
@@ -128,6 +123,7 @@
 				 (0x054E4 + ((_i - 16) * 8)))
 #define E1000_SHRAL(_i)		(0x05438 + ((_i) * 8))
 #define E1000_SHRAH(_i)		(0x0543C + ((_i) * 8))
+#define E1000_TARC0_CB_MULTIQ_3_REQ	(1 << 28 | 1 << 29)
 #define E1000_TDFH		0x03410	/* Tx Data FIFO Head - RW */
 #define E1000_TDFT		0x03418	/* Tx Data FIFO Tail - RW */
 #define E1000_TDFHS		0x03420	/* Tx Data FIFO Head Saved - RW */
@@ -248,6 +244,10 @@
 #define E1000_SYSTIML	0x0B600	/* System time register Low - RO */
 #define E1000_SYSTIMH	0x0B604	/* System time register High - RO */
 #define E1000_TIMINCA	0x0B608	/* Increment attributes register - RW */
+#define	E1000_SYSSTMPL	0x0B648	/* HH Timesync system stamp low register */
+#define	E1000_SYSSTMPH	0x0B64C	/* HH Timesync system stamp hi register */
+#define	E1000_PLTSTMPL	0x0B640	/* HH Timesync platform stamp low register */
+#define	E1000_PLTSTMPH	0x0B644	/* HH Timesync platform stamp hi register */
 #define E1000_RXMTRL	0x0B634	/* Time sync Rx EtherType and Msg Type - RW */
 #define E1000_RXUDP	0x0B638	/* Time Sync Rx UDP Port - RW */
 

@@ -1,5 +1,5 @@
 /* ****************************************************************
- * Copyright 2013 VMware, Inc.
+ * Copyright 2013-2015 VMware, Inc.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -481,10 +481,6 @@ VMK_MODULE_EXPORT_ALIAS(put_disk);
 VMK_MODULE_EXPORT_ALIAS(put_driver);
 VMK_MODULE_EXPORT_ALIAS(queue_delayed_work);
 VMK_MODULE_EXPORT_ALIAS(queue_work);
-VMK_MODULE_EXPORT_ALIAS(radix_tree_delete);
-VMK_MODULE_EXPORT_ALIAS(radix_tree_init);
-VMK_MODULE_EXPORT_ALIAS(radix_tree_insert);
-VMK_MODULE_EXPORT_ALIAS(radix_tree_lookup);
 VMK_MODULE_EXPORT_ALIAS(raw_smp_processor_id);
 VMK_MODULE_EXPORT_ALIAS(__read_lock_failed);
 VMK_MODULE_EXPORT_ALIAS(register_chrdev);

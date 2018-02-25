@@ -54,7 +54,7 @@
 #endif
 
 #define DRV_NAME	"ahci"
-#define DRV_VERSION	"3.0-21vmw"
+#define DRV_VERSION	"3.0-22vmw"
 
 #if defined(__VMKLNX__)
 static int ahci_skip_host_reset = 0;
@@ -652,6 +652,15 @@ static const struct pci_device_id ahci_pci_tbl[] = {
         { PCI_VDEVICE(INTEL, 0x8d66), board_ahci }, /* Wellsburg RAID */
         { PCI_VDEVICE(INTEL, 0x8d6e), board_ahci }, /* Wellsburg RAID */
 	{ PCI_VDEVICE(INTEL, 0x23a3), board_ahci }, /* Coleto Creek AHCI */
+	{ PCI_VDEVICE(INTEL, 0x9d03), board_ahci }, /* Sunrise Point-LP AHCI */
+	{ PCI_VDEVICE(INTEL, 0x9d05), board_ahci }, /* Sunrise Point-LP RAID */
+	{ PCI_VDEVICE(INTEL, 0x9d07), board_ahci }, /* Sunrise Point-LP RAID */
+	{ PCI_VDEVICE(INTEL, 0xa102), board_ahci }, /* Sunrise Point-H AHCI */
+	{ PCI_VDEVICE(INTEL, 0xa103), board_ahci }, /* Sunrise Point-H AHCI */
+	{ PCI_VDEVICE(INTEL, 0xa105), board_ahci }, /* Sunrise Point-H RAID */
+	{ PCI_VDEVICE(INTEL, 0xa106), board_ahci }, /* Sunrise Point-H RAID */
+	{ PCI_VDEVICE(INTEL, 0xa107), board_ahci }, /* Sunrise Point-H RAID */
+	{ PCI_VDEVICE(INTEL, 0xa10f), board_ahci }, /* Sunrise Point-H RAID */
 #endif /* defined(__VMKLNX__) */
 
 	/* JMicron 360/1/3/5/6, match class to avoid IDE function */

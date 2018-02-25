@@ -870,10 +870,41 @@ LinuxPCI_EnableMSIX(struct pci_dev* dev, struct msix_entry *entries,
       return status;
    }
 
-   /*
-    * The function will execute successfully now. Go ahead and update 
-    * intrVectors and numIntrVectors in pciDevExt.
-    */
+   for (i = 0; i < *nvecs_alloced; i++) {
+      irq = LinuxIRQ_AllocIRQ(pciDevExt, intrArray[i + prev_vecs]);
+      if (likely(irq && irq < NR_IRQS)) {
+         vectors[i + prev_vecs] = irq;
+      } else {
+         *nvecs_alloced = i;
+
+         /*
+          * Free previously allocated IRQs.
+          */
+         for (i--; i >= 0; i--) {
+            LinuxIRQ_FreeIRQ(pciDevExt, vectors[prev_vecs + i]);
+         }
+
+         status = vmk_PCIFreeIntrCookie(vmklinuxModID, pciDevExt->vmkDev);
+         if (status == VMK_OK) {
+            /*
+             * Restore the legacy default PCI interrupt vector.
+             */
+            LinuxPCILegacyIntrVectorSet(pciDevExt);
+         }
+
+         vmk_HeapFree(VMK_MODULE_HEAP_ID, intrArray);
+         vmk_HeapFree(VMK_MODULE_HEAP_ID, vectors);
+         return VMK_NO_RESOURCES;
+      }
+   }
+
+   /* Good to go, fill previously allocated vectors, update entries[],
+    * and free pciDevExt->intrVectors, pciDevExt->intrArray
+    * if necessary (prev_vecs > 0) */
+   for (i = 0; i < *nvecs_alloced; i++) {
+      entries[i].vector = vectors[i + prev_vecs];
+   }
+
    if (prev_vecs > 0) {
       for (i = 0; i  < prev_vecs; i++) {
          vectors[i] = pciDevExt->intrVectors[i];
@@ -883,13 +914,6 @@ LinuxPCI_EnableMSIX(struct pci_dev* dev, struct msix_entry *entries,
       vmk_HeapFree(VMK_MODULE_HEAP_ID, pciDevExt->intrArray);
    }
 
-   for (i = 0; i < *nvecs_alloced; i++) {
-      irq = LinuxIRQ_AllocIRQ(pciDevExt, intrArray[i + prev_vecs]);
-      VMK_ASSERT(irq && irq < NR_IRQS);
-
-      vectors[i + prev_vecs] = irq;
-      entries[i].vector = irq;
-   }
 
    pciDevExt->intrArray = intrArray;
    pciDevExt->intrVectors = vectors;

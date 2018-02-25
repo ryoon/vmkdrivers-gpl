@@ -1,30 +1,24 @@
-/*******************************************************************************
-
-  Intel PRO/1000 Linux driver
-  Copyright(c) 1999 - 2013 Intel Corporation.
-
-  This program is free software; you can redistribute it and/or modify it
-  under the terms and conditions of the GNU General Public License,
-  version 2, as published by the Free Software Foundation.
-
-  This program is distributed in the hope it will be useful, but WITHOUT
-  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
-  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
-  more details.
-
-  You should have received a copy of the GNU General Public License along with
-  this program; if not, write to the Free Software Foundation, Inc.,
-  51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
-
-  The full GNU General Public License is included in this distribution in
-  the file called "COPYING".
-
-  Contact Information:
-  Linux NICS <linux.nics@intel.com>
-  e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
-  Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
-
-*******************************************************************************/
+/*
+ * Intel PRO/1000 Linux driver
+ * Copyright(c) 1999 - 2014 Intel Corporation.
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * The full GNU General Public License is included in this distribution in
+ * the file called "COPYING".
+ *
+ * Contact Information:
+ * Linux NICS <linux.nics@intel.com>
+ * e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
+ * Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
+ */
 
 #ifndef _E1000E_ICH8LAN_H_
 #define _E1000E_ICH8LAN_H_
@@ -35,9 +29,9 @@
 #define ICH_FLASH_FADDR			0x0008
 #define ICH_FLASH_FDATA0		0x0010
 
-#if defined(__VMKLNX__)
-#define ICH_FLASH_PR0                    0x0074
-#endif /* defined(__VMKLNX__) */
+#ifdef __VMKLNX__
+#define ICH_FLASH_PR0			0x0074
+#endif /* __VMKLNX__ */
 
 /* Requires up to 10 seconds when MNG might be accessing part. */
 #define ICH_FLASH_READ_COMMAND_TIMEOUT	10000000
@@ -108,10 +102,14 @@
 
 #define E1000_FEXTNVM7_DISABLE_SMB_PERST	0x00000020
 
+#define NVM_SIZE_MULTIPLIER 4096	/*multiplier for NVMS field */
+#define E1000_FLASH_BASE_ADDR 0xE000	/*offset of NVM access regs */
+#define E1000_CTRL_EXT_NVMVS 0x3	/*NVM valid sector */
+
 #define PCIE_ICH8_SNOOP_ALL	PCIE_NO_SNOOP_ALL
 
-#define E1000_ICH_RAR_ENTRIES		7
-#define E1000_PCH2_RAR_ENTRIES		11	/* RAR[0-6], SHRA[0-3] */
+#define E1000_ICH_RAR_ENTRIES	7
+#define E1000_PCH2_RAR_ENTRIES	5	/* RAR[0], SHRA[0-3] */
 #define E1000_PCH_LPT_RAR_ENTRIES	12	/* RAR[0], SHRA[0-10] */
 
 #define PHY_PAGE_SHIFT		5
@@ -236,7 +234,6 @@
 #define I82579_LPI_CTRL_100_ENABLE		0x2000
 #define I82579_LPI_CTRL_1000_ENABLE		0x4000
 #define I82579_LPI_CTRL_ENABLE_MASK		0x6000
-#define I82579_LPI_CTRL_FORCE_PLL_LOCK_COUNT	0x80
 
 /* 82579 DFT Control */
 #define I82579_DFT_CTRL			PHY_REG(769, 20)
@@ -250,16 +247,19 @@
 #define I82577_MSE_THRESHOLD	0x0887	/* 82577 Mean Square Error Threshold */
 #define I82579_MSE_LINK_DOWN	0x2411	/* MSE count before dropping link */
 #define I82579_RX_CONFIG		0x3412	/* Receive configuration */
+#define I82579_LPI_PLL_SHUT		0x4412	/* LPI PLL Shut Enable */
 #define I82579_EEE_PCS_STATUS		0x182E	/* IEEE MMD Register 3.1 >> 8 */
 #define I82579_EEE_CAPABILITY		0x0410	/* IEEE MMD Register 3.20 */
 #define I82579_EEE_ADVERTISEMENT	0x040E	/* IEEE MMD Register 7.60 */
 #define I82579_EEE_LP_ABILITY		0x040F	/* IEEE MMD Register 7.61 */
 #define I82579_EEE_100_SUPPORTED	(1 << 1)	/* 100BaseTx EEE */
 #define I82579_EEE_1000_SUPPORTED	(1 << 2)	/* 1000BaseTx EEE */
+#define I82579_LPI_100_PLL_SHUT	(1 << 2)	/* 100M LPI PLL Shut Enabled */
 #define I217_EEE_PCS_STATUS	0x9401	/* IEEE MMD Register 3.1 */
 #define I217_EEE_CAPABILITY	0x8000	/* IEEE MMD Register 3.20 */
 #define I217_EEE_ADVERTISEMENT	0x8001	/* IEEE MMD Register 7.60 */
 #define I217_EEE_LP_ABILITY	0x8002	/* IEEE MMD Register 7.61 */
+#define I217_RX_CONFIG		0xB20C	/* Receive configuration */
 
 #define E1000_EEE_RX_LPI_RCVD	0x0400	/* Tx LP idle received */
 #define E1000_EEE_TX_LPI_RCVD	0x0800	/* Rx LP idle received */
@@ -302,5 +302,7 @@ s32 e1000_read_emi_reg_locked(struct e1000_hw *hw, u16 addr, u16 *data);
 s32 e1000_write_emi_reg_locked(struct e1000_hw *hw, u16 addr, u16 data);
 s32 e1000_set_eee_pchlan(struct e1000_hw *hw);
 s32 e1000_enable_ulp_lpt_lp(struct e1000_hw *hw, bool to_sx);
-s32 e1000_disable_ulp_lpt_lp(struct e1000_hw *hw, bool force);
 #endif /* _E1000E_ICH8LAN_H_ */
+#ifdef DYNAMIC_LTR_SUPPORT
+void e1000_demote_ltr(struct e1000_hw *hw, bool demote, bool link);
+#endif /* DYNAMIC_LTR_SUPPORT */

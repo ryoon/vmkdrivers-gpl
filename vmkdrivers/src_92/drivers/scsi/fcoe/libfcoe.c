@@ -891,8 +891,8 @@ static void fcoe_ctlr_age_fcfs(struct fcoe_ctlr *fip)
 			       fip->lp->host->host_no, fcf->fabric_name,
 			       stats->MissDiscAdvCount);
 		}
-		if (time_after(jiffies, fcf->time + fcf->fka_period * 3 +
-			       msecs_to_jiffies(FIP_FCF_FUZZ * 3))) {
+		if (time_after_eq(jiffies, fcf->time + fcf->fka_period * 3 +
+			          msecs_to_jiffies(FIP_FCF_FUZZ * 3))) {
 			if (fip->sel_fcf == fcf)
 				fip->sel_fcf = NULL;
 			list_del(&fcf->list);
@@ -913,13 +913,11 @@ static void fcoe_ctlr_age_fcfs(struct fcoe_ctlr *fip)
 			sel_time = fcf->time;
 		}
 	}
-	if (sel_time) {
+	if (sel_time && !fip->sel_fcf && !fip->sel_time) {
 		sel_time += msecs_to_jiffies(FCOE_CTLR_START_DELAY);
 		fip->sel_time = sel_time;
 		if (time_before(sel_time, fip->timer.expires))
 			mod_timer(&fip->timer, sel_time);
-	} else {
-		fip->sel_time = 0;
 	}
 }
 
@@ -1040,10 +1038,10 @@ static void fcoe_ctlr_recv_adv(struct fcoe_ctlr *fip, struct sk_buff *skb)
 {
 	struct fcoe_fcf *fcf;
 	struct fcoe_fcf new;
-	struct fcoe_fcf *found;
 	unsigned long sol_tov = msecs_to_jiffies(FCOE_CTRL_SOL_TOV);
 	int first = 0;
 	int mtu_valid;
+	int found = 0;
 
 	if (fcoe_ctlr_parse_adv(fip, skb, &new))
 		return;
@@ -1054,13 +1052,12 @@ static void fcoe_ctlr_recv_adv(struct fcoe_ctlr *fip, struct sk_buff *skb)
 	mutex_lock(&fip->ctlr_mutex);
 #endif // defined(__VMKLNX__)
 	first = list_empty(&fip->fcfs);
-	found = NULL;
 	list_for_each_entry(fcf, &fip->fcfs, list) {
 		if (fcf->switch_name == new.switch_name &&
 		    fcf->fabric_name == new.fabric_name &&
 		    fcf->fc_map == new.fc_map &&
 		    compare_ether_addr(fcf->fcf_mac, new.fcf_mac) == 0) {
-			found = fcf;
+			found = 1;
 			break;
 		}
 	}
@@ -1082,22 +1079,29 @@ static void fcoe_ctlr_recv_adv(struct fcoe_ctlr *fip, struct sk_buff *skb)
 		 * ignored after a usable solicited advertisement
 		 * has been received.
 		 */
-		if (fcf == fip->sel_fcf) {
+		fcf->fd_flags = new.fd_flags;
+		if (!fcoe_ctlr_fcf_usable(fcf))
+			fcf->flags = new.flags;
+
+		if (fcf == fip->sel_fcf && !fcf->fd_flags) {
 			fip->ctlr_ka_time -= fcf->fka_period;
 			fip->ctlr_ka_time += new.fka_period;
 			if (time_before(fip->ctlr_ka_time, fip->timer.expires))
 				mod_timer(&fip->timer, fip->ctlr_ka_time);
-		} else if (!fcoe_ctlr_fcf_usable(fcf))
-			fcf->flags = new.flags;
+		}
 		fcf->fka_period = new.fka_period;
 		memcpy(fcf->fcf_mac, new.fcf_mac, ETH_ALEN);
 	}
+
 	mtu_valid = fcoe_ctlr_mtu_valid(fcf);
 	fcf->time = jiffies;
 	if (!found) {
 		LIBFCOE_FIP_DBG(fip, "New FCF for fab %16.16llx "
-				"map %x val %d\n",
-				fcf->fabric_name, fcf->fc_map, mtu_valid);
+				"map %x val %d mac %02x:%02x:%02x:%02x:%02x:%02x\n",
+				fcf->fabric_name, fcf->fc_map, mtu_valid,
+				fcf->fcf_mac[0], fcf->fcf_mac[1],
+				fcf->fcf_mac[2], fcf->fcf_mac[3],
+				fcf->fcf_mac[4], fcf->fcf_mac[5]);
 	}
 
 	/*
@@ -1123,17 +1127,22 @@ static void fcoe_ctlr_recv_adv(struct fcoe_ctlr *fip, struct sk_buff *skb)
 	 * are sending periodic multicast advertisements.
 	 */
 	if (mtu_valid) {
-		list_del(&fcf->list);
-		list_add(&fcf->list, &fip->fcfs);
+		list_move(&fcf->list, &fip->fcfs);
 	}
 
 	/*
 	 * If this is the first validated FCF, note the time and
 	 * set a timer to trigger selection.
+	 *
+	 * Update FCF sel_time on new FCF aka FCF that is not in list
+	 * and FCF selection has not happened yet.
 	 */
-	if (mtu_valid && !fip->sel_time && fcoe_ctlr_fcf_usable(fcf)) {
-		fip->sel_time = jiffies +
-			msecs_to_jiffies(FCOE_CTLR_START_DELAY);
+	if (mtu_valid && !fip->sel_fcf && fcoe_ctlr_fcf_usable(fcf)) {
+		if (!found) {
+			fip->sel_time = jiffies +
+				msecs_to_jiffies(FCOE_CTLR_START_DELAY);
+		}
+
 		if (!timer_pending(&fip->timer) ||
 		    time_before(fip->sel_time, fip->timer.expires))
 			mod_timer(&fip->timer, fip->sel_time);
@@ -1641,6 +1650,8 @@ static void fcoe_ctlr_timeout(unsigned long arg)
 			fip->port_ka_time = jiffies +
 				msecs_to_jiffies(FIP_VN_KA_PERIOD);
 			fip->ctlr_ka_time = jiffies + sel->fka_period;
+			if (time_after(next_timer, fip->ctlr_ka_time))
+				next_timer = fip->ctlr_ka_time;
 		} else {
 			printk(KERN_NOTICE "libfcoe: host%d: "
 			       "FIP Fibre-Channel Forwarder timed out.	"

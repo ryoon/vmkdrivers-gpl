@@ -1,6 +1,8 @@
 /*
  * xHCI host controller driver
  *
+ * Copyright (c) 2015 VMware, Inc.
+ *
  * Copyright (C) 2008 Intel Corp.
  *
  * Author: Sarah Sharp
@@ -31,6 +33,10 @@
 /* Code sharing between pci-quirks and xhci hcd */
 #include	"xhci-ext-caps.h"
 #include "pci-quirks.h"
+
+#if defined(__VMKLNX__)
+#include "compat/xhci_compat.h"
+#endif /* __VMKLNX__ */
 
 /* xHCI PCI Configuration Registers */
 #define XHCI_SBRN_OFFSET	(0x60)
@@ -746,6 +752,9 @@ struct xhci_stream_info {
 	/* For mapping physical TRB addresses to segments in stream rings */
 	struct radix_tree_root		trb_address_map;
 	struct xhci_command		*free_streams_command;
+#if defined(__VMKLNX__)
+	spinlock_t			lock;
+#endif /* __VMKLNX__ */
 };
 
 #define	SMALL_STREAM_ARRAY_SIZE		256

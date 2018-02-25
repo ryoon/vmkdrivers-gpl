@@ -1,30 +1,24 @@
-/*******************************************************************************
-
-  Intel PRO/1000 Linux driver
-  Copyright(c) 1999 - 2013 Intel Corporation.
-
-  This program is free software; you can redistribute it and/or modify it
-  under the terms and conditions of the GNU General Public License,
-  version 2, as published by the Free Software Foundation.
-
-  This program is distributed in the hope it will be useful, but WITHOUT
-  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
-  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
-  more details.
-
-  You should have received a copy of the GNU General Public License along with
-  this program; if not, write to the Free Software Foundation, Inc.,
-  51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
-
-  The full GNU General Public License is included in this distribution in
-  the file called "COPYING".
-
-  Contact Information:
-  Linux NICS <linux.nics@intel.com>
-  e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
-  Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
-
-*******************************************************************************/
+/*
+ * Intel PRO/1000 Linux driver
+ * Copyright(c) 1999 - 2014 Intel Corporation.
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * The full GNU General Public License is included in this distribution in
+ * the file called "COPYING".
+ *
+ * Contact Information:
+ * Linux NICS <linux.nics@intel.com>
+ * e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
+ * Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
+ */
 
 #ifndef _E1000E_HW_H_
 #define _E1000E_HW_H_
@@ -92,9 +86,12 @@ struct e1000_hw;
 #define E1000_DEV_ID_PCH_LPTLP_I218_V		0x1559
 #define E1000_DEV_ID_PCH_I218_LM2		0x15A0
 #define E1000_DEV_ID_PCH_I218_V2		0x15A1
-#define E1000_DEV_ID_PCH_I218_LM3		0x15A2  /* Wildcat Point PCH */
-#define E1000_DEV_ID_PCH_I218_V3		0x15A3  /* Wildcat Point PCH */
-
+#define E1000_DEV_ID_PCH_I218_LM3		0x15A2	/* Wildcat Point PCH */
+#define E1000_DEV_ID_PCH_I218_V3		0x15A3	/* Wildcat Point PCH */
+#define E1000_DEV_ID_PCH_SPT_I219_LM		0x156F	/* Sunrise Point PCH */
+#define E1000_DEV_ID_PCH_SPT_I219_V		0x1570	/* Sunrise Point PCH */
+#define E1000_DEV_ID_PCH_SPT_I219_LM2		0x15B8	/* Sunrise Point-H PCH */
+#define E1000_DEV_ID_PCH_SPT_I219_V2		0x15B7	/* Sunrise Point-H PCH */
 
 #define E1000_REVISION_4	4
 
@@ -116,6 +113,7 @@ enum e1000_mac_type {
 	e1000_pchlan,
 	e1000_pch2lan,
 	e1000_pch_lpt,
+	e1000_pch_spt,
 };
 
 enum e1000_media_type {
@@ -244,7 +242,7 @@ union e1000_rx_desc_extended {
 #define MAX_PS_BUFFERS 4
 
 /* Number of packet split data buffers (not including the header buffer) */
-#define PS_PAGE_BUFFERS        (MAX_PS_BUFFERS - 1)
+#define PS_PAGE_BUFFERS	(MAX_PS_BUFFERS - 1)
 
 /* Receive Descriptor - Packet Split */
 union e1000_rx_desc_packet_split {
@@ -467,29 +465,30 @@ struct e1000_host_mng_command_info {
 
 /* Function pointers for the MAC. */
 struct e1000_mac_operations {
-	s32(*id_led_init) (struct e1000_hw *);
-	s32(*blink_led) (struct e1000_hw *);
+	s32 (*id_led_init) (struct e1000_hw *);
+	s32 (*blink_led) (struct e1000_hw *);
 	bool (*check_mng_mode) (struct e1000_hw *);
-	 s32(*check_for_link) (struct e1000_hw *);
-	 s32(*cleanup_led) (struct e1000_hw *);
+	s32 (*check_for_link) (struct e1000_hw *);
+	s32 (*cleanup_led) (struct e1000_hw *);
 	void (*clear_hw_cntrs) (struct e1000_hw *);
 	void (*clear_vfta) (struct e1000_hw *);
-	 s32(*get_bus_info) (struct e1000_hw *);
+	s32 (*get_bus_info) (struct e1000_hw *);
 	void (*set_lan_id) (struct e1000_hw *);
-	 s32(*get_link_up_info) (struct e1000_hw *, u16 *, u16 *);
-	 s32(*led_on) (struct e1000_hw *);
-	 s32(*led_off) (struct e1000_hw *);
+	s32 (*get_link_up_info) (struct e1000_hw *, u16 *, u16 *);
+	s32 (*led_on) (struct e1000_hw *);
+	s32 (*led_off) (struct e1000_hw *);
 	void (*update_mc_addr_list) (struct e1000_hw *, u8 *, u32);
-	 s32(*reset_hw) (struct e1000_hw *);
-	 s32(*init_hw) (struct e1000_hw *);
-	 s32(*setup_link) (struct e1000_hw *);
-	 s32(*setup_physical_interface) (struct e1000_hw *);
-	 s32(*setup_led) (struct e1000_hw *);
+	s32 (*reset_hw) (struct e1000_hw *);
+	s32 (*init_hw) (struct e1000_hw *);
+	s32 (*setup_link) (struct e1000_hw *);
+	s32 (*setup_physical_interface) (struct e1000_hw *);
+	s32 (*setup_led) (struct e1000_hw *);
 	void (*write_vfta) (struct e1000_hw *, u32, u32);
 	void (*config_collision_dist) (struct e1000_hw *);
-	void (*rar_set) (struct e1000_hw *, u8 *, u32);
-	 s32(*read_mac_addr) (struct e1000_hw *);
-	 s32(*validate_mdi_setting) (struct e1000_hw *);
+	int (*rar_set) (struct e1000_hw *, u8 *, u32);
+	u32 (*rar_get_count) (struct e1000_hw *);
+	s32 (*read_mac_addr) (struct e1000_hw *);
+	s32 (*validate_mdi_setting) (struct e1000_hw *);
 };
 
 /* When to use various PHY register access functions:
@@ -507,40 +506,40 @@ struct e1000_mac_operations {
  *
  */
 struct e1000_phy_operations {
-	s32(*acquire) (struct e1000_hw *);
-	s32(*cfg_on_link_up) (struct e1000_hw *);
-	s32(*check_polarity) (struct e1000_hw *);
-	s32(*check_reset_block) (struct e1000_hw *);
-	s32(*commit) (struct e1000_hw *);
-	s32(*force_speed_duplex) (struct e1000_hw *);
-	s32(*get_cfg_done) (struct e1000_hw *hw);
-	s32(*get_cable_length) (struct e1000_hw *);
-	s32(*get_info) (struct e1000_hw *);
-	s32(*set_page) (struct e1000_hw *, u16);
-	s32(*read_reg) (struct e1000_hw *, u32, u16 *);
-	s32(*read_reg_locked) (struct e1000_hw *, u32, u16 *);
-	s32(*read_reg_page) (struct e1000_hw *, u32, u16 *);
+	s32 (*acquire) (struct e1000_hw *);
+	s32 (*cfg_on_link_up) (struct e1000_hw *);
+	s32 (*check_polarity) (struct e1000_hw *);
+	s32 (*check_reset_block) (struct e1000_hw *);
+	s32 (*commit) (struct e1000_hw *);
+	s32 (*force_speed_duplex) (struct e1000_hw *);
+	s32 (*get_cfg_done) (struct e1000_hw *hw);
+	s32 (*get_cable_length) (struct e1000_hw *);
+	s32 (*get_info) (struct e1000_hw *);
+	s32 (*set_page) (struct e1000_hw *, u16);
+	s32 (*read_reg) (struct e1000_hw *, u32, u16 *);
+	s32 (*read_reg_locked) (struct e1000_hw *, u32, u16 *);
+	s32 (*read_reg_page) (struct e1000_hw *, u32, u16 *);
 	void (*release) (struct e1000_hw *);
-	 s32(*reset) (struct e1000_hw *);
-	 s32(*set_d0_lplu_state) (struct e1000_hw *, bool);
-	 s32(*set_d3_lplu_state) (struct e1000_hw *, bool);
-	 s32(*write_reg) (struct e1000_hw *, u32, u16);
-	 s32(*write_reg_locked) (struct e1000_hw *, u32, u16);
-	 s32(*write_reg_page) (struct e1000_hw *, u32, u16);
+	s32 (*reset) (struct e1000_hw *);
+	s32 (*set_d0_lplu_state) (struct e1000_hw *, bool);
+	s32 (*set_d3_lplu_state) (struct e1000_hw *, bool);
+	s32 (*write_reg) (struct e1000_hw *, u32, u16);
+	s32 (*write_reg_locked) (struct e1000_hw *, u32, u16);
+	s32 (*write_reg_page) (struct e1000_hw *, u32, u16);
 	void (*power_up) (struct e1000_hw *);
 	void (*power_down) (struct e1000_hw *);
 };
 
 /* Function pointers for the NVM. */
 struct e1000_nvm_operations {
-	s32(*acquire) (struct e1000_hw *);
-	s32(*read) (struct e1000_hw *, u16, u16, u16 *);
+	s32 (*acquire) (struct e1000_hw *);
+	s32 (*read) (struct e1000_hw *, u16, u16, u16 *);
 	void (*release) (struct e1000_hw *);
 	void (*reload) (struct e1000_hw *);
-	 s32(*update) (struct e1000_hw *);
-	 s32(*valid_led_default) (struct e1000_hw *, u16 *);
-	 s32(*validate) (struct e1000_hw *);
-	 s32(*write) (struct e1000_hw *, u16, u16, u16 *);
+	s32 (*update) (struct e1000_hw *);
+	s32 (*valid_led_default) (struct e1000_hw *, u16 *);
+	s32 (*validate) (struct e1000_hw *);
+	s32 (*write) (struct e1000_hw *, u16, u16, u16 *);
 };
 
 struct e1000_mac_info {
@@ -681,6 +680,10 @@ struct e1000_dev_spec_ich8lan {
 	bool eee_disable;
 	u16 eee_lp_ability;
 	enum e1000_ulp_state ulp_state;
+#ifdef DYNAMIC_LTR_SUPPORT
+	u16 lat_enc;
+	u16 max_ltr_enc;
+#endif
 };
 
 struct e1000_hw {

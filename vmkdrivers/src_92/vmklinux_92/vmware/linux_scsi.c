@@ -635,6 +635,50 @@ SCSILinuxGetModuleID(struct Scsi_Host *sh, struct pci_dev *pdev)
    return(moduleID);
 }
 
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * SCSILinuxATASenseDescriptorToFixed --
+ *
+ *      Convert ATA status return encapsulated in descriptor format sense
+ *      data to fixed format. See sec 12.2.2.6 in sat3r05b.pdf
+ *
+ * Results:
+ *      returns VMK_TRUE if  buffer is modified.
+ *
+ * Side effects:
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+static vmk_Bool
+SCSILinuxATASenseDescriptorToFixed(unsigned char *buffer)
+{
+   if (buffer[0] == 0x72) {
+      vmk_ScsiSenseDataSimple *senseData = (vmk_ScsiSenseDataSimple *)buffer;
+      if (senseData->format.descriptor.key == VMK_SCSI_SENSE_KEY_RECOVERED_ERROR &&
+          senseData->format.descriptor.asc == VMK_SCSI_ASC_ATA_PASSTHROUGH_INFO_AVAILABLE &&
+          senseData->format.descriptor.ascq == VMK_SCSI_ASCQ_ATA_PASSTHROUGH_INFO_AVAILABLE &&
+          senseData->format.descriptor.optLen == 0xe &&
+          senseData->format.descriptor.additional[0] == VMK_SCSI_SENSE_DESCRIPTOR_TYPE_ATA_STATUS_RETURN) {
+         vmk_ScsiSenseData fixed = {0};
+
+         fixed.error = VMK_SCSI_SENSE_ERROR_CURCMD;
+         fixed.key = VMK_SCSI_SENSE_KEY_NONE;
+         fixed.asc = senseData->format.descriptor.asc;
+         fixed.ascq = senseData->format.descriptor.ascq;
+         fixed.optLen = 24;
+         vmk_Memcpy(&fixed.additional[0],
+                    &senseData->format.descriptor.additional[0],
+                    senseData->format.descriptor.optLen);
+         vmk_Memcpy(buffer, &fixed, sizeof(fixed));
+
+         return VMK_TRUE;
+      }
+   }
+   return VMK_FALSE;
+}
+
 
 /*
  *-----------------------------------------------------------------------------
@@ -814,6 +858,7 @@ SCSILinuxProcessCompletions(scsiLinuxTLS_t *tls,       // IN
          }
          VMK_ASSERT(deviceStatus != VMK_SCSI_DEVICE_CHECK_CONDITION ||
                     scmd->sense_buffer[0] != 0);
+         SCSILinuxATASenseDescriptorToFixed(scmd->sense_buffer);
          size = vmk_ScsiGetSupportedCmdSenseDataSize();
          /* Use the additional sense length field for sense data length */
          size = min(size, (vmk_ByteCount)(scmd->sense_buffer[7] + 8));

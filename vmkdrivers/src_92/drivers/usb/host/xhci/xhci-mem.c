@@ -1,6 +1,8 @@
 /*
  * xHCI host controller driver
  *
+ * Copyright (c) 2015 VMware, Inc.
+ *
  * Copyright (C) 2008 Intel Corp.
  *
  * Author: Sarah Sharp
@@ -461,8 +463,20 @@ struct xhci_ring *xhci_dma_to_transfer_ring(
 		u64 address)
 {
 	if (ep->ep_state & EP_HAS_STREAMS)
+#if defined(__VMKLNX__)
+	{
+		struct xhci_ring *ret_ring;
+
+		spin_lock_irq(&ep->stream_info->lock);
+		ret_ring = radix_tree_lookup(&ep->stream_info->trb_address_map,
+					address >> SEGMENT_SHIFT);
+		spin_unlock_irq(&ep->stream_info->lock);
+		return ret_ring;
+	}
+#else
 		return radix_tree_lookup(&ep->stream_info->trb_address_map,
 				address >> SEGMENT_SHIFT);
+#endif /* __VMKLNX__ */
 	return ep->ring;
 }
 
@@ -472,8 +486,18 @@ static struct xhci_ring *dma_to_stream_ring(
 		struct xhci_stream_info *stream_info,
 		u64 address)
 {
+#if defined(__VMKLNX__)
+	struct xhci_ring *ret_ring;
+
+	spin_lock_irq(&stream_info->lock);
+	ret_ring = radix_tree_lookup(&stream_info->trb_address_map,
+			address >> SEGMENT_SHIFT);
+	spin_unlock_irq(&stream_info->lock);
+	return ret_ring;
+#else
 	return radix_tree_lookup(&stream_info->trb_address_map,
 			address >> SEGMENT_SHIFT);
+#endif /* __VMKLNX__ */
 }
 #endif	/* CONFIG_USB_XHCI_HCD_DEBUGGING */
 
@@ -503,6 +527,10 @@ static int xhci_test_radix_tree(struct xhci_hcd *xhci,
 	struct xhci_ring *cur_ring;
 	u64 addr;
 
+	// XXX Grab lock here and hold until we return or call xhci_warn()
+#if defined(__VMKLNX__)
+	spin_lock_irq(&stream_info->lock);
+#endif /* __VMKLNX__ */
 	for (cur_stream = 1; cur_stream < num_streams; cur_stream++) {
 		struct xhci_ring *mapped_ring;
 		int trb_size = sizeof(union xhci_trb);
@@ -513,6 +541,9 @@ static int xhci_test_radix_tree(struct xhci_hcd *xhci,
 				addr += trb_size) {
 			mapped_ring = dma_to_stream_ring(stream_info, addr);
 			if (cur_ring != mapped_ring) {
+#if defined(__VMKLNX__)
+				spin_unlock_irq(&stream_info->lock);
+#endif /* __VMKLNX__ */
 				xhci_warn(xhci, "WARN: DMA address 0x%08llx "
 						"didn't map to stream ID %u; "
 						"mapped to ring %p\n",
@@ -533,6 +564,9 @@ static int xhci_test_radix_tree(struct xhci_hcd *xhci,
 			mapped_ring = dma_to_stream_ring(stream_info, addr);
 		}
 		if (mapped_ring == cur_ring) {
+#if defined(__VMKLNX__)
+			spin_unlock_irq(&stream_info->lock);
+#endif /* __VMKLNX__ */
 			xhci_warn(xhci, "WARN: Bad DMA address 0x%08llx "
 					"mapped to valid stream ID %u; "
 					"mapped ring = %p\n",
@@ -542,6 +576,9 @@ static int xhci_test_radix_tree(struct xhci_hcd *xhci,
 			return -EINVAL;
 		}
 	}
+#if defined(__VMKLNX__)
+	spin_unlock_irq(&stream_info->lock);
+#endif /* __VMKLNX__ */
 	return 0;
 }
 #endif	/* CONFIG_USB_XHCI_HCD_DEBUGGING */
@@ -634,6 +671,9 @@ struct xhci_stream_info *xhci_alloc_stream_info(struct xhci_hcd *xhci,
 	if (!stream_info->free_streams_command)
 		goto cleanup_ctx;
 
+#if defined(__VMKLNX__)
+	spin_lock_init(&stream_info->lock);
+#endif /* __VMKLNX__ */
 	INIT_RADIX_TREE(&stream_info->trb_address_map, GFP_ATOMIC);
 
 	/* Allocate rings for all the streams that the driver will use,
@@ -658,8 +698,14 @@ struct xhci_stream_info *xhci_alloc_stream_info(struct xhci_hcd *xhci,
 
 		key = (unsigned long)
 			(cur_ring->first_seg->dma >> SEGMENT_SHIFT);
+#if defined(__VMKLNX__)
+		spin_lock_irq(&stream_info->lock);
+#endif /* __VMKLNX__ */
 		ret = radix_tree_insert(&stream_info->trb_address_map,
 				key, cur_ring);
+#if defined(__VMKLNX__)
+		spin_unlock_irq(&stream_info->lock);
+#endif /* __VMKLNX__ */
 		if (ret) {
 			xhci_ring_free(xhci, cur_ring);
 			stream_info->stream_rings[cur_stream] = NULL;
@@ -687,8 +733,14 @@ cleanup_rings:
 		cur_ring = stream_info->stream_rings[cur_stream];
 		if (cur_ring) {
 			addr = cur_ring->first_seg->dma;
+#if defined(__VMKLNX__)
+			spin_lock_irq(&stream_info->lock);
+#endif /* __VMKLNX__ */
 			radix_tree_delete(&stream_info->trb_address_map,
 					addr >> SEGMENT_SHIFT);
+#if defined(__VMKLNX__)
+			spin_unlock_irq(&stream_info->lock);
+#endif /* __VMKLNX__ */
 			xhci_ring_free(xhci, cur_ring);
 			stream_info->stream_rings[cur_stream] = NULL;
 		}
@@ -758,8 +810,14 @@ void xhci_free_stream_info(struct xhci_hcd *xhci,
 		cur_ring = stream_info->stream_rings[cur_stream];
 		if (cur_ring) {
 			addr = cur_ring->first_seg->dma;
+#if defined(__VMKLNX__)
+			spin_lock_irq(&stream_info->lock);
+#endif /* __VMKLNX__ */
 			radix_tree_delete(&stream_info->trb_address_map,
 					addr >> SEGMENT_SHIFT);
+#if defined(__VMKLNX__)
+			spin_unlock_irq(&stream_info->lock);
+#endif /* __VMKLNX__ */
 			xhci_ring_free(xhci, cur_ring);
 			stream_info->stream_rings[cur_stream] = NULL;
 		}
@@ -800,7 +858,7 @@ static void xhci_free_tt_info(struct xhci_hcd *xhci,
 	struct xhci_tt_bw_info *tt_info = NULL;
 #else
 	struct xhci_tt_bw_info *tt_info;
-#endif
+#endif /* __VMKLNX__ */
 
 	/* If the device never made it past the Set Address stage,
 	 * it may not have the real_port set correctly.
@@ -1357,7 +1415,7 @@ static u32 xhci_get_endpoint_type(struct usb_device *udev,
 	u32 type = 0; /* quiet down the compiler */
 #else
 	u32 type;
-#endif
+#endif /* __VMKLNX__ */
 
 	in = usb_endpoint_dir_in(&ep->desc);
 	if (usb_endpoint_xfer_control(&ep->desc)) {
@@ -2266,10 +2324,6 @@ int xhci_mem_init(struct xhci_hcd *xhci, gfp_t flags)
 	struct xhci_segment	*seg;
 	u32 page_size, temp;
 	int i;
-
-#if defined(__VMKLNX__)
-	radix_tree_init();
-#endif
 
 	page_size = xhci_readl(xhci, &xhci->op_regs->page_size);
 	xhci_dbg(xhci, "Supported page size register = 0x%x\n", page_size);
