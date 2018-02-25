@@ -416,8 +416,6 @@
 /** \brief Logical unit is not configured (array only). */
 #define VMK_SCSI_ASC_LU_NOT_CONFIGURED                                       0x68
 
-#define VMK_SCSI_ASC_ATA_PASSTHROUGH_INFO_AVAILABLE                          0x00
-#define VMK_SCSI_ASCQ_ATA_PASSTHROUGH_INFO_AVAILABLE                         0x1d
 
 /*
  * Inquiry data.

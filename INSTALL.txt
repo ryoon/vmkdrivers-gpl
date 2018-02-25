@@ -1,19 +1,20 @@
-The installation of this package should be performed on an ESXi server.
-This server should have SSH access enabled: Customize System/View Logs ->
-Troubleshooting Options -> Enable SSH
+This package vmkdrivers-gpl-none is used in ESXi
 
-To install the package create a working directory on a datastore on the
-ESXi server, e.g., "/vmfs/volumes/datastore1/" and copy the binary
-disclosure created by the build:
+First, make sure you have the following environment for the validation:
 
-scp centos-5.3-x64.tar root@esx.example.org:/vmfs/volumes/datastore1/centos-5.3-x64.tar
+    * Machine - ESXi Server
 
-On the ESXi host, verify the shipped version:
+Copy the vmkdrivers-gpl.tar to the machine - ESXi Server at  
+/tmp
 
-Replace the shipped version with the custom build:
+Follow the install instruction and execute the commands:
 
-cd /vmfs/volumes/datastore1/
-tar xf centos-5.3-x64.tar
-./update-drivers.sh
+ - Extract the file vmkdrivers-gpl.tar in the current directory
+    cd /vmfs/volumes/datastore1
+    cp -r /tmp/drivers /tmp/update-drivers.sh ./
+    ./update-drivers.sh
 
-Reboot the system to load the updated drivers.
+Then go through the check-list below to verify your changes:
+
+    * After the updating, please restart ESXi and check whether it works normally.
+

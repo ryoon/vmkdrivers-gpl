@@ -654,13 +654,22 @@ SCSILinuxGetModuleID(struct Scsi_Host *sh, struct pci_dev *pdev)
 static vmk_Bool
 SCSILinuxATASenseDescriptorToFixed(unsigned char *buffer)
 {
+#define SCSI_ASC_ATA_PASSTHROUGH_INFO_AVAILABLE        0x00
+#define SCSI_ASCQ_ATA_PASSTHROUGH_INFO_AVAILABLE       0x1d
+
+#define SCSI_SENSE_DESCRIPTOR_TYPE_INFORMATION                    0x0
+#define SCSI_SENSE_DESCRIPTOR_TYPE_COMMAND_SPECIFIC_INFIRMATION   0x1
+#define SCSI_SENSE_DESCRIPTOR_TYPE_SENSE_KEY_SPECIFIC             0x2
+#define SCSI_SENSE_DESCRIPTOR_TYPE_FIELD_REPLACABLE_UNIT          0x3
+#define SCSI_SENSE_DESCRIPTOR_TYPE_ATA_STATUS_RETURN          0x9
+
    if (buffer[0] == 0x72) {
       vmk_ScsiSenseDataSimple *senseData = (vmk_ScsiSenseDataSimple *)buffer;
       if (senseData->format.descriptor.key == VMK_SCSI_SENSE_KEY_RECOVERED_ERROR &&
-          senseData->format.descriptor.asc == VMK_SCSI_ASC_ATA_PASSTHROUGH_INFO_AVAILABLE &&
-          senseData->format.descriptor.ascq == VMK_SCSI_ASCQ_ATA_PASSTHROUGH_INFO_AVAILABLE &&
+          senseData->format.descriptor.asc == SCSI_ASC_ATA_PASSTHROUGH_INFO_AVAILABLE &&
+          senseData->format.descriptor.ascq == SCSI_ASCQ_ATA_PASSTHROUGH_INFO_AVAILABLE &&
           senseData->format.descriptor.optLen == 0xe &&
-          senseData->format.descriptor.additional[0] == VMK_SCSI_SENSE_DESCRIPTOR_TYPE_ATA_STATUS_RETURN) {
+          senseData->format.descriptor.additional[0] == SCSI_SENSE_DESCRIPTOR_TYPE_ATA_STATUS_RETURN) {
          vmk_ScsiSenseData fixed = {0};
 
          fixed.error = VMK_SCSI_SENSE_ERROR_CURCMD;

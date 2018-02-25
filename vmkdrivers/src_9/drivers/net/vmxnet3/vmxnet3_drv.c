@@ -797,7 +797,7 @@ vmxnet3_rx_spare_skb_free_frags(struct vmxnet3_adapter *adapter,
         int i;
         for (i = 0; i < skb_shinfo(skb)->nr_frags; i++) {
                 struct skb_frag_struct *frag = &skb_shinfo(skb)->frags[i];
-                BUG_ON(frag->page != 0);
+                BUG_ON(frag->page == 0);
                 put_page(frag->page);
                 frag->page = 0;
                 frag->size = 0;
@@ -1681,20 +1681,22 @@ vmxnet3_rq_init(struct vmxnet3_rx_queue *rq,
 		rq->rx_ring[i].gen = VMXNET3_INIT_GEN;
 	}
 
+        /* allocate ring starvation protection */
+        rq->spare_skb = dev_alloc_skb(PAGE_SIZE);
+        if (rq->spare_skb == NULL) {
+		return -ENOMEM;
+        }
+
         /* populate initial ring */
 	if (vmxnet3_rq_alloc_rx_buf(rq, 0, rq->rx_ring[0].size - 1,
 				    adapter) == 0) {
 		/* at least has 1 rx buffer for the 1st ring */
+		kfree_skb(rq->spare_skb);
+		rq->spare_skb = NULL;
+
 		return -ENOMEM;
 	}
 	vmxnet3_rq_alloc_rx_buf(rq, 1, rq->rx_ring[1].size - 1, adapter);
-
-        /* allocate ring starvation protection */
-        rq->spare_skb = dev_alloc_skb(PAGE_SIZE);
-        if (rq->spare_skb == NULL) {
-                vmxnet3_rq_cleanup(rq, adapter);
-		return -ENOMEM;
-        }
 
 	/* reset the comp ring */
 	rq->comp_ring.next2proc = 0;
@@ -4275,7 +4277,7 @@ MODULE_VERSION(VMXNET3_DRIVER_VERSION_STRING);
  */
 MODULE_INFO(supported, "external");
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 24)
-module_param(disable_lro, int, 0);
+module_param(disable_lro, int, 1);
 #endif
 
 #if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 25) || \

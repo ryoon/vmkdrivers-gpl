@@ -1,29 +1,25 @@
-The following assumes the files disclosed for this package have been
-copied to the directory "/usr/vmware/src":
-
-rm -rf /usr/vmware/src
-mkdir /usr/vmware/src
-cp * /usr/vmware/src 
-
-And any commands that need to be executed for the disclosure should be
-executed from this directory on a "centos-5.3-x64" system (see the file
-"SYSTEMS.txt" for definition of this system).
+The following assumes the files disclosed for this package have been copied
+to the directory "/tmp", and any commands that need to be executed for the 
+disclosure should be executed from this directory on a  "centos-5.3-x64" 
+system (see the file "SYSTEMS.txt" for definition of this system).
 
 This package should be built on a "centos-5.3-x64" system.  Please see the
-"System Configurations" document for a definition of the configuration
-of this system type.
+"System Configurations" document for a definition of the configuration of 
+this system type.
+
 
 To build this package please execute the following commands:
 
-tar xzf vmkdrivers-gpl.tgz
-sh ./build-vmkdrivers.sh
-mv collect-drivers.sh BLD/build/collect-drivers.sh
-cd BLD/build
-./collect-drivers.sh
+    tar xzf vmkdrivers-gpl.tgz
+    sh ./build-vmkdrivers.sh
+    mv collect-drivers.sh BLD/build/collect-drivers.sh
+    cd BLD/build
+    ./collect-drivers.sh
 
 If you would like to verify the installation of this package, please
 create the binary disclosure file for this package using the command:
 
-tar cvf /usr/vmware/src/centos-5.3-x64.tar -C /usr/vmware/src/BLD/build drivers -C /usr/vmware/src update-drivers.sh
+    tar rf vmkdrivers-gpl.tar  -C BLD/build drivers
+    tar rf vmkdrivers-gpl.tar  update-drivers.sh
 
-This file is used in the installation instructions.
+The file vmkdrivers-gpl.tar is used in the installation instructions.
