@@ -78,6 +78,7 @@ extern int usb_resume(struct device *dev, pm_message_t msg);
 
 extern int usb_port_suspend(struct usb_device *dev, pm_message_t msg);
 extern int usb_port_resume(struct usb_device *dev, pm_message_t msg);
+extern int usb_set_usb2_hardware_lpm(struct usb_device *udev, int enable);
 
 #else
 
@@ -91,6 +92,10 @@ static inline int usb_port_resume(struct usb_device *udev, pm_message_t msg)
 	return 0;
 }
 
+static inline int usb_set_usb2_hardware_lpm(struct usb_device *udev, int enable)
+{
+	return 0;
+}
 #endif
 
 #ifdef CONFIG_USB_SUSPEND

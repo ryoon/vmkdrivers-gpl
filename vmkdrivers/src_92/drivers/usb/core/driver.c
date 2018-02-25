@@ -963,7 +963,11 @@ int usb_register_driver(struct usb_driver *new_driver, struct module *owner,
 
 	retval = driver_register(&new_driver->drvwrap.driver);
 	if (retval)
+#if defined(__VMKLNX__)
+		goto out_with_message;
+#else
 		goto out;
+#endif
 
 	usbfs_update_special();
 
@@ -986,6 +990,9 @@ out_removeid:
 out_newid:
 	driver_unregister(&new_driver->drvwrap.driver);
 
+#if defined(__VMKLNX__)
+out_with_message:
+#endif
 	printk(KERN_ERR "%s: error %d registering interface "
 			"	driver %s\n",
 			usbcore_name, retval, new_driver->name);
@@ -1991,6 +1998,9 @@ int usb_set_usb2_hardware_lpm(struct usb_device *udev, int enable)
 	struct usb_hcd *hcd = bus_to_hcd(udev->bus);
 	int ret = -EPERM;
 
+	if (enable && !udev->usb2_hw_lpm_allowed)
+		return 0;
+
 	if (hcd->driver->set_usb2_hw_lpm) {
 #if defined(__VMKLNX__)
 		VMKAPI_MODULE_CALL(hcd->driver->module->moduleID,
@@ -2008,6 +2018,23 @@ int usb_set_usb2_hardware_lpm(struct usb_device *udev, int enable)
 #else
 
 #define usb_bus_pm_ops	(*(struct dev_pm_ops *) NULL)
+
+int usb_set_usb2_hardware_lpm(struct usb_device *udev, int enable)
+{
+	struct usb_hcd *hcd = bus_to_hcd(udev->bus);
+	int ret = -EPERM;
+
+	if (enable && !udev->usb2_hw_lpm_allowed)
+		return 0;
+
+	if (hcd->driver->set_usb2_hw_lpm) {
+		ret = hcd->driver->set_usb2_hw_lpm(hcd, udev, enable);
+		if (!ret)
+			udev->usb2_hw_lpm_enabled = enable;
+	}
+
+	return ret;
+}
 
 #endif /* CONFIG_USB_SUSPEND */
 

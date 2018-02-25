@@ -1199,30 +1199,54 @@ static int __init usb_init(void)
 
 	usb_hub_cleanup();
 hub_init_failed:
+#if defined(__VMKLNX__)
+	pr_info("%s: cleaning up usbfs\n", usbcore_name);
+#endif
 	usbfs_cleanup();
 #if defined(__VMKLNX__)
 passthrough_init_failed:
+	pr_info("%s: cleaning up passthrough\n", usbcore_name);
 	usb_passthrough_cleanup();
 fs_add_devices_failed:
+	pr_info("%s: removing devices\n", usbcore_name);
 	usbfs_remove_devices();
 #endif
 fs_init_failed:
+#if defined(__VMKLNX__)
+	pr_info("%s: cleaning up devio\n", usbcore_name);
+#endif
 	usb_devio_cleanup();
 usb_devio_init_failed:
+#if defined(__VMKLNX__)
+	pr_info("%s: degistering usbfs_driver\n", usbcore_name);
+#endif
 	usb_deregister(&usbfs_driver);
 driver_register_failed:
+#if defined(__VMKLNX__)
+	pr_info("%s: cleaning up major\n", usbcore_name);
+#endif
 	usb_major_cleanup();
 major_init_failed:
+#if defined(__VMKLNX__)
+	pr_info("%s: unregistering notifier\n", usbcore_name);
+#endif
 	bus_unregister_notifier(&usb_bus_type, &usb_bus_nb);
 bus_notifier_failed:
+#if defined(__VMKLNX__)
+	pr_info("%s: unregistering bus\n", usbcore_name);
+#endif
 	bus_unregister(&usb_bus_type);
 bus_register_failed:
+#if defined(__VMKLNX__)
+	pr_info("%s: cleaning up debugfs\n", usbcore_name);
+#endif
 	usb_debugfs_cleanup();
 out:
 #if defined(__VMKLNX__)
 	if (retval) {
 		vmk_SemaDestroy(&usb_notifier_list.rwsem);
 		vmk_SemaDestroy(&ehci_cf_port_reset_rwsem);
+		pr_info("%s: Failed to initialize USB\n", usbcore_name);
 	}
 #endif
 	return retval;

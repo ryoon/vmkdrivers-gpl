@@ -31,82 +31,6 @@
 #endif
 #endif
 
-#if defined (__VMKLNX__)
-/*
- * Intel's Panther Point chipset has two host controllers (EHCI and xHCI) that
- * share some number of ports.  These ports can be switched between either
- * controller.  Not all of the ports under the EHCI host controller may be
- * switchable.
- *
- * Since we are not currently shipping xHCI driver the ports should be switched
- * over to EHCI to make sure that customers can use them even in cases when
- * BIOS starts with these ports mapped to xHCI.
- */
-
-#define USB_INTEL_XUSB2PR	0xD0
-#define USB_INTEL_XUSB2PRM	0xD4
-#define USB_INTEL_USB3_PSSEN	0xD8
-#define USB_INTEL_USB3PRM	0xDC
-
-static bool usb_is_intel_switchable_ehci(struct pci_dev *pdev)
-{
-	return pdev->class == PCI_CLASS_SERIAL_USB_EHCI &&
-		pdev->vendor == PCI_VENDOR_ID_INTEL &&
-		pdev->device == 0x1e26; /* PantherPoint EHCI */
-}
-
-static bool usb_is_intel_switchable_xhci(struct pci_dev *pdev)
-{
-	return pdev->class == PCI_CLASS_SERIAL_USB_XHCI &&
-		pdev->vendor == PCI_VENDOR_ID_INTEL &&
-		pdev->device == PCI_DEVICE_ID_INTEL_PANTHERPOINT_XHCI;
-}
-
-static void ehci_disable_xhci_ports(struct pci_dev *xhci_pdev)
-{
-	u32	ports, old_ports, mask;
-
-	/*
-	 * First disable SuperSpeed terminations on all ports that
-	 * can be controlled (as indicated by the BIOS).
-	 */
-	pci_read_config_dword(xhci_pdev, USB_INTEL_USB3_PSSEN, &ports);
-	pci_read_config_dword(xhci_pdev, USB_INTEL_USB3PRM, &mask);
-	pci_write_config_dword(xhci_pdev, USB_INTEL_USB3_PSSEN,
-				ports & ~(mask & 0xf));
-
-	/*
-	 * Write XUSB2PR, the xHC USB 2.0 Port Routing Register, to
-	 * switch the USB 2.0 power and data lines over to the xHCI
-	 * host.
-	 */
-	pci_read_config_dword(xhci_pdev, USB_INTEL_XUSB2PR, &old_ports);
-	pci_read_config_dword(xhci_pdev, USB_INTEL_XUSB2PRM, &mask);
-
-	ports = old_ports & ~(mask & 0xf);
-	pci_write_config_dword(xhci_pdev, USB_INTEL_XUSB2PR, ports);
-
-	pci_read_config_dword(xhci_pdev, USB_INTEL_XUSB2PR, &ports);
-	dev_info(&xhci_pdev->dev,
-		 "USB3.0 ports routing map: 0x%x (was x0%x)\n",
-		 ports, old_ports);
-}
-
-static void ehci_disable_xhci_companion(void)
-{
-	struct pci_dev *companion = NULL;
-
-	/* The xHCI and EHCI controllers are not on the same PCI slot */
-	for_each_pci_dev(companion) {
-		if (usb_is_intel_switchable_xhci(companion)) {
-			ehci_disable_xhci_ports(companion);
-			return;
-		}
-	}
-}
-
-#endif
-
 /*-------------------------------------------------------------------------*/
 
 /* called after powerup, by probe or system-pm "wakeup" */
@@ -135,11 +59,6 @@ static int ehci_pci_setup(struct usb_hcd *hcd)
 	u8			rev;
 	u32			temp;
 	int			retval;
-
-#if defined(__VMKLNX__)
-	if (usb_is_intel_switchable_ehci(pdev))
-		ehci_disable_xhci_companion();
-#endif
 
 	switch (pdev->vendor) {
 	case PCI_VENDOR_ID_TOSHIBA_2:
@@ -416,11 +335,6 @@ static int ehci_pci_resume(struct usb_hcd *hcd, bool hibernated)
 	struct pci_dev		*pdev = to_pci_dev(hcd->self.controller);
 #if defined(__VMKLNX__)
 	unsigned long flags;
-#endif
-
-#if defined(__VMKLNX__)
-	if (usb_is_intel_switchable_ehci(pdev))
-		ehci_disable_xhci_companion();
 #endif
 
 	// maybe restore FLADJ

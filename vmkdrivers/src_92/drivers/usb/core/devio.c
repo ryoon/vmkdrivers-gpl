@@ -2058,6 +2058,24 @@ static inline int readsafe_ioctl_cmd(unsigned int cmd)
 }
 #endif
 
+#if !defined(__VMKLNX__)
+static int proc_get_capabilities(struct dev_state *ps, void __user *arg)
+{
+	__u32 caps;
+
+	caps = USBDEVFS_CAP_ZERO_PACKET | USBDEVFS_CAP_NO_PACKET_SIZE_LIM;
+	if (!ps->dev->bus->no_stop_on_short)
+		caps |= USBDEVFS_CAP_BULK_CONTINUATION;
+
+	if (put_user(caps, (__u32 __user *)arg))
+		return -EFAULT;
+
+	return 0;
+}
+#else
+#define proc_get_capabilities(ps, arg)	do {} while (0)
+#endif /* !defined(__VMKLNX__) */
+
 /*
  * NOTE:  All requests here that have interface numbers as parameters
  * are assuming that somehow the configuration has been prevented from
@@ -2385,6 +2403,9 @@ static int usbdev_notify(struct notifier_block *self,
 	case USB_DEVICE_REMOVE:
 		usb_classdev_remove(dev);
 		usbdev_remove(dev);
+		break;
+	case USBDEVFS_GET_CAPABILITIES:
+		ret = proc_get_capabilities(ps, p);
 		break;
 	}
 	return NOTIFY_OK;

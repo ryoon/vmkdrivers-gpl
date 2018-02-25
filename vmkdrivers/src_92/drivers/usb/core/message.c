@@ -1437,6 +1437,10 @@ void usb_disable_device(struct usb_device *dev, int skip_ep0)
 			dev->actconfig->interface[i] = NULL;
 		}
 		dev->actconfig = NULL;
+
+		if (dev->usb2_hw_lpm_enabled == 1)
+			usb_set_usb2_hardware_lpm(dev, 0);
+
 		if (dev->state == USB_STATE_CONFIGURED)
 			usb_set_device_state(dev, USB_STATE_ADDRESS);
 	}

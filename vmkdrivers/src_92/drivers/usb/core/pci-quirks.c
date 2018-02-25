@@ -38,6 +38,9 @@ inline void __iomem *pci_ioremap_bar(struct pci_dev *pdev, int bar)
 	return ioremap_nocache(pci_resource_start(pdev, bar),
 				     pci_resource_len(pdev, bar));
 }
+// PCI quirks are problematic so let's get the debug output
+#undef dev_dbg
+#define dev_dbg dev_info
 #endif
 
 #define UHCI_USBLEGSUP		0xc0		/* legacy support */
@@ -92,6 +95,9 @@ inline void __iomem *pci_ioremap_bar(struct pci_dev *pdev, int bar)
 #define	BIF_NB			0x10002
 #define	NB_PIF0_PWRDOWN_0	0x01100012
 #define	NB_PIF0_PWRDOWN_1	0x01100013
+
+#define USB_INTEL_XUSB2PR      0xD0
+#define USB_INTEL_USB3_PSSEN   0xD8
 
 static struct amd_chipset_info {
 	struct pci_dev	*nb_dev;
@@ -578,6 +584,11 @@ static void __devinit ehci_bios_handoff(struct pci_dev *pdev,
 	}
 
 	/* if boot firmware now owns EHCI, spin till it hands it over. */
+#if defined(__VMKLNX__)
+	// XXX PR 1504124, hang goes away if serial port enabled, so try longer
+	int i;
+	for (i=0; i<5; ++i) {
+#endif
 	msec = 1000;
 	while ((cap & EHCI_USBLEGSUP_BIOS) && (msec > 0)) {
 		tried_handoff = 1;
@@ -585,6 +596,13 @@ static void __devinit ehci_bios_handoff(struct pci_dev *pdev,
 		msec -= 10;
 		pci_read_config_dword(pdev, offset, &cap);
 	}
+#if defined(__VMKLNX__)
+	if (!(cap & EHCI_USBLEGSUP_BIOS)) {
+		break;
+	}
+	dev_dbg(&pdev->dev, "EHCI: BIOS handoff continues, tried_handoff == %d\n", tried_handoff);
+	}
+#endif
 
 	if (cap & EHCI_USBLEGSUP_BIOS) {
 		/* well, possibly buggy BIOS... try to shut it down,
@@ -592,6 +610,10 @@ static void __devinit ehci_bios_handoff(struct pci_dev *pdev,
 		 */
 		dev_warn(&pdev->dev, "EHCI: BIOS handoff failed"
 			 " (BIOS bug?) %08x\n", cap);
+#if defined(__VMKLNX__)
+		// XXX PR 1504124, sleep so warning gets into vmkernel log
+		msleep(1000);
+#endif
 		pci_write_config_byte(pdev, offset + 2, 0);
 	}
 
@@ -704,6 +726,77 @@ static int handshake(void __iomem *ptr, u32 mask, u32 done,
 	return -ETIMEDOUT;
 }
 
+/*
+ * Intel's Panther Point chipset has two host controllers (EHCI and xHCI) that
+ * share some number of ports.  These ports can be switched between either
+ * controller.  Not all of the ports under the EHCI host controller may be
+ * switchable.
+ *
+ * The ports should be switched over to xHCI before PCI probes for any device
+ * start.  This avoids active devices under EHCI being disconnected during the
+ * port switchover, which could cause loss of data on USB storage devices, or
+ * failed boot when the root file system is on a USB mass storage device and is
+ * enumerated under EHCI first.
+ *
+ * We write into the xHC's PCI configuration space in some Intel-specific
+ * registers to switch the ports over.  The USB 3.0 terminations and the USB
+ * 2.0 data wires are switched separately.  We want to enable the SuperSpeed
+ * terminations before switching the USB 2.0 wires over, so that USB 3.0
+ * devices connect at SuperSpeed, rather than at USB 2.0 speeds.
+ */
+void usb_enable_intel_xhci_ports(struct pci_dev *xhci_pdev)
+{
+	u32		ports_available;
+	bool		ehci_found = false;
+	struct pci_dev	*companion = NULL;
+
+	/* make sure an intel EHCI controller exists */
+	for_each_pci_dev(companion) {
+		if (companion->class == PCI_CLASS_SERIAL_USB_EHCI &&
+		    companion->vendor == PCI_VENDOR_ID_INTEL) {
+			ehci_found = true;
+			break;
+		}
+	}
+
+	if (!ehci_found)
+		return;
+
+	ports_available = 0xffffffff;
+	/* Write USB3_PSSEN, the USB 3.0 Port SuperSpeed Enable
+	 * Register, to turn on SuperSpeed terminations for all
+	 * available ports.
+	 */
+	pci_write_config_dword(xhci_pdev, USB_INTEL_USB3_PSSEN,
+			cpu_to_le32(ports_available));
+
+	pci_read_config_dword(xhci_pdev, USB_INTEL_USB3_PSSEN,
+			&ports_available);
+	dev_dbg(&xhci_pdev->dev, "USB 3.0 ports that are now enabled "
+			"under xHCI: 0x%x\n", ports_available);
+
+	ports_available = 0xffffffff;
+	/* Write XUSB2PR, the xHC USB 2.0 Port Routing Register, to
+	 * switch the USB 2.0 power and data lines over to the xHCI
+	 * host.
+	 */
+	pci_write_config_dword(xhci_pdev, USB_INTEL_XUSB2PR,
+			cpu_to_le32(ports_available));
+
+	pci_read_config_dword(xhci_pdev, USB_INTEL_XUSB2PR,
+			&ports_available);
+	dev_dbg(&xhci_pdev->dev, "USB 2.0 ports that are now switched over "
+			"to xHCI: 0x%x\n", ports_available);
+}
+EXPORT_SYMBOL_GPL(usb_enable_intel_xhci_ports);
+
+void usb_disable_xhci_ports(struct pci_dev *xhci_pdev)
+{
+	pci_write_config_dword(xhci_pdev, USB_INTEL_USB3_PSSEN, 0x0);
+	pci_write_config_dword(xhci_pdev, USB_INTEL_XUSB2PR, 0x0);
+}
+EXPORT_SYMBOL_GPL(usb_disable_xhci_ports);
+
 /**
  * PCI Quirks for xHCI.
  *
@@ -776,6 +869,9 @@ static void __devinit quirk_usb_handoff_xhci(struct pci_dev *pdev)
 	writel(val, base + ext_cap_offset + XHCI_LEGACY_CONTROL_OFFSET);
 
 hc_init:
+	if (pdev->vendor == PCI_VENDOR_ID_INTEL)
+		usb_enable_intel_xhci_ports(pdev);
+
 	op_reg_base = base + XHCI_HC_LENGTH(readl(base));
 
 	/* Wait for the host controller to be ready before writing any

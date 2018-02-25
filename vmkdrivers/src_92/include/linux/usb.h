@@ -205,6 +205,32 @@ struct usb_interface {
  /* _VMKLNX_CODECHECK_: to_usb_interface */
 #define	to_usb_interface(d) container_of(d, struct usb_interface, dev)
 
+/*
+ * USB Resume Timer: Every Host controller driver should drive the resume
+ * signalling on the bus for the amount of time defined by this macro.
+ *
+ * That way we will have a 'stable' behavior among all HCDs supported by Linux.
+ *
+ * Note that the USB Specification states we should drive resume for *at least*
+ * 20 ms, but it doesn't give an upper bound. This creates two possible
+ * situations which we want to avoid:
+ *
+ * (a) sometimes an msleep(20) might expire slightly before 20 ms, which causes
+ * us to fail USB Electrical Tests, thus failing Certification
+ *
+ * (b) Some (many) devices actually need more than 20 ms of resume signalling,
+ * and while we can argue that's against the USB Specification, we don't have
+ * control over which devices a certification laboratory will be using for
+ * certification. If CertLab uses a device which was tested against Windows and
+ * that happens to have relaxed resume signalling rules, we might fall into
+ * situations where we fail interoperability and electrical tests.
+ *
+ * In order to avoid both conditions, we're using a 40 ms resume timeout, which
+ * should cope with both LPJ calibration errors and devices not following every
+ * detail of the USB Specification.
+ */
+#define USB_RESUME_TIMEOUT	40 /* ms */
+
 /**
  * interface_to_usbdev - Returns usb_device associated with specifed interface
  * @intf: Pointer to the struct interface variable
@@ -421,6 +447,11 @@ struct usb_bus {
 	u8 otg_port;			/* 0, or number of OTG/HNP port */
 	unsigned is_b_host:1;		/* true during some HNP roleswitches */
 	unsigned b_hnp_enable:1;	/* OTG: did A-Host enable HNP? */
+	unsigned no_stop_on_short:1;    /*
+					 * Quirk: some controllers don't stop
+					 * the ep queue on a short transfer
+					 * with the URB_SHORT_NOT_OK flag set.
+					 */
 	unsigned sg_tablesize;		/* 0 or largest number of sg list entries */
 
 	int devnum_next;		/* Next open device number in
@@ -455,6 +486,22 @@ struct usb_bus {
 };
 
 /* ----------------------------------------------------------------------- */
+
+/*
+ * USB 2.0 Link Power Management (LPM) parameters.
+ */
+struct usb2_lpm_parameters {
+	/* Best effort service latency indicate how long the host will drive
+	 * resume on an exit from L1.
+	 */
+	unsigned int besl;
+
+	/* Timeout value in microseconds for the L1 inactivity (LPM) timer.
+	 * When the timer counts to zero, the parent hub will initiate a LPM
+	 * transition to L1.
+	 */
+	int timeout;
+};
 
 /* This is arbitrary.
  * From USB 2.0 spec Table 11-13, offset 7, a hub can
@@ -505,9 +552,11 @@ struct usb_tt;
  * @wusb: device is Wireless USB
  * @lpm_capable: device supports LPM
  * @usb2_hw_lpm_capable: device can perform USB2 hardware LPM
- * @usb2_hw_lpm_enabled: USB2 hardware LPM enabled
+ * @usb2_hw_lpm_besl_capable: device can perform USB2 hardware BESL LPM
+ * @usb2_hw_lpm_enabled: USB2 hardware LPM is enabled
  * @passthrough: device is available for passthrough
  * @in_use: device is passed-through
+ * @usb2_hw_lpm_allowed: Userspace allows USB 2.0 LPM to be enabled
  * @string_langid: language ID for strings
  * @product: iProduct string, if present (static)
  * @manufacturer: iManufacturer string, if present (static)
@@ -530,6 +579,10 @@ struct usb_tt;
  * @wusb_dev: if this is a Wireless USB device, link to the WUSB
  *	specific data for the device.
  * @slot_id: Slot ID assigned by xHCI
+ # #if !defined(__VMKLNX__)
+ * @removable: Device can be physically removed from this port
+ # #endif // !defined(__VMKLNX__)
+ * @l1_params: best effor service latency for USB2 L1 LPM state, and L1 timeout.
  *
  * Notes:
  * Usbcore drivers should not set usbdev->state directly.  Instead use
@@ -575,11 +628,13 @@ struct usb_device {
 	unsigned wusb:1;
 	unsigned lpm_capable:1;
 	unsigned usb2_hw_lpm_capable:1;
+	unsigned usb2_hw_lpm_besl_capable:1;
 	unsigned usb2_hw_lpm_enabled:1;
 #if defined(__VMKLNX__)
 	unsigned passthrough:1;
 	unsigned in_use:1;
 #endif /* defined(__VMKLNX__) */
+	unsigned usb2_hw_lpm_allowed:1;
 	int string_langid;
 
 	/* static strings from the device */
@@ -621,8 +676,16 @@ struct usb_device {
 #endif
 	struct wusb_dev *wusb_dev;
 	int slot_id;
+#if !defined(__VMKLNX__)
+ 	enum usb_device_removable removable;
+#endif /* !defined(__VMKLNX__) */
+	struct usb2_lpm_parameters l1_params;
 #if defined(__VMKLNX__)
 	int vmklnx_major;
+#else
+ 	struct usb3_lpm_parameters u1_params;
+ 	struct usb3_lpm_parameters u2_params;
+ 	unsigned lpm_disable_count;
 #endif /* defined(__VMKLNX__) */
 };
 

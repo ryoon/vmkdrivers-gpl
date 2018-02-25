@@ -131,6 +131,12 @@ struct usb_hcd {
 	unsigned		wireless:1;	/* Wireless USB HCD */
 	unsigned		authorized_default:1;
 	unsigned		has_tt:1;	/* Integrated TT in root hub */
+#if defined(__VMKLNX__)
+ 	unsigned		amd_unused:1;   /* AMD remote wakeup quirk */
+#else
+ 	unsigned		amd_resume_bug:1; /* AMD remote wakeup quirk */
+#endif
+	unsigned		can_do_streams:1; /* HC supports streams */
 
 	unsigned int		irq;		/* irq allocated */
 	void __iomem		*regs;		/* device memory/io */
@@ -338,6 +344,8 @@ struct hc_driver {
 	void	(*reset_bandwidth)(struct usb_hcd *, struct usb_device *);
 		/* Returns the hardware-chosen device address */
 	int	(*address_device)(struct usb_hcd *, struct usb_device *udev);
+		/* prepares the hardware to send commands to the device */
+	int	(*enable_device)(struct usb_hcd *, struct usb_device *udev);
 		/* Notifies the HCD after a hub descriptor is fetched.
 		 * Will block.
 		 */
@@ -349,6 +357,21 @@ struct hc_driver {
 		 */
 	int	(*update_device)(struct usb_hcd *, struct usb_device *);
 	int	(*set_usb2_hw_lpm)(struct usb_hcd *, struct usb_device *, int);
+#if !defined(__VMKLNX__)
+	/* USB 3.0 Link Power Management */
+		/* Returns the USB3 hub-encoded value for the U1/U2 timeout. */
+	int     (*enable_usb3_lpm_timeout)(struct usb_hcd *,
+			struct usb_device *, enum usb3_link_state state);
+		/* The xHCI host controller can still fail the command to
+		 * disable the LPM timeouts, so this can return an error code.
+		 */
+	int     (*disable_usb3_lpm_timeout)(struct usb_hcd *,
+			struct usb_device *, enum usb3_link_state state);
+
+ 	int	(*disable_usb3_lpm_timeout)(struct usb_hcd *,
+ 			struct usb_device *, enum usb3_link_state state);
+#endif /* !defined(__VMKLNX__) */
+	int	(*find_raw_port_number)(struct usb_hcd *, int);
 };
 
 extern int usb_hcd_link_urb_to_ep(struct usb_hcd *hcd, struct urb *urb);
@@ -384,6 +407,7 @@ extern int usb_hcd_is_primary_hcd(struct usb_hcd *hcd);
 extern int usb_add_hcd(struct usb_hcd *hcd,
 		unsigned int irqnum, unsigned long irqflags);
 extern void usb_remove_hcd(struct usb_hcd *hcd);
+extern int usb_hcd_find_raw_port_number(struct usb_hcd *hcd, int port1);
 
 struct platform_device;
 extern void usb_hcd_platform_shutdown(struct platform_device *dev);

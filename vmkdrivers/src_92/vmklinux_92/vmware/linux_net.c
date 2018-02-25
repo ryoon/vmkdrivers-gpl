@@ -2931,10 +2931,12 @@ dev_close(struct net_device *dev)
     * in which, from uplink's perspective, link is UP, but the device is
     * already not present, which fails some assertions in uplink layer.
     */
-   dev->link_state = VMKLNX_UPLINK_LINK_DOWN;
-   dev->link_speed = 0;
-   dev->full_duplex = 0;
-   SetNICLinkStatus(dev);
+   if (!(dev->features & NETIF_F_UPT)) {
+      dev->link_state = VMKLNX_UPLINK_LINK_DOWN;
+      dev->link_speed = 0;
+      dev->full_duplex = 0;
+      SetNICLinkStatus(dev);
+   }
 
    return 0;
 }
