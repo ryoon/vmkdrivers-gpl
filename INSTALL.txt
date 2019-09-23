@@ -1,4 +1,4 @@
-This package vmkdrivers-gpl-none is used in ESXi 6.5U2
+This package vmkdrivers-gpl-none is used in ESXi 6.5U3
 
 First, make sure you have the following environment for the validation:
 
