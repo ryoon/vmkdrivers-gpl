@@ -3848,7 +3848,10 @@ dev_alloc_name(struct net_device *dev, const char *name)
    }
 
    for (i = 0; i < max_netdevices; i++) {
+#pragma GCC push_options
+#pragma GCC diagnostic ignored "-Wformat-nonliteral"
       snprintf(buf, sizeof(buf), name, i);
+#pragma GCC pop_options
 
       if (vmk_UplinkIsNameAvailable(buf)) {
          strcpy(dev->name, buf);
@@ -11798,49 +11801,6 @@ LinNetCreateSharedData(struct net_device *dev)
    return -1;
 }
 
-/*
- *----------------------------------------------------------------------------
- *
- *  LinNet_GenerateLocalBusAddress --
- *
- *    For physical device, generate local bus address in format of
- *    Regular PCI device (including mutiple ports hosted by single PCI function)
- *       pci#"<physical-bus-address>"#DeviceName,
- *    For other pseudo device:
- *       name of device
- *
- *  Return:
- *    Length of local bus address generated
- *
- *  Side effects:
- *    None.
- *
- *----------------------------------------------------------------------------
- */
-vmk_uint32
-LinNet_GenerateLocalBusAddress(struct net_device *dev, struct pci_dev *pdev,
-                               char *busAddr, vmk_uint32 busAddrLen)
-{
-   vmk_uint16 pciSegment;
-   vmk_uint8 pciBus, pciDev, pciFunc;
-   vmk_uint32 len;
-
-   /* physical device */
-   if (pdev != NULL && pdev->bus != NULL) {
-      pciSegment = pci_domain_nr(pdev->bus);
-      pciBus = pdev->bus->number;
-      pciDev = PCI_SLOT(pdev->devfn);
-      pciFunc = PCI_FUNC(pdev->devfn);
-
-      len = vmk_Snprintf(busAddr, busAddrLen, "pci#%04x:%02x:%02x.%d#%s",
-                         pciSegment, pciBus, pciDev, pciFunc, dev->name);
-   } else {
-      /* pseudo devices like usb NIC */
-      len = vmk_Snprintf(busAddr, busAddrLen, dev->name, "%s");
-   }
-
-   return len;
-}
 
 /*
  *----------------------------------------------------------------------------

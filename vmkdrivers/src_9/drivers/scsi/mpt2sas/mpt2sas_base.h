@@ -75,7 +75,7 @@
 #define MPT2SAS_AUTHOR	"LSI Corporation <DL-MPTFusionLinux@lsi.com>"
 #define MPT2SAS_DESCRIPTION	"LSI MPT Fusion SAS 2.0 Device Driver"
 #if defined(__VMKLNX__)
-#define MPT2SAS_DRIVER_VERSION		"19.00.00.00.1vmw"
+#define MPT2SAS_DRIVER_VERSION		"19.00.00.00.2vmw"
 #else
 #define MPT2SAS_DRIVER_VERSION		"19.00.00.00"
 #endif

@@ -802,7 +802,14 @@ ahd_pci_intr(struct ahd_softc *ahd)
 				s = pci_status_strings[bit];
 				if (i == 7/*TARG*/ && bit == 3)
 					s = "%s: Signaled Target Abort\n";
+#if defined(__VMKLNX__) 
+#pragma GCC push_options
+#pragma GCC diagnostic ignored "-Wformat-nonliteral"
+#endif
 				printf(s, ahd_name(ahd), pci_status_source[i]);
+#if defined(__VMKLNX__) 
+#pragma GCC pop_options
+#endif
 			}
 		}	
 	}
@@ -857,6 +864,10 @@ ahd_pci_split_intr(struct ahd_softc *ahd, u_int intstat)
 
 		for (bit = 0; bit < 8; bit++) {
 
+#if defined(__VMKLNX__) 
+#pragma GCC push_options
+#pragma GCC diagnostic ignored "-Wformat-nonliteral"
+#endif
 			if ((split_status[i] & (0x1 << bit)) != 0) {
 				static const char *s;
 
@@ -874,6 +885,9 @@ ahd_pci_split_intr(struct ahd_softc *ahd, u_int intstat)
 				s = split_status_strings[bit];
 				printf(s, ahd_name(ahd), "SG");
 			}
+#if defined(__VMKLNX__) 
+#pragma GCC pop_options
+#endif
 		}
 	}
 	/*

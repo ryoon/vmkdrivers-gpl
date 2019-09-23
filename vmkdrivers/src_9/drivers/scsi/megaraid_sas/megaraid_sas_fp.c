@@ -599,11 +599,13 @@ static u8 mr_spanset_get_phy_params(struct megasas_instance *instance, u32 ld, u
 		if (arm >= SPAN_ROW_SIZE(map, ld, span))               
 			arm -= SPAN_ROW_SIZE(map ,ld ,span);
 		physArm = (u8)arm;
-	} else
+	} else {
 		// Calculate the arm
-        	physArm = get_arm(instance, ld, span, stripRow, map);         
-		if (physArm == (u8)-1)
-			return FALSE; 
+        	physArm = get_arm(instance, ld, span, stripRow, map);
+	}
+         
+	if (physArm == (u8)-1)
+		return FALSE; 
 	
 	arRef       = MR_LdSpanArrayGet(ld, span, map);    
 	pd          = MR_ArPdGet(arRef, physArm, map);     

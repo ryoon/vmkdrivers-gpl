@@ -64,59 +64,100 @@
 /* Define ALLOW_SERIAL_NUMBER if you want to see the serial number of devices */
 #define ALLOW_SERIAL_NUMBER
 
-static const char *format_topo =
 #if defined(__VMKLNX__)
+static const char format_topo[] =
 /* T:  Bus=dd Lev=dd Prnt=dd Port=dd Cnt=dd Dev#=ddd Spd=dddd MxCh=dd */
 "\nT:  Bus=%2.2d Lev=%2.2d Prnt=%2.2d Port=%2.2d Cnt=%2.2d Dev#=%3d Spd=%-4s MxCh=%2d\n";
 #else
+static const char *format_topo =
 /* T:  Bus=dd Lev=dd Prnt=dd Port=dd Cnt=dd Dev#=ddd Spd=ddd MxCh=dd */
 "\nT:  Bus=%2.2d Lev=%2.2d Prnt=%2.2d Port=%2.2d Cnt=%2.2d Dev#=%3d Spd=%3s MxCh=%2d\n";
 #endif
 
+#if defined(__VMKLNX__)
+static const char format_string_manufacturer[] =
+#else
 static const char *format_string_manufacturer =
+#endif
 /* S:  Manufacturer=xxxx */
   "S:  Manufacturer=%.100s\n";
 
+#if defined(__VMKLNX__)
+static const char format_string_product[] =
+#else
 static const char *format_string_product =
+#endif
 /* S:  Product=xxxx */
   "S:  Product=%.100s\n";
 
 #ifdef ALLOW_SERIAL_NUMBER
+#if defined(__VMKLNX__)
+static const char format_string_serialnumber[] =
+#else
 static const char *format_string_serialnumber =
+#endif
 /* S:  SerialNumber=xxxx */
   "S:  SerialNumber=%.100s\n";
 #endif
 
+#if defined(__VMKLNX__)
+static const char format_bandwidth[] =
+#else
 static const char *format_bandwidth =
+#endif
 /* B:  Alloc=ddd/ddd us (xx%), #Int=ddd, #Iso=ddd */
   "B:  Alloc=%3d/%3d us (%2d%%), #Int=%3d, #Iso=%3d\n";
 
+#if defined(__VMKLNX__)
+static const char format_device1[] =
+#else
 static const char *format_device1 =
+#endif
 /* D:  Ver=xx.xx Cls=xx(sssss) Sub=xx Prot=xx MxPS=dd #Cfgs=dd */
   "D:  Ver=%2x.%02x Cls=%02x(%-5s) Sub=%02x Prot=%02x MxPS=%2d #Cfgs=%3d\n";
 
+#if defined(__VMKLNX__)
+static const char format_device2[] =
+#else
 static const char *format_device2 =
+#endif
 /* P:  Vendor=xxxx ProdID=xxxx Rev=xx.xx */
   "P:  Vendor=%04x ProdID=%04x Rev=%2x.%02x\n";
 
+#if defined(__VMKLNX__)
+static const char format_config[] =
+#else
 static const char *format_config =
+#endif
 /* C:  #Ifs=dd Cfg#=dd Atr=xx MPwr=dddmA */
   "C:%c #Ifs=%2d Cfg#=%2d Atr=%02x MxPwr=%3dmA\n";
 
+#if defined(__VMKLNX__)
+static const char format_iad[] =
+#else
 static const char *format_iad =
+#endif
 /* A:  FirstIf#=dd IfCount=dd Cls=xx(sssss) Sub=xx Prot=xx */
   "A:  FirstIf#=%2d IfCount=%2d Cls=%02x(%-5s) Sub=%02x Prot=%02x\n";
 
+#if defined(__VMKLNX__)
+static const char format_iface[] =
+#else
 static const char *format_iface =
+#endif
 /* I:  If#=dd Alt=dd #EPs=dd Cls=xx(sssss) Sub=xx Prot=xx Driver=xxxx*/
   "I:%c If#=%2d Alt=%2d #EPs=%2d Cls=%02x(%-5s) Sub=%02x Prot=%02x Driver=%s\n";
 
+#if defined(__VMKLNX__)
+static const char format_endpt[] =
+#else
 static const char *format_endpt =
+#endif
 /* E:  Ad=xx(s) Atr=xx(ssss) MxPS=dddd Ivl=D?s */
   "E:  Ad=%02x(%c) Atr=%02x(%-4s) MxPS=%4d Ivl=%d%cs\n";
 
 #if defined(__VMKLNX__)
-static const char *format_passthrough =
+static const char format_passthrough[] =
 /* S:  SerialNumber=xxxx */
   "V:  %s for Passthrough%s\n";
 #endif

@@ -45,7 +45,7 @@ for driver_path in vtar_list:
     basename = os.path.basename(driver_path)
 
     if os.access('{}/{}'.format(TMP, basename), os.F_OK):
-        os.remove('{}/{}'.format(TMP, basename))
+    	os.remove('{}/{}'.format(TMP, basename))
     os.system('/bin/zcat {} > {}/{}.gz'.format(driver_path, TMP, basename))
 
     if basename in signed_vtar_list:

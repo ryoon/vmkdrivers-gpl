@@ -3309,11 +3309,18 @@ static void bnx2x_get_strings(struct net_device *dev, u32 stringset, u8 *buf)
 				else
 #endif
 				sprintf(queue_name, "%d", i);
+#if defined(__VMKLNX__) 
+#pragma GCC push_options
+#pragma GCC diagnostic ignored "-Wformat-nonliteral"
+#endif
 				for (j = 0; j < BNX2X_NUM_Q_STATS; j++)
 					snprintf(buf + (k + j)*ETH_GSTRING_LEN,
 						ETH_GSTRING_LEN,
 						bnx2x_q_stats_arr[j].string,
 						queue_name);
+#if defined(__VMKLNX__) 
+#pragma GCC pop_options
+#endif
 				k += BNX2X_NUM_Q_STATS;
 			}
 		}

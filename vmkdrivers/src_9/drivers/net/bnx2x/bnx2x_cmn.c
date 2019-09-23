@@ -5371,9 +5371,9 @@ int bnx2x_esx_alloc_fp_mem_at(struct bnx2x *bp, int index, int alloc_skb)
 		} else {
 #endif
 #ifdef BNX2X_ESX_DYNAMIC_NETQ /* ! BNX2X_UPSTREAM */
-	/* initialize ring_size in case alloc_skb is not set */
-	ring_size = rx_ring_size;
-	if (alloc_skb)
+		/* initialize ring_size in case alloc_skb is not set */
+		ring_size = rx_ring_size;
+		if (alloc_skb)
 #endif
 		ring_size = bnx2x_alloc_rx_bds(fp, rx_ring_size);
 		if (ring_size < rx_ring_size)

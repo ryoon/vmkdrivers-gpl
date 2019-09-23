@@ -82,7 +82,7 @@
 #endif
 
 #define DRIVER_REV "84"
-#define DRIVER_REL "1"
+#define DRIVER_REL "3"
 #define DRIVER_BUILD "01"
 #define HPSA_DRIVER_VERSION DRIVER_OS_REV "." DRIVER_REV "-" DRIVER_REL "vmw"
 #define DRIVER_NAME "HP HPSA Driver (v " HPSA_DRIVER_VERSION ")"

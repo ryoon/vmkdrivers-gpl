@@ -1223,7 +1223,14 @@ scsi_show_extd_sense(unsigned char asc, unsigned char ascq)
 	if (extd_sense_fmt) {
 		if (strstr(extd_sense_fmt, "%x")) {
 			printk("Additional sense: ");
+#if defined(__VMKLNX__)
+#pragma GCC push_options
+#pragma GCC diagnostic ignored "-Wformat-nonliteral"
+#endif
 			printk(extd_sense_fmt, ascq);
+#if defined(__VMKLNX__)
+#pragma GCC pop_options
+#endif
 		} else
 			printk("Additional sense: %s", extd_sense_fmt);
 	} else {

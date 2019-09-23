@@ -334,8 +334,7 @@ static void sg_complete(struct urb *urb)
 				retval = usb_unlink_urb(io->urbs [i]);
 				if (retval != -EINPROGRESS &&
 				    retval != -ENODEV &&
-				    retval != -EBUSY &&
-				    retval != -EIDRM)
+				    retval != -EBUSY)
 					dev_err(&io->dev->dev,
 						"%s, unlink --> %d\n",
 						__func__, retval);
@@ -344,6 +343,7 @@ static void sg_complete(struct urb *urb)
 		}
 		spin_lock(&io->lock);
 	}
+	urb->dev = NULL;
 
 	/* on the last completion, signal usb_sg_wait() */
 	io->bytes += urb->actual_length;
@@ -608,6 +608,7 @@ void usb_sg_wait(struct usb_sg_request *io)
 		case -ENXIO:	/* hc didn't queue this one */
 		case -EAGAIN:
 		case -ENOMEM:
+			io->urbs[i]->dev = NULL;
 			retval = 0;
 			yield();
 			break;
@@ -625,6 +626,7 @@ void usb_sg_wait(struct usb_sg_request *io)
 
 			/* fail any uncompleted urbs */
 		default:
+			io->urbs[i]->dev = NULL;
 			io->urbs[i]->status = retval;
 			dev_dbg(&io->dev->dev, "%s, submit --> %d\n",
 				__func__, retval);
@@ -688,10 +690,7 @@ void usb_sg_cancel(struct usb_sg_request *io)
 			if (!io->urbs [i]->dev)
 				continue;
 			retval = usb_unlink_urb(io->urbs [i]);
-			if (retval != -EINPROGRESS
-				    && retval != -ENODEV
-				    && retval != -EBUSY
-				    && retval != -EIDRM)
+			if (retval != -EINPROGRESS && retval != -EBUSY)
 				dev_warn(&io->dev->dev, "%s, unlink --> %d\n",
 					__func__, retval);
 		}

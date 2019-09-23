@@ -97,9 +97,7 @@ inline void __iomem *pci_ioremap_bar(struct pci_dev *pdev, int bar)
 #define	NB_PIF0_PWRDOWN_1	0x01100013
 
 #define USB_INTEL_XUSB2PR      0xD0
-#define USB_INTEL_USB2PRM      0xD4
 #define USB_INTEL_USB3_PSSEN   0xD8
-#define USB_INTEL_USB3PRM      0xDC
 
 static struct amd_chipset_info {
 	struct pci_dev	*nb_dev;
@@ -764,18 +762,10 @@ void usb_enable_intel_xhci_ports(struct pci_dev *xhci_pdev)
 	if (!ehci_found)
 		return;
 
-	/* Read USB3PRM, the USB 3.0 Port Routing Mask Register
-	 * Indicate the ports that can be changed from OS.
-	 */
-	pci_read_config_dword(xhci_pdev, USB_INTEL_USB3PRM,
-			&ports_available);
-
-	dev_dbg(&xhci_pdev->dev, "Configurable ports to enable SuperSpeed: 0x%x\n",
-			ports_available);
-
+	ports_available = 0xffffffff;
 	/* Write USB3_PSSEN, the USB 3.0 Port SuperSpeed Enable
-	 * Register, to turn on SuperSpeed terminations for the
-	 * switchable ports.
+	 * Register, to turn on SuperSpeed terminations for all
+	 * available ports.
 	 */
 	pci_write_config_dword(xhci_pdev, USB_INTEL_USB3_PSSEN,
 			cpu_to_le32(ports_available));
@@ -785,16 +775,7 @@ void usb_enable_intel_xhci_ports(struct pci_dev *xhci_pdev)
 	dev_dbg(&xhci_pdev->dev, "USB 3.0 ports that are now enabled "
 			"under xHCI: 0x%x\n", ports_available);
 
-	/* Read XUSB2PRM, xHCI USB 2.0 Port Routing Mask Register
-	 * Indicate the USB 2.0 ports to be controlled by the xHCI host.
-	 */
-
-	pci_read_config_dword(xhci_pdev, USB_INTEL_USB2PRM,
-			&ports_available);
-
-	dev_dbg(&xhci_pdev->dev, "Configurable USB 2.0 ports to hand over to xCHI: 0x%x\n",
-			ports_available);
-
+	ports_available = 0xffffffff;
 	/* Write XUSB2PR, the xHC USB 2.0 Port Routing Register, to
 	 * switch the USB 2.0 power and data lines over to the xHCI
 	 * host.
