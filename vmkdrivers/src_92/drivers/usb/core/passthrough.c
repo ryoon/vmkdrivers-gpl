@@ -42,7 +42,8 @@
 atomic_t in_usb_passthrough = ATOMIC_INIT(0);
 
 /* unclaim interfaces in device's active configuration;
- * the caller must own the device lock */
+ * the caller must own the device lock
+ * XXX the return value is ignored so the recursion never fails */
 static int usb_passthrough_unclaim(struct usb_device *dev, char *boot_dev)
 {
 	int i;
@@ -68,20 +69,63 @@ static int usb_passthrough_unclaim(struct usb_device *dev, char *boot_dev)
 }
 
 
-/* recursively traverse device tree, unclaim devices;
- * the caller must own the device lock */
-static int usb_passthrough_traverse_unclaim(struct usb_device *dev, char *boot_dev)
+struct usb_dev_entry {
+	struct usb_device *dev;
+	struct list_head   dev_list;
+};
+
+
+/* determine device's to be (re)claimed, the caller must own the device lock
+ * so there will be a deadlock if we try to claim the device here.
+ * XXX the return value is ignored so the recursion never fails */
+static int
+usb_passthrough_claim(struct usb_device *dev, struct list_head *dev_list)
+{
+	int err = 0;
+
+	dev_info(&dev->dev, "device %p has passthrough %s be attached\n",
+		dev, dev->passthrough ? "on, will" : "off, will NOT");
+	if (dev->passthrough) {
+		struct usb_dev_entry *entry = kmalloc(sizeof(struct usb_dev_entry),
+						      GFP_KERNEL);
+		if (!entry) {
+			dev_warn(&dev->dev, "No memory to add device %p to "
+				"dev_list\n", dev);
+			err = -ENOMEM;
+		} else {
+			dev_info(&dev->dev, "Adding device %p to dev_list"
+				" for attachment after traverse\n", dev);
+			entry->dev = dev;
+			list_add_tail(&entry->dev_list, dev_list);
+		}
+	}
+	return (err);
+}
+
+
+/* recursively traverse device tree, (un)claim devices;
+ * the caller must own the device lock
+ * XXX failures are ignored so we traverse the whole tree skipping failures */
+static int usb_passthrough_traverse(struct usb_device *dev, char *boot_dev,
+				    int claim, struct list_head *usb_dev_list)
 {
 	int i, ret = 0;
 
-	usb_passthrough_unclaim(dev, boot_dev);
+	if (claim) {
+		/* XXX return value is ignored so the recursion never fails */
+		usb_passthrough_claim(dev, usb_dev_list);
+	} else {
+		/* XXX return value is ignored so the recursion never fails */
+		usb_passthrough_unclaim(dev, boot_dev);
+	}
 
 	for (i = 0; i < dev->maxchild; i++) {
 		struct usb_device *childdev = dev->children[i];
 
 		if (childdev) {
 			usb_lock_device(childdev);
-			ret = usb_passthrough_traverse_unclaim(childdev, boot_dev);
+			ret = usb_passthrough_traverse(childdev, boot_dev,
+						       claim, usb_dev_list);
 			usb_unlock_device(childdev);
 			if (ret < 0)
 				break;
@@ -95,40 +139,93 @@ static int usb_passthrough_traverse_unclaim(struct usb_device *dev, char *boot_d
 static int usb_passthrough_ioctl(struct inode *inode, struct file *file, unsigned int cmd, unsigned long arg)
 {
 	struct usb_bus *bus;
-	int ret = 0;
+	int claim, ret = 0;
 	char boot_dev[VMK_MISC_NAME_MAX + 1];
+	LIST_HEAD (usb_dev_list);
 
 	switch (cmd) {
 	case USBPASSTHROUGH_UNCLAIM:
-                if (copy_from_user(boot_dev, (void __user *)arg, sizeof(boot_dev)))
+		if (copy_from_user(boot_dev, (void __user *)arg, sizeof(boot_dev)))
 			return -EFAULT;
-		
+
 		if (!strncmp(boot_dev, "off", sizeof("off"))) {
 			atomic_set(&in_usb_passthrough, 0);
-			printk(KERN_INFO "usb passthrough disabled\n");
-			break;
+			claim = 1;
+			boot_dev[0] = 0;
+		} else {
+			atomic_set(&in_usb_passthrough, 1);
+			claim = 0;
+			boot_dev[VMK_MISC_NAME_MAX] = 0;
 		}
-			
-		atomic_set(&in_usb_passthrough, 1);
 
-		boot_dev[VMK_MISC_NAME_MAX] = 0;
-		printk(KERN_INFO "usb passthrough enabled; all eligible "
-			"devices will be unclaimed by kernel drivers%s%s\n",
-			boot_dev[0] ? " except for ESXi boot device " : "",
-			boot_dev);
+		printk(KERN_INFO "usb passthrough %s; all eligible devices will"
+			         " be %sclaimed by kernel drivers%s%s\n",
+		       claim ? "disabled" : "enabled", claim ? "" : "un",
+		       boot_dev[0] ? " except for ESXi boot device " : "",
+		       boot_dev);
+		/*
+		 * Walk the bus list, visiting all devices on each tree and
+		 *
+		 * Unclaim case (boot_dev != "off") just unclaim the device by
+		 * sending an ioctl to device's driver.  This avoids lock issue.
+		 *
+		 * Claim case (boot_dev == "off") add device to list of devices
+		 * that will be claimed in step 2 because we have the device
+		 * locked during traverse and can't release or attach drivers.
+		 * Note: we can't send an ioctl because we don't know driver.
+		 */
 		mutex_lock(&usb_bus_list_lock);
 		list_for_each_entry(bus, &usb_bus_list, bus_list) {
-			if (!bus->root_hub)
+			/*
+			 * XXX If ret < 0 just finish loop and clean up list
+			 */
+			if (!bus->root_hub || ret < 0)
 				continue;
 			usb_lock_device(bus->root_hub);
-			ret = usb_passthrough_traverse_unclaim(bus->root_hub, boot_dev);
+			ret = usb_passthrough_traverse(bus->root_hub, boot_dev,
+							claim, &usb_dev_list);
 			usb_unlock_device(bus->root_hub);
 			if (ret < 0) {
 				mutex_unlock(&usb_bus_list_lock);
+				printk("Unexpected recursion failure in ioctl "
+					"handler for USBPASSTHROUGH_UNCLAIM\n");
+				VMK_ASSERT(0); /* XXX comment out in 6.0, 5.5 */
 				return ret;
 			}
 		}
 		mutex_unlock(&usb_bus_list_lock);
+		if (claim) {
+			struct usb_dev_entry *dev_entry, *dev_entry_temp;
+
+			// Now walk the list of devices from step 1
+			list_for_each_entry_safe(dev_entry, dev_entry_temp,
+						&usb_dev_list, dev_list) {
+				int err = 0;
+				struct usb_device *dev = dev_entry->dev;
+
+				/* XXX Release device if it's bound to "usb" */
+				//printk ("releasing dev %p\n", dev);
+				device_release_driver(&dev->dev);
+
+				/* XXX Allow device to be rebound */
+				//printk ("attaching dev %p\n", dev);
+				err = device_attach(&dev->dev);
+				if (!err) {
+					dev_warn(&dev->dev, "Unable to attach "
+						"driver for device: %p\n", dev);
+				} else {
+					dev_info(&dev->dev, "Attached %s driver"
+						" to device: %p\n",
+						dev->dev.driver ?
+						dev->dev.driver->name : "no",
+						dev);
+				}
+
+				// Delete entry from list and free it
+				list_del(&dev_entry->dev_list);
+				kfree(dev_entry);
+			}
+		}
 		break;
 	default:
 		ret = -EINVAL;

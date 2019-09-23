@@ -72,6 +72,15 @@ static int ehci_pci_setup(struct usb_hcd *hcd)
 #endif
 		}
 		break;
+#if defined (__VMKLNX__)
+	case PCI_VENDOR_ID_HP:
+		switch (pdev->device) {
+		case 0x22f6:	/* HP Virtual EHCI */
+			ehci->use_sys_clock = 1;
+			break;
+		}
+		break;
+#endif
 	}
 
 	ehci->caps = hcd->regs;

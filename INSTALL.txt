@@ -1,18 +1,17 @@
-This package vmkdrivers-gpl-none is used in ESXi 6.5U1
+This package vmkdrivers-gpl-none is used in ESXi 6.5U2
 
 First, make sure you have the following environment for the validation:
 
     * Machine - ESXi Server
 
 Copy the vmkdrivers-gpl.tar to the machine - ESXi Server at  
-/tmp
+/vmfs/volumes/datastore1
 
 Follow the install instruction and execute the commands:
 
- - Extract the file vmkdrivers-gpl.tar in the current directory
     cd /vmfs/volumes/datastore1
-    cp -r /tmp/drivers /tmp/update-drivers.sh ./
-    sh ./update-drivers.sh
+    tar xf vmkdrivers-gpl.tar
+    python update-drivers.py
 
 Then go through the check-list below to verify your changes:
 

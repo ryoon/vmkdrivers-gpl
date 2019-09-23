@@ -1582,8 +1582,32 @@ static int unlink1(struct usb_hcd *hcd, struct urb *urb, int status)
 int usb_hcd_unlink_urb (struct urb *urb, int status)
 {
 	struct usb_hcd		*hcd;
+	struct usb_device	*udev = urb->dev;
 	int			retval = -EIDRM;
 	unsigned long		flags;
+
+#if defined(__VMKLNX__)
+	/*
+	 * PR 1804559: "urb->dev" may be set to NULL in the usb scatter-
+	 * gather library when the urb cannot be submitted (see "usb_sg_wait"
+	 * function) or it has been completed (see "sg_complete" function).
+	 * It's a bug in usb scatter-gather library which is already fixed
+	 * by below linux patch:
+	 * https://github.com/torvalds/linux/commit/bcf398537630bf20b4dbe59ba855b69f404c93cf
+	 *
+	 * As it's risky to take above patch (we may also need dependency
+	 * patches and follow up fixes if any), we decide to workaround
+	 * the problem by saving "urb->dev" in "udev" local variable, and
+	 * returning "-EIDRM" immediately if "udev" is NULL.
+	 *
+	 * "-EIDRM" is to inform the caller either the urb is not submitted
+	 * or the urb has been completed (check "usb_hcd_check_unlink_urb"
+	 * function for details), so it's a perfect return code for this case.
+	 */
+	if (udev == NULL) {
+		return retval;
+	}
+#endif
 
 	/* Prevent the device and bus from going away while
 	 * the unlink is carried out.  If they are already gone
@@ -1593,20 +1617,23 @@ int usb_hcd_unlink_urb (struct urb *urb, int status)
 	spin_lock_irqsave(&hcd_urb_unlink_lock, flags);
 	if (atomic_read(&urb->use_count) > 0) {
 		retval = 0;
-		usb_get_dev(urb->dev);
+		usb_get_dev(udev);
 	}
 	spin_unlock_irqrestore(&hcd_urb_unlink_lock, flags);
 	if (retval == 0) {
+#if defined(__VMKLNX__)
+		hcd = bus_to_hcd(udev->bus);
+#else
 		hcd = bus_to_hcd(urb->dev->bus);
+#endif
 		retval = unlink1(hcd, urb, status);
-		usb_put_dev(urb->dev);
+		if (retval == 0)
+			retval = -EINPROGRESS;
+		else if (retval != -EIDRM && retval != -EBUSY)
+			dev_dbg(&udev->dev, "hcd_unlink_urb %p fail %d\n",
+					urb, retval);
+		usb_put_dev(udev);
 	}
-
-	if (retval == 0)
-		retval = -EINPROGRESS;
-	else if (retval != -EIDRM && retval != -EBUSY)
-		dev_dbg(&urb->dev->dev, "hcd_unlink_urb %p fail %d\n",
-				urb, retval);
 	return retval;
 }
 

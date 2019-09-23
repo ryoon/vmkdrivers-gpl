@@ -1282,6 +1282,12 @@ static void start_unlink_async (struct ehci_hcd *ehci, struct ehci_qh *qh)
 
 	prev->hw->hw_next = qh->hw->hw_next;
 	prev->qh_next = qh->qh_next;
+#if defined(__VMKLNX__)
+	if (ehci->use_sys_clock) {
+		if (ehci->qh_scan_next == qh)
+			ehci->qh_scan_next = qh->qh_next.qh;
+	}
+#endif
 	wmb ();
 
 	/* If the controller isn't running, we don't have to wait for it */
@@ -1299,12 +1305,75 @@ static void start_unlink_async (struct ehci_hcd *ehci, struct ehci_qh *qh)
 	iaa_watchdog_start(ehci);
 }
 
+#if defined(__VMKLNX__)
+static void scan_async_use_sys_clock (struct ehci_hcd *ehci)
+{
+	bool			stopped;
+	struct ehci_qh		*qh;
+	enum ehci_timer_action	action = TIMER_IO_WATCHDOG;
+
+	timer_action_done (ehci, TIMER_ASYNC_SHRINK);
+	stopped = !HC_IS_RUNNING(ehci_to_hcd(ehci)->state);
+
+	ehci->qh_scan_next = ehci->async->qh_next.qh;
+	while (ehci->qh_scan_next) {
+		qh = ehci->qh_scan_next;
+		ehci->qh_scan_next = qh->qh_next.qh;
+ rescan:
+		/* clean any finished work for this qh */
+		if (!list_empty(&qh->qtd_list)) {
+			int temp;
+
+			/*
+			 * Unlinks could happen here; completion reporting
+			 * drops the lock.  That's why ehci->qh_scan_next
+			 * always holds the next qh to scan; if the next qh
+			 * gets unlinked then ehci->qh_scan_next is adjusted
+			 * in start_unlink_async().
+			 */
+			qh = qh_get(qh);
+			temp = qh_completions(ehci, qh);
+			if (qh->needs_rescan)
+				unlink_async(ehci, qh);
+			qh->unlink_time = jiffies + EHCI_SHRINK_JIFFIES;
+			qh_put(qh);
+			if (temp != 0)
+				goto rescan;
+		}
+
+		/* unlink idle entries, reducing DMA usage as well
+		 * as HCD schedule-scanning costs.  delay for any qh
+		 * we just scanned, there's a not-unusual case that it
+		 * doesn't stay idle for long.
+		 * (plus, avoids some kind of re-activation race.)
+		 */
+		if (list_empty(&qh->qtd_list)
+				&& qh->qh_state == QH_STATE_LINKED) {
+			if (!ehci->reclaim && (stopped ||
+					time_after_eq(jiffies, qh->unlink_time)))
+				start_unlink_async(ehci, qh);
+			else
+				action = TIMER_ASYNC_SHRINK;
+		}
+	}
+	if (action == TIMER_ASYNC_SHRINK)
+		timer_action (ehci, TIMER_ASYNC_SHRINK);
+}
+#endif
+
 /*-------------------------------------------------------------------------*/
 
 static void scan_async (struct ehci_hcd *ehci)
 {
 	struct ehci_qh		*qh;
 	enum ehci_timer_action	action = TIMER_IO_WATCHDOG;
+
+#if defined(__VMKLNX__)
+	if (ehci->use_sys_clock) {
+		scan_async_use_sys_clock(ehci);
+		return;
+	}
+#endif
 
 	ehci->stamp = ehci_readl(ehci, &ehci->regs->frame_index);
 	timer_action_done (ehci, TIMER_ASYNC_SHRINK);

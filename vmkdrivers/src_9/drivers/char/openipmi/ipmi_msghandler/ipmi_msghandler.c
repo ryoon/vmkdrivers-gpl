@@ -87,6 +87,7 @@ struct ipmi_user {
 
 	/* Set to "0" when the user is destroyed. */
 	int valid;
+	spinlock_t validity_lock;
 
 	struct kref refcount;
 
@@ -730,8 +731,25 @@ static void deliver_response(struct ipmi_recv_msg *msg)
 		}
 		ipmi_free_recv_msg(msg);
 	} else {
+	   unsigned long flags = 0;
 		ipmi_user_t user = msg->user;
-		user->handler->ipmi_recv_hndl(msg, user->handler_data);
+		/* 
+		* PR#1910537
+		* validity_lock is held here to remove race conditions where
+		* ipmi_recv_handl is called with the assumption that the user->valid is
+		* 1. It is possible (as seen in PR#1910537) that user is invalidated in
+		* the middle of ipmi_recv_handl operation(from ipmi_release >>
+		* ipmi_destroy_user). This lock is to ensure that invalidation
+		* happens only after completion of a ipmi_recv_handl operation.
+		*/
+		spin_lock_irqsave(&user->validity_lock, flags);
+		if (!user->valid) {
+		   spin_unlock_irqrestore(&user->validity_lock, flags);
+		   ipmi_free_recv_msg(msg);
+		} else {
+		   user->handler->ipmi_recv_hndl(msg, user->handler_data);
+		   spin_unlock_irqrestore(&user->validity_lock, flags);
+		}
 	}
 }
 
@@ -975,8 +993,9 @@ int ipmi_create_user(unsigned int          if_num,
 	 * until now
 	 */
 	mutex_unlock(&ipmi_interfaces_mutex);
-
+	spin_lock_init(&new_user->validity_lock);
 	new_user->valid = 1;
+
 	spin_lock_irqsave(&intf->seq_lock, flags);
 	list_add_rcu(&new_user->link, &intf->users);
 	spin_unlock_irqrestore(&intf->seq_lock, flags);
@@ -1031,11 +1050,13 @@ int ipmi_destroy_user(ipmi_user_t user)
 {
 	ipmi_smi_t       intf = user->intf;
 	int              i;
-	unsigned long    flags;
+	unsigned long    flags = 0;
 	struct cmd_rcvr  *rcvr;
 	struct cmd_rcvr  *rcvrs = NULL;
 
+	spin_lock_irqsave(&user->validity_lock, flags);
 	user->valid = 0;
+	spin_unlock_irqrestore(&user->validity_lock, flags);
 
 	/* Remove the user from the interface's sequence table. */
 	spin_lock_irqsave(&intf->seq_lock, flags);
@@ -1475,7 +1496,6 @@ static int i_ipmi_request(ipmi_user_t          user,
 	struct ipmi_recv_msg     *recv_msg;
 	unsigned long            flags;
 	struct ipmi_smi_handlers *handlers;
-
 
 	if (supplied_recv)
 		recv_msg = supplied_recv;

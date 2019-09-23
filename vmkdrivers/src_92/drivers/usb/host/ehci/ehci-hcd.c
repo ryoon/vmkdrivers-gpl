@@ -108,6 +108,10 @@ static const char	hcd_name [] = "ehci_hcd";
 #define EHCI_IO_JIFFIES		(HZ/10)		/* io watchdog > irq_thresh */
 #define EHCI_ASYNC_JIFFIES	(HZ/20)		/* async idle timeout */
 #define EHCI_SHRINK_FRAMES	5		/* async qh unlink delay */
+#if defined(__VMKLNX__)
+#define EHCI_SHRINK_JIFFIES	(DIV_ROUND_UP(HZ, 200) + 1)
+						/* 200-ms async qh unlink delay */
+#endif
 
 /* Initial IRQ latency:  faster than hw default */
 static int log2_irq_thresh = 0;		// 0 to 6
@@ -175,10 +179,18 @@ timer_action(struct ehci_hcd *ehci, enum ehci_timer_action action)
 			break;
 		/* case TIMER_ASYNC_SHRINK: */
 		default:
+#if defined(__VMKLNX__)
+			if (ehci->use_sys_clock) {
+				t = EHCI_SHRINK_JIFFIES;
+			} else {
+				t = DIV_ROUND_UP(EHCI_SHRINK_FRAMES * HZ, 1000) + 1;
+			}
+#else
 			/* add a jiffie since we synch against the
 			 * 8 KHz uframe counter.
 			 */
 			t = DIV_ROUND_UP(EHCI_SHRINK_FRAMES * HZ, 1000) + 1;
+#endif
 			break;
 		}
 		mod_timer(&ehci->watchdog, t + jiffies);
@@ -1182,7 +1194,7 @@ MODULE_DESCRIPTION(DRIVER_DESC);
 MODULE_AUTHOR (DRIVER_AUTHOR);
 MODULE_LICENSE ("GPL");
 #if defined(__VMKLNX__)
-MODULE_VERSION("1.0-3vmw");
+MODULE_VERSION("1.0-4vmw");
 #endif
 
 #ifdef CONFIG_PCI

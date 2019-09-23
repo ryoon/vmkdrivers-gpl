@@ -54,7 +54,7 @@
 #endif
 
 #define DRV_NAME	"ahci"
-#define DRV_VERSION	"3.0-22vmw"
+#define DRV_VERSION	"3.0-26vmw"
 
 #if defined(__VMKLNX__)
 static int ahci_skip_host_reset = 0;
@@ -661,6 +661,11 @@ static const struct pci_device_id ahci_pci_tbl[] = {
 	{ PCI_VDEVICE(INTEL, 0xa106), board_ahci }, /* Sunrise Point-H RAID */
 	{ PCI_VDEVICE(INTEL, 0xa107), board_ahci }, /* Sunrise Point-H RAID */
 	{ PCI_VDEVICE(INTEL, 0xa10f), board_ahci }, /* Sunrise Point-H RAID */
+	{ PCI_VDEVICE(INTEL, 0xa182), board_ahci }, /* Lewisburg AHCI */
+	{ PCI_VDEVICE(INTEL, 0xa1d2), board_ahci }, /* Lewisburg AHCI */
+	{ PCI_VDEVICE(INTEL, 0xa202), board_ahci }, /* Lewisburg AHCI */
+	{ PCI_VDEVICE(INTEL, 0xa252), board_ahci }, /* Lewisburg AHCI */
+	{ PCI_VDEVICE(INTEL, 0xa282), board_ahci }, /* Union Point-H AHCI */
 #endif /* defined(__VMKLNX__) */
 
 	/* JMicron 360/1/3/5/6, match class to avoid IDE function */
@@ -680,6 +685,9 @@ static const struct pci_device_id ahci_pci_tbl[] = {
         { PCI_VDEVICE(AMD, 0x7800), board_ahci }, /* AMD Hudson-M2/-M3/Riverside [IDE Mode]  */
         { PCI_VDEVICE(AMD, 0x7801), board_ahci }, /* AMD Hudson-M2/-M3/Riverside [AHCI Mode] */
         { PCI_VDEVICE(AMD, 0x7804), board_ahci }, /* AMD Hudson-M2/-M3/Riverside [AHCI Mode] */
+        { PCI_VDEVICE(AMD, 0x7900), board_ahci }, /* AMD FCH SATA Controller [IDE mode] */
+        { PCI_VDEVICE(AMD, 0x7901), board_ahci }, /* AMD FCH SATA Controller [AHCI mode] */
+        { PCI_VDEVICE(AMD, 0x7904), board_ahci }, /* AMD FCH SATA Controller [AHCI mode] */
         { PCI_VENDOR_ID_AMD, PCI_ANY_ID, PCI_ANY_ID, PCI_ANY_ID,
           PCI_CLASS_STORAGE_SATA_AHCI, 0xffffff, board_ahci },
 
@@ -767,6 +775,8 @@ static const struct pci_device_id ahci_pci_tbl[] = {
 	{ PCI_VDEVICE(MARVELL, 0x6121), board_ahci_mv },	/* 6121 */
 
 #if defined(__VMKLNX__)
+	{ PCI_VDEVICE(MARVELL_EXT, 0x9230), board_ahci },	/* 88SE9230 */
+
 	/* SeaMicro */
 	{ PCI_VDEVICE(SEAMICRO, 0x2923), board_ahci }, /* 2923 */
 #endif /* defined(__VMKLNX__) */

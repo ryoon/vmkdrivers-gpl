@@ -178,6 +178,8 @@ static int ipmi_release(struct inode *inode, struct file *file)
 {
 	struct ipmi_file_private *priv = file->private_data;
 	int                      rv;
+	struct  ipmi_recv_msg *msg, *next;
+	unsigned long flags;
 
 	rv = ipmi_destroy_user(priv->user);
 	if (rv)
@@ -186,8 +188,11 @@ static int ipmi_release(struct inode *inode, struct file *file)
 #if defined(__VMKLNX__)
 	ipmi_fasync (-1, file, 0);
 #endif
+	spin_lock_irqsave(&(priv->recv_msg_lock), flags);
+	list_for_each_entry_safe(msg, next, &priv->recv_msgs, link)
+		ipmi_free_recv_msg(msg);
+	spin_unlock_irqrestore(&(priv->recv_msg_lock), flags);
 
-	/* FIXME - free the messages in the list. */
 	kfree(priv);
 
 	return 0;

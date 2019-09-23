@@ -1285,7 +1285,10 @@ __CopyOut(void *d, const void *s, unsigned long l)
 
 	 tp = vmklnx_GetCurrent();
 	 umem = tp->umem;
-	 VMK_ASSERT(umem != NULL);
+         if (umem == NULL) {
+            VMKLNX_WARN("Destination address=%p looks invalid\n",d);
+            return 1;
+         }
 	 if ((vmk_VA) vmkBuf >= (vmk_VA) &umem->data[0] &&
 	     (vmk_VA) vmkBuf + l <= (vmk_VA) &umem->data[umem->len]) {
 	    memcpy(vmkBuf, s, l);
@@ -1293,7 +1296,6 @@ __CopyOut(void *d, const void *s, unsigned long l)
 	 }
       }
    }
-
    return (vmk_CopyToUser((vmk_VA)d, (vmk_VA)s, l) == VMK_OK)? 0 : 1;
 }
 
@@ -1312,7 +1314,11 @@ __CopyIn(void *d, const void *s, unsigned long l)
 
 	 tp = vmklnx_GetCurrent();
 	 umem = tp->umem;
-	 VMK_ASSERT(umem != NULL);
+         if (umem == NULL) {
+            VMKLNX_WARN("Source address=%p looks invalid\n",s);
+            return 1;
+         }
+
 	 if ((vmk_VA) vmkBuf >= (vmk_VA) &umem->data[0] &&
 	     (vmk_VA) vmkBuf + l <= (vmk_VA) &umem->data[umem->len]) {
 	    memcpy(d, vmkBuf, l);
@@ -1320,7 +1326,6 @@ __CopyIn(void *d, const void *s, unsigned long l)
 	 }
       }
    }
-
    return (vmk_CopyFromUser((vmk_VA)d, (vmk_VA)s, l) == VMK_OK)? 0 : 1;
 }
 

@@ -388,6 +388,8 @@ static int usb_probe_interface(struct device *dev)
 #if defined(__VMKLNX__)
 	if(atomic_read(&in_usb_passthrough)) {
 		intf->unclaim_rq = 1;
+	} else {
+		intf->unclaim_rq = 0;
 	}
 
 	VMKAPI_MODULE_CALL(driver->module->moduleID,
